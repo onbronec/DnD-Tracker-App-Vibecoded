@@ -26,8 +26,12 @@ let gameState = {
         round: 1,
         playedThisRound: []
     },
-    monsterDatabase: []
+    monsterDatabase: [],
+    historyStack: [],
+    redoStack: []
 };
+
+const MAX_HISTORY = 20;
 
 // Handle client connections
 io.on('connection', (socket) => {
@@ -42,6 +46,8 @@ io.on('connection', (socket) => {
         if (data.characters) gameState.characters = data.characters;
         if (data.combatState) gameState.combatState = data.combatState;
         if (data.monsterDatabase) gameState.monsterDatabase = data.monsterDatabase;
+        if (data.historyStack !== undefined) gameState.historyStack = data.historyStack;
+        if (data.redoStack !== undefined) gameState.redoStack = data.redoStack;
 
         // Broadcast to all OTHER clients (not sender)
         socket.broadcast.emit('state-sync', gameState);

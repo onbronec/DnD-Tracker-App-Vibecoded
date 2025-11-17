@@ -854,8 +854,9 @@
                 combatState = serverState.combatState || combatState;
                 monsterDatabase = serverState.monsterDatabase || [];
 
-                // Vyčistit redo stack když dostaneme sync (není relevantní po změně ze serveru)
-                redoStack = [];
+                // Použít globální historii ze serveru
+                historyStack = serverState.historyStack || [];
+                redoStack = serverState.redoStack || [];
 
                 renderCharacters();
                 renderMonsterList();
@@ -895,7 +896,9 @@
                 socket.emit('update-state', {
                     characters,
                     combatState,
-                    monsterDatabase
+                    monsterDatabase,
+                    historyStack,
+                    redoStack
                 });
             }
         }
