@@ -851,6 +851,10 @@
                 console.log('Connected to server');
                 isConnected = true;
                 updateConnectionStatus(true);
+
+                // Register client mode with server
+                socket.emit('register-mode', viewMode);
+                console.log(`Registered as ${viewMode} mode`);
             });
 
             socket.on('disconnect', () => {
