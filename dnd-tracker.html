@@ -846,7 +846,11 @@
             // Receive full state sync from server
             socket.on('state-sync', (serverState) => {
                 isSyncing = true; // Set flag to prevent re-sync
-                characters = serverState.characters || [];
+                // Ensure backward compatibility for revealedToPlayers flag
+                characters = (serverState.characters || []).map(char => ({
+                    ...char,
+                    revealedToPlayers: char.revealedToPlayers !== undefined ? char.revealedToPlayers : (char.type === 'player')
+                }));
                 combatState = serverState.combatState || combatState;
                 monsterDatabase = serverState.monsterDatabase || [];
 
@@ -861,7 +865,11 @@
                 isSyncing = true;
                 const index = characters.findIndex(c => c.id === characterData.id);
                 if (index !== -1) {
-                    characters[index] = characterData;
+                    // Ensure backward compatibility
+                    characters[index] = {
+                        ...characterData,
+                        revealedToPlayers: characterData.revealedToPlayers !== undefined ? characterData.revealedToPlayers : (characterData.type === 'player')
+                    };
                     renderCharacters();
                 }
                 isSyncing = false;
@@ -1327,7 +1335,8 @@
                         effects: [],
                         monsterData: monster,
                         groupId: numGroups > 1 ? groupId : null,
-                        groupName: numGroups > 1 ? groupName : null
+                        groupName: numGroups > 1 ? groupName : null,
+                        revealedToPlayers: false  // Monstrum je na začátku skryté pro hráče
                     };
 
                     characters.push(character);
@@ -1768,7 +1777,8 @@
                 currentHp: original.maxHp,
                 currentPower: original.maxPower,
                 tempHp: 0,
-                effects: [...original.effects]
+                effects: [...original.effects],
+                revealedToPlayers: false  // Nové monstrum je také skryté
             };
 
             characters.push(newMonster);
@@ -1977,6 +1987,12 @@
             combatState.round = 1;
             combatState.playedThisRound = [];
 
+            // Odhal první postavu na tahu (pokud je to monstrum)
+            const firstChar = characters[0];
+            if (firstChar && firstChar.type === 'monster') {
+                firstChar.revealedToPlayers = true;
+            }
+
             document.getElementById('startBtn').classList.add('hidden');
             document.getElementById('prevBtn').classList.remove('hidden');
             document.getElementById('nextBtn').classList.remove('hidden');
@@ -1991,6 +2007,13 @@
 
         function nextTurn() {
             saveState();
+
+            // Odhal aktuální postavu pro hráče (pokud je to monstrum)
+            const currentChar = characters[combatState.currentTurn];
+            if (currentChar && currentChar.type === 'monster') {
+                currentChar.revealedToPlayers = true;
+            }
+
             if (combatState.currentTurn < characters.length - 1) {
                 combatState.playedThisRound.push(combatState.currentTurn);
                 combatState.currentTurn++;
@@ -1999,6 +2022,12 @@
                 combatState.round++;
                 combatState.currentTurn = 0;
                 combatState.playedThisRound = [];
+            }
+
+            // Odhal novou postavu na tahu (pokud je to monstrum)
+            const newChar = characters[combatState.currentTurn];
+            if (newChar && newChar.type === 'monster') {
+                newChar.revealedToPlayers = true;
             }
 
             updateInitiativeDisplay();
@@ -2039,6 +2068,8 @@
                 // Resetuj Moc pouze u monster
                 if (char.type === 'monster') {
                     char.currentPower = char.maxPower;
+                    // Skryj monstra zpět pro hráče
+                    char.revealedToPlayers = false;
                 }
             });
 
@@ -2278,16 +2309,34 @@
             `;
         }
 
+        // Helper funkce - vrátí jen postavy viditelné pro aktuální view mode
+        function getVisibleCharacters() {
+            if (isDM) {
+                return characters; // DM vidí všechno
+            }
+            // Hráči vidí jen hráče a odhalená monstra
+            return characters.filter(char =>
+                char.type === 'player' || (char.type === 'monster' && char.revealedToPlayers)
+            );
+        }
+
         function updateInitiativeDisplay() {
             const orderDiv = document.getElementById('initiativeOrder');
             if (combatState.active && characters.length > 0) {
                 const currentChar = characters[combatState.currentTurn];
+                const visibleChars = getVisibleCharacters();
+
+                // V player módu zobrazíme pouze odhalené postavy
+                const displayChars = isPlayer ? visibleChars : characters;
+
                 orderDiv.innerHTML = `
-                    <div class="turn-info">Kolo ${combatState.round} - Na tahu: ${currentChar.name} (Iniciativa: ${currentChar.initiative})</div>
-                    <div>Pořadí iniciativy: ${characters.map((char, index) => 
-                        `<span style="color: ${index === combatState.currentTurn ? '#f39c12' : 
-                        combatState.playedThisRound.includes(index) ? '#7f8c8d' : '#2c3e50'}">${char.name} (${char.initiative})</span>`
-                    ).join(' → ')}</div>
+                    <div class="turn-info">Kolo ${combatState.round} - Na tahu: ${currentChar.revealedToPlayers || currentChar.type === 'player' || isDM ? currentChar.name : '???'} ${(currentChar.revealedToPlayers || currentChar.type === 'player' || isDM) ? `(Iniciativa: ${currentChar.initiative})` : ''}</div>
+                    <div>Pořadí iniciativy: ${displayChars.map((char, index) => {
+                        // Najdi skutečný index v původním characters array
+                        const realIndex = characters.findIndex(c => c.id === char.id);
+                        return `<span style="color: ${realIndex === combatState.currentTurn ? '#f39c12' :
+                        combatState.playedThisRound.includes(realIndex) ? '#7f8c8d' : '#2c3e50'}">${char.name} (${char.initiative})</span>`;
+                    }).join(' → ')}</div>
                 `;
                 orderDiv.classList.remove('hidden');
             } else {
@@ -2513,7 +2562,11 @@
 
         function renderCharacters() {
             const listDiv = document.getElementById('characterList');
-            listDiv.innerHTML = characters.map((char, index) => {
+            const visibleChars = getVisibleCharacters();
+
+            listDiv.innerHTML = visibleChars.map((char) => {
+                // Najdi skutečný index v původním characters array
+                const index = characters.findIndex(c => c.id === char.id);
                 const isActive = combatState.active && index === combatState.currentTurn;
                 const hasPlayed = combatState.active && combatState.playedThisRound.includes(index);
                 const hpPercentage = (char.currentHp / char.maxHp) * 100;
@@ -2782,7 +2835,9 @@
                             effects: char.effects || [],
                             initiative: char.initiative || null,
                             groupId: char.groupId || null,
-                            groupName: char.groupName || null
+                            groupName: char.groupName || null,
+                            // Backward compatibility: pokud není revealedToPlayers, nastav podle typu
+                            revealedToPlayers: char.revealedToPlayers !== undefined ? char.revealedToPlayers : (char.type === 'player')
                         }));
 
                         // Obnovit stav boje
