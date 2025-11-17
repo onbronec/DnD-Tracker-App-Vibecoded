@@ -1773,6 +1773,7 @@
 
             characters.push(newMonster);
             renderCharacters();
+            syncToServer();
         }
 
         function unlinkFromGroup(id) {
@@ -1842,6 +1843,7 @@
                 character.tempHp = Math.max(0, tempHp);
                 input.value = '';
                 renderCharacters();
+                syncToServer();
             }
         }
 
@@ -1860,6 +1862,7 @@
             character.effects.push(effectName);
             input.value = '';
             renderCharacters();
+            syncToServer();
             if (currentEffectCharacterId === id) {
                 renderEffects();
             }
@@ -1871,6 +1874,7 @@
             if (character) {
                 character.currentPower = Math.max(0, character.currentPower + change);
                 renderCharacters();
+                syncToServer();
             }
         }
 
@@ -1880,6 +1884,7 @@
             if (character) {
                 character.currentPower = Math.max(0, parseInt(value) || 0);
                 renderCharacters();
+                syncToServer();
             }
         }
 
@@ -1932,8 +1937,9 @@
                     
                     updateInitiativeDisplay();
                 }
-                
+
                 renderCharacters();
+                syncToServer();
             }
         }
 
@@ -2143,6 +2149,7 @@
                 }
                 renderEffects();
                 renderCharacters();
+                syncToServer();
             }
         }
 
@@ -2170,6 +2177,7 @@
                 character.effects[effectIndex] = { name: effect.name, level: newLevel };
                 renderEffects();
                 renderCharacters();
+                syncToServer();
             }
         }
 
@@ -2181,6 +2189,7 @@
             character.effects.splice(effectIndex, 1);
             renderEffects();
             renderCharacters();
+            syncToServer();
         }
 
         function removeEffectFromCharacter(id, effectIndex) {
@@ -2203,6 +2212,7 @@
                 renderEffects();
             }
             renderCharacters();
+            syncToServer();
         }
 
         function getEffectClass(effect) {
@@ -2489,6 +2499,7 @@
 
             updateInitiativeDisplay();
             renderCharacters();
+            syncToServer();
             draggedCharacterIndex = null;
         }
 
