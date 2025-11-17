@@ -691,37 +691,53 @@
                     <select id="effectSelect" class="effect-select">
                         <option value="">-- Vyberte efekt --</option>
                         <optgroup label="🔴 Debuffs">
-                            <option value="Blinded">Blinded (Oslepený)</option>
-                            <option value="Charmed">Charmed (Okouzlený)</option>
-                            <option value="Deafened">Deafened (Ohlušený)</option>
-                            <option value="Exhaustion">Exhaustion (Vyčerpání) - s levely 1-6</option>
-                            <option value="Frightened">Frightened (Vystrašený)</option>
-                            <option value="Grappled">Grappled (Uchvácený)</option>
-                            <option value="Incapacitated">Incapacitated (Neschopný)</option>
-                            <option value="Paralyzed">Paralyzed (Paralyzovaný)</option>
-                            <option value="Petrified">Petrified (Zkamenělý)</option>
-                            <option value="Poisoned">Poisoned (Otrávený)</option>
-                            <option value="Prone">Prone (Ležící)</option>
-                            <option value="Restrained">Restrained (Spoutaný)</option>
-                            <option value="Stunned">Stunned (Omráčený)</option>
-                            <option value="Unconscious">Unconscious (Bezvědomý)</option>
+                            <option value="Blinded">Blinded</option>
+                            <option value="Charmed">Charmed</option>
+                            <option value="Deafened">Deafened</option>
+                            <option value="Exhaustion">Exhaustion</option>
+                            <option value="Frightened">Frightened</option>
+                            <option value="Grappled">Grappled</option>
+                            <option value="Incapacitated">Incapacitated</option>
+                            <option value="Paralyzed">Paralyzed</option>
+                            <option value="Petrified">Petrified</option>
+                            <option value="Poisoned">Poisoned</option>
+                            <option value="Prone">Prone</option>
+                            <option value="Restrained">Restrained</option>
+                            <option value="Stunned">Stunned</option>
+                            <option value="Unconscious">Unconscious</option>
+                            <option value="Defenseless">Defenseless</option>
+                            <option value="Impaired">Impaired</option>
+                            <option value="Distracted">Distracted</option>
+                            <option value="Hexblade_Curse">Hexblade's Curse</option>
+                            <option value="Moonlit">Moonlit</option>
+                            <option value="Confused">Confused</option>
+                            <option value="Divine_Ire">Divine Ire</option>
+                            <option value="Divine_Ire_Cyric">Divine Ire (Cyric)</option>
                         </optgroup>
                         <optgroup label="🟢 Buffs">
-                            <option value="Blessed">Blessed (Požehnaný)</option>
-                            <option value="Hasted">Hasted (Zrychlený)</option>
-                            <option value="Inspired">Inspired (Inspirovaný)</option>
-                            <option value="Protected">Protected (Chráněný)</option>
-                            <option value="Enlarged">Enlarged (Zvětšený)</option>
-                            <option value="Flying">Flying (Létající)</option>
-                            <option value="Invisible">Invisible (Neviditelný)</option>
-                            <option value="Resistance">Resistance (Odolnost)</option>
-                            <option value="Advantage">Advantage (Výhoda)</option>
-                            <option value="Raging">Raging (Běsnící)</option>
-                            <option value="Dodging">Dodging (Vyhýbající se)</option>
+                            <option value="Hasted">Hasted</option>
+                            <option value="Inspired">Inspired</option>
+                            <option value="Invisible">Invisible</option>
+                            <option value="Raging">Raging</option>
+                            <option value="Dodging">Dodging</option>
+                            <option value="Heroic_Inspiration">Heroic Inspiration</option>
+                            <option value="Spirit_Shroud">Spirit Shroud</option>
+                            <option value="Tensor_Transformation">Tensor Transformation</option>
+                            <option value="Retaliation_Aura">Retaliation Aura</option>
+                            <option value="Foresight">Foresight</option>
+                            <option value="Elder_Champion">Elder Champion</option>
+                            <option value="Celestial_Revelation">Celestial Revelation</option>
+                            <option value="Power_of_Mercy">Power of Mercy</option>
+                            <option value="Sacred_Divine_Sense">Sacred Divine Sense</option>
+                            <option value="Protective_Spirit">Protective Spirit</option>
+                            <option value="Emissary_of_Redemtion">Emissary of Redemtion</option>
+                            <option value="Rythm_of_War">Rythm of War</option>
                         </optgroup>
                         <optgroup label="🔵 Neutrální">
-                            <option value="Concentrating">Concentrating (Soustředění)</option>
-                            <option value="Marked">Marked (Označený)</option>
+                            <option value="Concentrating">Concentrating</option>
+                            <option value="Marked">Marked</option>
+                            <option value="Irredeemable">Irredeemable</option>
+                            <option value="Not_Harmonized">Not Harmonized</option>
                         </optgroup>
                     </select>
                     <button onclick="addEffect()" class="btn-success">Přidat vybraný</button>
@@ -1682,7 +1698,6 @@
             'Frightened': { type: 'debuff', description: 'Postava má nevýhodu na ability checks a útoky, dokud je zdroj strachu ve výhledu. Nemůže se dobrovolně přiblížit ke zdroji.' },
             'Grappled': { type: 'debuff', description: 'Rychlost postavy je 0. Končí, když je grappler neschopný nebo postava unikne.' },
             'Incapacitated': { type: 'debuff', description: 'Postava nemůže provádět akce ani reakce.' },
-            'Invisible': { type: 'buff', description: 'Postava je neviditelná. Útoky proti ní mají nevýhodu, její útoky mají výhodu.' },
             'Paralyzed': { type: 'debuff', description: 'Postava je neschopná a nemůže se hýbat ani mluvit. Automaticky neuspěje u Str a Dex záchran. Útoky proti ní mají výhodu.' },
             'Petrified': { type: 'debuff', description: 'Postava je zkamenělá, neschopná a neuvědomělá. Má odolnost proti všem typům poškození.' },
             'Poisoned': { type: 'debuff', description: 'Postava má nevýhodu na útoky a ability checks.' },
@@ -1690,24 +1705,51 @@
             'Restrained': { type: 'debuff', description: 'Rychlost 0, nevýhoda na útoky a Dex záchranné hody. Útoky proti postavě mají výhodu.' },
             'Stunned': { type: 'debuff', description: 'Postava je neschopná, nemůže se hýbat a mluví jen nejasně. Automaticky neuspěje u Str a Dex záchran.' },
             'Unconscious': { type: 'debuff', description: 'Postava je neschopná, nemůže se hýbat ani mluvit, neuvědomělá. Automaticky neuspěje u Str a Dex záchran.' },
+            'Defenseless': { type: 'debuff', description: 'Attack rolls against you have advantage.' },
+            'Impaired': { type: 'debuff', description: 'Your speed is halved.' },
+            'Distracted': { type: 'debuff', description: 'You can not take reactions.' },
+            'Hexblade_Curse': { type: 'debuff', description: 'Nif does extra necrotic damage, crits on 1 less and heals if it dies.' },
+            'Moonlit': { type: 'debuff', description: 'Produce moonlight in 20 ft radius and cannot be invisible.' },
+            'Confused': { type: 'debuff', description: 'You can not take Bonus Actions or Reactions and must roll 1d10 at the start of each of your turns to determine your behavior for that turn, consulting the table below: 1 - You do not take an action, and use all your movement to move. Roll 1d4 for the direction: 1, north; 2, east; 3, south; or 4, west. 2-6 You do not move or take actions. 7-8 You do not move, and take your Attack action to make one melee attack against a random creature within reach. If none are within reach, you take no action. 9-10 You hold your mind together and choose your behavior.' },
             'Exhaustion': {
                 type: 'debuff',
                 hasLevels: true,
                 maxLevel: 6,
-                description: 'Vyčerpání - Level 1: Nevýhoda na ability checks. Level 2: Poloviční rychlost. Level 3: Nevýhoda na útoky a záchranné hody. Level 4: Max HP na polovinu. Level 5: Rychlost 0. Level 6: Smrt.'
+                description: 'Level 1: Disadvantage on ability checks. Level 2: Speed halved. Level 3: Disadvantage on attack rolls and enemies adv. on saving throws against your effects. Level 4: Disadvantage on saving throws. Level 5: Speed reduced to 0. Level 6: Death.'
+            },
+            'Divine_Ire': {
+                type: 'debuff',
+                hasLevels: true,
+                maxLevel: 6,
+                description: 'Level 1: Disadvantage on Charisma ability checks and you can hear the voice of the deity that you angered. Level 2: 1st Domain Effect. Level 3: You cannot be resistant to damage done by servants of this god. Immunity to their damage is reduced to resistance instead. Level 4: 2nd Domain Effect. Level 5: Hit point maximum halved. Level 6: You stricken down by divine wrath. You die and your body disintegrates in a flash of divine light.'
+            },
+            'Divine_Ire_Cyric': {
+                type: 'debuff',
+                hasLevels: true,
+                maxLevel: 6,
+                description: 'Level 1: Disadvantage on Charisma ability checks and you can hear the voice of the deity that you angered. Level 2: Dark light coalesces around you marking you for the hunt. You are Defenseless and cannot be Invisible. Level 3: You cannot be resistant to damage done by servants of this god. Immunity to their damage is reduced to resistance instead. Level 4: At the start of your turn Save: DC 24 Wisdom saving throw, Failure: You are Confused this turn. Level 5: Hit point maximum halved. Level 6: You stricken down by divine wrath. You die and your body disintegrates in a flash of divine light.'
             },
 
             // Buffs
-            'Blessed': { type: 'buff', description: 'Bonus k záchranným hodům a útokům.' },
-            'Hasted': { type: 'buff', description: 'Dvojnásobná rychlost, +2 AC, výhoda na Dex záchranné hody, extra akce.' },
-            'Inspired': { type: 'buff', description: 'Bardic Inspiration - bonus k příštímu hodu.' },
-            'Protected': { type: 'buff', description: 'Magická ochrana poskytující bonus k AC nebo záchranným hodům.' },
-            'Enlarged': { type: 'buff', description: 'Zvětšená velikost, výhoda na Strength checks a záchranné hody, extra poškození.' },
-            'Flying': { type: 'buff', description: 'Schopnost letu díky kouzlu nebo schopnosti.' },
-            'Resistance': { type: 'buff', description: 'Odolnost proti určitému typu poškození.' },
-            'Advantage': { type: 'buff', description: 'Výhoda na určitý typ hodů.' },
-
+            'Invisible': { type: 'buff', description: 'Postava je neviditelná. Útoky proti ní mají nevýhodu, její útoky mají výhodu.' },
+            'Hasted': { type: 'buff', description: 'Double speed, +2 AC, adv on Dex saves, extra action (one attack, dash, disengage, hide or use an object).' },
+            'Inspired': { type: 'buff', description: 'Bardic Inspiration - bonus d12 to a d20 roll.' },
+            'Heroic_Inspiration': { type: 'buff', description: 'A d20 reroll.' },
+            'Spirit_Shroud': { type: 'buff', description: 'Extra damage and movement reduction to enemies.' },
+            'Tensor_Transformation': { type: 'buff', description: 'Super powered Wizard go.' },
+            'Retaliation_Aura': { type: 'buff', description: 'Punch back.' },
+            'Foresight': { type: 'buff', description: 'All advantages.' },
+            'Elder_Champion': { type: 'buff', description: 'Spells are bonus actions, heals 10 HP (20) each round and enemies dis on saves against her spells.' },
+            'Celestial_Revelation': { type: 'buff', description: 'Flies (double movement), proficiency damage aura or fear aura.' },
+            'Power_of_Mercy': { type: 'buff', description: 'Resistance to everything and enemies take back half damage dealt as radiant.' },
+            'Sacred_Divine_Sense': { type: 'buff', description: 'Epic advantage against fiends, undead, celestials and daemons. Last until the end of NEXT round' },
+            'Protective_Spirit': { type: 'buff', description: 'Heals 16 HP if bloodied at end of round.' },
+            'Emissary_of_Redemtion': { type: 'buff', description: 'Half damage from creatures you did not attack yet and they take half damage back as radiant.' },
+            'Rythm_of_War': { type: 'buff', description: 'Advantage on all saves AOE based on spell level.' },
+            
             // Neutrální/Situační
+            'Irredeemable': { type: 'neutral', description: 'Attacked by Crow. Is not affected by emissary of redemption.' },
+            'Not_Harmonized': { type: 'neutral', description: 'Harmonize unused.' },
             'Concentrating': { type: 'neutral', description: 'Postava se soustředí na kouzlo. Při poškození hází záchranný hod na koncentraci.' },
             'Marked': { type: 'neutral', description: 'Postava je označená pro sledování nebo speciální efekt.' },
             'Raging': { type: 'buff', description: 'Barbarian Rage - bonus k poškození, odolnost proti fyzickému poškození.' },
