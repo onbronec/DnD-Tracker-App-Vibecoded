@@ -574,6 +574,333 @@
         .statblock-toggle:hover {
             text-decoration: underline;
         }
+
+        /* Navigation Bar Styles */
+        .nav-bar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            background: #2c3e50;
+            padding: 10px;
+            border-radius: 10px;
+            box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
+        }
+
+        .nav-btn {
+            flex: 1;
+            padding: 12px 20px;
+            background: #34495e;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s;
+        }
+
+        .nav-btn:hover {
+            background: #4a6278;
+            transform: translateY(-2px);
+        }
+
+        .nav-btn.active {
+            background: #3498db;
+            box-shadow: 0 4px 8px rgba(52, 152, 219, 0.4);
+        }
+
+        /* Page Visibility */
+        .page {
+            display: none;
+        }
+
+        .page.active {
+            display: block;
+        }
+
+        /* Spell Tracking Styles */
+        .spell-page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .character-select {
+            padding: 10px 15px;
+            border: 2px solid #3498db;
+            border-radius: 5px;
+            font-size: 1em;
+            background: white;
+            cursor: pointer;
+            min-width: 200px;
+        }
+
+        .spell-slots-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .spell-level-group {
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            border: 2px solid #ecf0f1;
+        }
+
+        .spell-level-title {
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 10px;
+            text-align: center;
+            font-size: 0.95em;
+        }
+
+        .spell-slots {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            justify-content: center;
+        }
+
+        .spell-slot {
+            width: 30px;
+            height: 30px;
+            border: 2px solid #3498db;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: #3498db;
+        }
+
+        .spell-slot.used {
+            background: #ecf0f1;
+            border-color: #95a5a6;
+        }
+
+        .spell-slot:hover {
+            transform: scale(1.1);
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+        }
+
+        .custom-features-container {
+            margin-top: 20px;
+        }
+
+        .feature-item {
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 10px;
+            border: 2px solid #ecf0f1;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .feature-info {
+            flex: 1;
+        }
+
+        .feature-name {
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 5px;
+        }
+
+        .feature-meta {
+            font-size: 0.85em;
+            color: #7f8c8d;
+        }
+
+        .feature-uses {
+            display: flex;
+            gap: 5px;
+            flex-wrap: wrap;
+        }
+
+        .use-checkbox {
+            width: 25px;
+            height: 25px;
+            border: 2px solid #27ae60;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: #27ae60;
+        }
+
+        .use-checkbox.used {
+            background: #ecf0f1;
+            border-color: #95a5a6;
+        }
+
+        .use-checkbox:hover {
+            transform: scale(1.1);
+        }
+
+        .rest-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .rest-btn {
+            flex: 1;
+            padding: 15px;
+            font-size: 1.1em;
+        }
+
+        .edit-character-btn {
+            padding: 12px 20px;
+            background: #9b59b6;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s;
+        }
+
+        .edit-character-btn:hover {
+            background: #8e44ad;
+        }
+
+        .hit-dice-container {
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            border: 2px solid #ecf0f1;
+        }
+
+        .hit-dice-title {
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+
+        .hit-dice-display {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .hit-dice-controls {
+            display: flex;
+            gap: 5px;
+        }
+
+        .hit-die {
+            width: 30px;
+            height: 30px;
+            border: 2px solid #e67e22;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: #e67e22;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 0.9em;
+        }
+
+        .hit-die.used {
+            background: #ecf0f1;
+            border-color: #95a5a6;
+            color: #95a5a6;
+        }
+
+        .hit-die:hover {
+            transform: scale(1.1);
+        }
+
+        /* Edit Modal Styles */
+        .edit-form-group {
+            margin-bottom: 15px;
+        }
+
+        .edit-form-group label {
+            display: block;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 5px;
+        }
+
+        .edit-form-group input,
+        .edit-form-group select {
+            width: 100%;
+            padding: 8px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+        }
+
+        .feature-editor {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border: 2px solid #ecf0f1;
+        }
+
+        .feature-editor-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+
+        .feature-editor-row input,
+        .feature-editor-row select {
+            flex: 1;
+            min-width: 150px;
+        }
+
+        .remove-feature-btn {
+            padding: 5px 10px;
+            background: #e74c3c;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+
+        .add-feature-btn {
+            width: 100%;
+            padding: 10px;
+            background: #27ae60;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .regain-options {
+            display: flex;
+            gap: 10px;
+            margin-top: 5px;
+        }
+
+        .regain-options input {
+            width: 80px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #7f8c8d;
+        }
+
+        .empty-state-icon {
+            font-size: 3em;
+            margin-bottom: 10px;
+        }
     </style>
 </head>
 <body>
@@ -586,6 +913,14 @@
             </div>
         </div>
 
+        <!-- Navigation Bar -->
+        <div class="nav-bar">
+            <button class="nav-btn active" onclick="switchPage('combat')">⚔️ Combat Tracker</button>
+            <button class="nav-btn" onclick="switchPage('spells')">✨ Spell & Ability Tracking</button>
+        </div>
+
+        <!-- Combat Tracker Page (Main Page) -->
+        <div id="combatPage" class="page active">
         <div class="section" id="dataManagementSection">
             <h2>📁 Správa dat</h2>
             <div class="file-controls">
@@ -634,7 +969,38 @@
             <h2>👥 Postavy a monstra</h2>
             <div id="characterList" class="character-list"></div>
         </div>
+        </div>
+        <!-- End Combat Page -->
+
+        <!-- Spell & Ability Tracking Page -->
+        <div id="spellsPage" class="page">
+            <div class="section">
+                <div class="spell-page-header">
+                    <div>
+                        <h2>✨ Spell & Ability Tracking</h2>
+                        <p style="color: #7f8c8d; font-size: 0.9em; margin-top: 5px;">Spravujte spell sloty, abilities a hit dice pro postavy</p>
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <select id="spellCharacterSelect" class="character-select" onchange="loadSpellCharacter()">
+                            <option value="">-- Vyberte postavu --</option>
+                        </select>
+                        <button class="edit-character-btn" onclick="openEditSpellCharacter()" id="editSpellCharBtn" style="display:none;">⚙️ Upravit</button>
+                    </div>
+                </div>
+
+                <div id="spellTrackingContent">
+                    <div class="empty-state">
+                        <div class="empty-state-icon">🎭</div>
+                        <h3>Vyberte postavu</h3>
+                        <p>Zvolte postavu ze seznamu výše pro správu spell slotů a abilities</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <!-- End Spell Page -->
+
     </div>
+    <!-- End Container -->
 
     <!-- Modal pro databázi monster -->
     <div id="monsterDatabaseModal" class="modal">
@@ -807,6 +1173,34 @@
 
                 <button onclick="saveEditedMonster()" class="btn-success" style="width: 100%; padding: 12px; font-size: 1.1em;">💾 Uložit změny</button>
             </div>
+        </div>
+    </div>
+
+    <!-- Modal pro editaci spell charakteru -->
+    <div id="editSpellCharacterModal" class="modal">
+        <div class="modal-content" style="max-width: 800px;">
+            <span class="close" onclick="closeEditSpellCharacter()">&times;</span>
+            <h3>⚙️ Upravit <span id="editSpellCharName"></span></h3>
+
+            <div class="edit-form-group">
+                <label>✨ Spellcaster Level (0-20):</label>
+                <input type="number" id="spellcasterLevelInput" min="0" max="20" value="0">
+                <small style="color: #7f8c8d; display: block; margin-top: 3px;">Nastavte level pro automatické určení spell slotů podle D&D 5e pravidel</small>
+            </div>
+
+            <div class="edit-form-group">
+                <label>❤️ Hit Dice:</label>
+                <input type="number" id="hitDiceMaxInput" min="0" value="0">
+                <small style="color: #7f8c8d; display: block; margin-top: 3px;">Maximální počet hit dice pro postavu</small>
+            </div>
+
+            <div class="edit-form-group">
+                <label>🎯 Custom Features & Abilities:</label>
+                <div id="customFeaturesEditor"></div>
+                <button class="add-feature-btn" onclick="addCustomFeatureEditor()">➕ Přidat Feature</button>
+            </div>
+
+            <button onclick="saveSpellCharacter()" class="btn-success" style="width: 100%; padding: 12px; font-size: 1.1em; margin-top: 20px;">💾 Uložit změny</button>
         </div>
     </div>
 
@@ -1363,7 +1757,12 @@
                         monsterData: monster,
                         groupId: numGroups > 1 ? groupId : null,
                         groupName: numGroups > 1 ? groupName : null,
-                        revealedToPlayers: false  // Monstrum je na začátku skryté pro hráče
+                        revealedToPlayers: false,  // Monstrum je na začátku skryté pro hráče
+                        // Spell tracking properties
+                        spellcasterLevel: 0,
+                        spellSlots: {},
+                        customFeatures: [],
+                        hitDice: { max: 0, current: 0 }
                     };
 
                     characters.push(character);
@@ -1787,7 +2186,12 @@
                 initiative: null,
                 maxPower,
                 currentPower,
-                effects: []
+                effects: [],
+                // Spell tracking properties
+                spellcasterLevel: 0,
+                spellSlots: {},
+                customFeatures: [],
+                hitDice: { max: 0, current: 0 }
             };
 
             characters.push(character);
@@ -2453,7 +2857,12 @@
                         initiative: char.initiative,
                         monsterData: char.monsterData,
                         groupId: char.groupId,
-                        groupName: char.groupName
+                        groupName: char.groupName,
+                        // Spell tracking properties
+                        spellcasterLevel: char.spellcasterLevel,
+                        spellSlots: char.spellSlots,
+                        customFeatures: char.customFeatures,
+                        hitDice: char.hitDice
                     })),
                     combatState: combatState,
                     timestamp: new Date().toISOString()
@@ -2478,7 +2887,12 @@
                             effects: char.effects || [],
                             initiative: char.initiative || null,
                             groupId: char.groupId || null,
-                            groupName: char.groupName || null
+                            groupName: char.groupName || null,
+                            // Spell tracking properties
+                            spellcasterLevel: char.spellcasterLevel || 0,
+                            spellSlots: char.spellSlots || {},
+                            customFeatures: char.customFeatures || [],
+                            hitDice: char.hitDice || { max: 0, current: 0 }
                         }));
 
                         if (data.combatState) {
@@ -2857,7 +3271,12 @@
                     effects: char.effects,
                     monsterData: char.monsterData,
                     groupId: char.groupId,
-                    groupName: char.groupName
+                    groupName: char.groupName,
+                    // Spell tracking properties
+                    spellcasterLevel: char.spellcasterLevel,
+                    spellSlots: char.spellSlots,
+                    customFeatures: char.customFeatures,
+                    hitDice: char.hitDice
                 })),
                 timestamp: new Date().toISOString()
             };
@@ -2883,7 +3302,12 @@
                     effects: char.effects,
                     monsterData: char.monsterData,
                     groupId: char.groupId,
-                    groupName: char.groupName
+                    groupName: char.groupName,
+                    // Spell tracking properties
+                    spellcasterLevel: char.spellcasterLevel,
+                    spellSlots: char.spellSlots,
+                    customFeatures: char.customFeatures,
+                    hitDice: char.hitDice
                 })),
                 combatState: {
                     active: combatState.active,
@@ -2916,11 +3340,18 @@
                             ac: char.ac || 10,
                             effects: char.effects || [],
                             groupId: char.groupId || null,
-                            groupName: char.groupName || null
+                            groupName: char.groupName || null,
+                            // Spell tracking properties - zachovat pokud jsou v importu, jinak default
+                            spellcasterLevel: char.spellcasterLevel || 0,
+                            spellSlots: char.spellSlots || {},
+                            customFeatures: char.customFeatures || [],
+                            hitDice: char.hitDice || { max: 0, current: 0 }
                         }));
 
                         characters = characters.concat(newCharacters);
                         renderCharacters();
+                        populateSpellCharacterSelect(); // Refresh spell page character select
+                        syncToServer();
                         alert(`Úspěšně načteno ${newCharacters.length} postav!`);
                     } else {
                         alert('Neplatný formát souboru!');
@@ -2952,7 +3383,12 @@
                             groupId: char.groupId || null,
                             groupName: char.groupName || null,
                             // Backward compatibility: pokud není revealedToPlayers, nastav podle typu
-                            revealedToPlayers: char.revealedToPlayers !== undefined ? char.revealedToPlayers : (char.type === 'player')
+                            revealedToPlayers: char.revealedToPlayers !== undefined ? char.revealedToPlayers : (char.type === 'player'),
+                            // Spell tracking properties
+                            spellcasterLevel: char.spellcasterLevel || 0,
+                            spellSlots: char.spellSlots || {},
+                            customFeatures: char.customFeatures || [],
+                            hitDice: char.hitDice || { max: 0, current: 0 }
                         }));
 
                         // Obnovit stav boje
@@ -3087,6 +3523,559 @@
 
         if (characters.length === 0) {
             renderCharacters();
+        }
+
+        // ===== SPELL TRACKING FUNCTIONS =====
+
+        // D&D 5e Spell Slots Table
+        const SPELL_SLOTS_TABLE = {
+            1: [2, 0, 0, 0, 0, 0, 0, 0, 0],
+            2: [3, 0, 0, 0, 0, 0, 0, 0, 0],
+            3: [4, 2, 0, 0, 0, 0, 0, 0, 0],
+            4: [4, 3, 0, 0, 0, 0, 0, 0, 0],
+            5: [4, 3, 2, 0, 0, 0, 0, 0, 0],
+            6: [4, 3, 3, 0, 0, 0, 0, 0, 0],
+            7: [4, 3, 3, 1, 0, 0, 0, 0, 0],
+            8: [4, 3, 3, 2, 0, 0, 0, 0, 0],
+            9: [4, 3, 3, 3, 1, 0, 0, 0, 0],
+            10: [4, 3, 3, 3, 2, 0, 0, 0, 0],
+            11: [4, 3, 3, 3, 2, 1, 0, 0, 0],
+            12: [4, 3, 3, 3, 2, 1, 0, 0, 0],
+            13: [4, 3, 3, 3, 2, 1, 1, 0, 0],
+            14: [4, 3, 3, 3, 2, 1, 1, 0, 0],
+            15: [4, 3, 3, 3, 2, 1, 1, 1, 0],
+            16: [4, 3, 3, 3, 2, 1, 1, 1, 0],
+            17: [4, 3, 3, 3, 2, 1, 1, 1, 1],
+            18: [4, 3, 3, 3, 3, 1, 1, 1, 1],
+            19: [4, 3, 3, 3, 3, 2, 1, 1, 1],
+            20: [4, 3, 3, 3, 3, 2, 2, 1, 1]
+        };
+
+        let currentSpellCharacterId = null;
+
+        // Page Switching
+        function switchPage(pageName) {
+            // Hide all pages
+            document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
+            document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
+
+            // Show selected page
+            if (pageName === 'combat') {
+                document.getElementById('combatPage').classList.add('active');
+                document.querySelectorAll('.nav-btn')[0].classList.add('active');
+            } else if (pageName === 'spells') {
+                document.getElementById('spellsPage').classList.add('active');
+                document.querySelectorAll('.nav-btn')[1].classList.add('active');
+                populateSpellCharacterSelect();
+            }
+        }
+
+        // Populate character select dropdown with players only
+        function populateSpellCharacterSelect() {
+            const select = document.getElementById('spellCharacterSelect');
+            const playerCharacters = characters.filter(char => char.type === 'player');
+
+            select.innerHTML = '<option value="">-- Vyberte postavu --</option>';
+            playerCharacters.forEach(char => {
+                const option = document.createElement('option');
+                option.value = char.id;
+                option.textContent = char.name;
+                select.appendChild(option);
+            });
+
+            // If current character is still selected, keep it
+            if (currentSpellCharacterId) {
+                select.value = currentSpellCharacterId;
+                if (select.value !== currentSpellCharacterId) {
+                    // Character was removed, reset
+                    currentSpellCharacterId = null;
+                    document.getElementById('editSpellCharBtn').style.display = 'none';
+                    showEmptySpellState();
+                }
+            }
+        }
+
+        // Load selected character
+        function loadSpellCharacter() {
+            const select = document.getElementById('spellCharacterSelect');
+            const characterId = parseFloat(select.value);
+
+            if (!characterId) {
+                currentSpellCharacterId = null;
+                document.getElementById('editSpellCharBtn').style.display = 'none';
+                showEmptySpellState();
+                return;
+            }
+
+            currentSpellCharacterId = characterId;
+            document.getElementById('editSpellCharBtn').style.display = 'inline-block';
+            renderSpellTracking();
+        }
+
+        function showEmptySpellState() {
+            document.getElementById('spellTrackingContent').innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-icon">🎭</div>
+                    <h3>Vyberte postavu</h3>
+                    <p>Zvolte postavu ze seznamu výše pro správu spell slotů a abilities</p>
+                </div>
+            `;
+        }
+
+        // Render spell tracking for current character
+        function renderSpellTracking() {
+            const character = characters.find(c => c.id === currentSpellCharacterId);
+            if (!character) {
+                showEmptySpellState();
+                return;
+            }
+
+            // Initialize spell slots if needed
+            if (!character.spellSlots || Object.keys(character.spellSlots).length === 0) {
+                updateSpellSlotsForLevel(character);
+            }
+
+            let html = '';
+
+            // Spell Slots Section
+            if (character.spellcasterLevel > 0) {
+                html += '<h3 style="margin-bottom: 15px;">✨ Spell Sloty</h3>';
+                html += '<div class="spell-slots-container">';
+
+                for (let level = 1; level <= 9; level++) {
+                    const slots = character.spellSlots[level];
+                    if (slots && slots.max > 0) {
+                        html += `
+                            <div class="spell-level-group">
+                                <div class="spell-level-title">Level ${level} (${slots.max - slots.used}/${slots.max})</div>
+                                <div class="spell-slots">
+                        `;
+                        for (let i = 0; i < slots.max; i++) {
+                            const used = i < slots.used;
+                            html += `<div class="spell-slot ${used ? 'used' : ''}" onclick="toggleSpellSlot(${level}, ${i})"></div>`;
+                        }
+                        html += `
+                                </div>
+                            </div>
+                        `;
+                    }
+                }
+
+                html += '</div>';
+            } else {
+                html += '<p style="color: #7f8c8d; text-align: center; padding: 20px;">Postava nemá nastavený spellcaster level</p>';
+            }
+
+            // Hit Dice Section
+            html += `
+                <h3 style="margin-bottom: 15px; margin-top: 30px;">🎲 Hit Dice</h3>
+                <div class="hit-dice-container">
+                    <div class="hit-dice-display">
+                        <div class="hit-dice-title">${character.hitDice.current}/${character.hitDice.max} dostupných</div>
+                        <div class="hit-dice-controls">
+            `;
+            for (let i = 0; i < character.hitDice.max; i++) {
+                const used = i >= character.hitDice.current;
+                html += `<div class="hit-die ${used ? 'used' : ''}" onclick="toggleHitDie(${i})">d</div>`;
+            }
+            html += `
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // Custom Features Section
+            html += `
+                <h3 style="margin-bottom: 15px; margin-top: 30px;">🎯 Custom Features & Abilities</h3>
+                <div class="custom-features-container">
+            `;
+
+            if (character.customFeatures && character.customFeatures.length > 0) {
+                character.customFeatures.forEach((feature, index) => {
+                    const available = feature.maxUses - feature.used;
+                    const restType = feature.restType === 'short' ? 'Short Rest' : 'Long Rest';
+                    html += `
+                        <div class="feature-item">
+                            <div class="feature-info">
+                                <div class="feature-name">${feature.name}</div>
+                                <div class="feature-meta">
+                                    ${available}/${feature.maxUses} dostupných • Obnovení: ${restType}
+                                    ${feature.statusEffect ? ` • Status: ${feature.statusName}` : ''}
+                                </div>
+                            </div>
+                            <div class="feature-uses">
+                    `;
+                    for (let i = 0; i < feature.maxUses; i++) {
+                        const used = i < feature.used;
+                        html += `<div class="use-checkbox ${used ? 'used' : ''}" onclick="toggleCustomFeature(${index}, ${i})"></div>`;
+                    }
+                    html += `
+                            </div>
+                        </div>
+                    `;
+                });
+            } else {
+                html += '<p style="color: #7f8c8d; text-align: center; padding: 20px;">Žádné custom features. Klikněte na "Upravit" pro přidání.</p>';
+            }
+
+            html += '</div>';
+
+            // Rest Buttons
+            html += `
+                <div class="rest-buttons">
+                    <button class="rest-btn btn-warning" onclick="shortRest()">🌙 Short Rest</button>
+                    <button class="rest-btn btn-success" onclick="longRest()">☀️ Long Rest</button>
+                </div>
+            `;
+
+            document.getElementById('spellTrackingContent').innerHTML = html;
+        }
+
+        // Update spell slots based on character level
+        function updateSpellSlotsForLevel(character) {
+            const level = character.spellcasterLevel || 0;
+            if (level === 0) {
+                character.spellSlots = {};
+                return;
+            }
+
+            const slotsArray = SPELL_SLOTS_TABLE[level] || [];
+            const newSlots = {};
+
+            for (let i = 0; i < slotsArray.length; i++) {
+                const slotLevel = i + 1;
+                const maxSlots = slotsArray[i];
+                if (maxSlots > 0) {
+                    // Preserve used count if it exists
+                    const existingUsed = character.spellSlots[slotLevel]?.used || 0;
+                    newSlots[slotLevel] = {
+                        max: maxSlots,
+                        used: Math.min(existingUsed, maxSlots) // Don't exceed new max
+                    };
+                }
+            }
+
+            character.spellSlots = newSlots;
+        }
+
+        // Toggle spell slot
+        function toggleSpellSlot(level, slotIndex) {
+            saveState();
+            const character = characters.find(c => c.id === currentSpellCharacterId);
+            if (!character || !character.spellSlots[level]) return;
+
+            const slots = character.spellSlots[level];
+
+            // If clicking used slot, decrease used count
+            if (slotIndex < slots.used) {
+                slots.used = slotIndex;
+            } else {
+                // If clicking unused slot, mark up to this slot as used
+                slots.used = slotIndex + 1;
+            }
+
+            renderSpellTracking();
+            syncToServer();
+            saveToLocalStorage();
+        }
+
+        // Toggle hit die
+        function toggleHitDie(dieIndex) {
+            saveState();
+            const character = characters.find(c => c.id === currentSpellCharacterId);
+            if (!character) return;
+
+            // If clicking used die, restore up to this die
+            if (dieIndex >= character.hitDice.current) {
+                character.hitDice.current = dieIndex + 1;
+            } else {
+                // If clicking available die, use it
+                character.hitDice.current = dieIndex;
+            }
+
+            renderSpellTracking();
+            syncToServer();
+            saveToLocalStorage();
+        }
+
+        // Toggle custom feature use
+        function toggleCustomFeature(featureIndex, useIndex) {
+            saveState();
+            const character = characters.find(c => c.id === currentSpellCharacterId);
+            if (!character || !character.customFeatures[featureIndex]) return;
+
+            const feature = character.customFeatures[featureIndex];
+
+            // If clicking used checkbox, decrease used count
+            if (useIndex < feature.used) {
+                feature.used = useIndex;
+
+                // Remove status effect if exists
+                if (feature.statusEffect && feature.statusName) {
+                    const effectIndex = character.effects.findIndex(e => {
+                        const eName = typeof e === 'string' ? e : e.name;
+                        return eName === feature.statusName;
+                    });
+                    if (effectIndex !== -1) {
+                        character.effects.splice(effectIndex, 1);
+                    }
+                }
+            } else {
+                // If clicking unused checkbox, mark as used
+                feature.used = useIndex + 1;
+
+                // Add status effect if configured
+                if (feature.statusEffect && feature.statusName && useIndex === 0) {
+                    // Only add effect when marking first use
+                    const hasEffect = character.effects.some(e => {
+                        const eName = typeof e === 'string' ? e : e.name;
+                        return eName === feature.statusName;
+                    });
+                    if (!hasEffect) {
+                        character.effects.push(feature.statusName);
+                    }
+                }
+            }
+
+            renderSpellTracking();
+            renderCharacters(); // Update main character list to show effects
+            syncToServer();
+            saveToLocalStorage();
+        }
+
+        // Short Rest
+        function shortRest() {
+            saveState();
+            const character = characters.find(c => c.id === currentSpellCharacterId);
+            if (!character) return;
+
+            if (!confirm(`Provést Short Rest pro ${character.name}?\n\nObnoví: Short Rest features`)) {
+                return;
+            }
+
+            // Restore short rest features
+            if (character.customFeatures) {
+                character.customFeatures.forEach(feature => {
+                    if (feature.restType === 'short') {
+                        if (feature.regainType === 'all') {
+                            feature.used = 0;
+                        } else if (feature.regainType === 'fixed') {
+                            feature.used = Math.max(0, feature.used - feature.regainAmount);
+                        } else if (feature.regainType === 'input') {
+                            const regained = parseInt(prompt(`Kolik ${feature.name} se obnoví? (aktuálně použito: ${feature.used})`, feature.regainAmount || 1));
+                            if (!isNaN(regained)) {
+                                feature.used = Math.max(0, feature.used - regained);
+                            }
+                        }
+                    }
+                });
+            }
+
+            renderSpellTracking();
+            syncToServer();
+            saveToLocalStorage();
+            alert('Short Rest dokončen!');
+        }
+
+        // Long Rest
+        function longRest() {
+            saveState();
+            const character = characters.find(c => c.id === currentSpellCharacterId);
+            if (!character) return;
+
+            if (!confirm(`Provést Long Rest pro ${character.name}?\n\nObnoví: HP, spell sloty, long rest features a hit dice`)) {
+                return;
+            }
+
+            // Restore HP
+            character.currentHp = character.maxHp;
+            character.tempHp = 0;
+
+            // Restore all spell slots
+            Object.keys(character.spellSlots).forEach(level => {
+                character.spellSlots[level].used = 0;
+            });
+
+            // Restore long rest features
+            if (character.customFeatures) {
+                character.customFeatures.forEach(feature => {
+                    if (feature.restType === 'long') {
+                        if (feature.regainType === 'all') {
+                            feature.used = 0;
+                        } else if (feature.regainType === 'fixed') {
+                            feature.used = Math.max(0, feature.used - feature.regainAmount);
+                        } else if (feature.regainType === 'input') {
+                            const regained = parseInt(prompt(`Kolik ${feature.name} se obnoví? (aktuálně použito: ${feature.used})`, feature.regainAmount || 1));
+                            if (!isNaN(regained)) {
+                                feature.used = Math.max(0, feature.used - regained);
+                            }
+                        }
+                    }
+                });
+            }
+
+            // Restore hit dice (restore half of max, minimum 1)
+            character.hitDice.current = Math.max(1, Math.floor(character.hitDice.max / 2));
+
+            renderSpellTracking();
+            renderCharacters(); // Update main character list
+            syncToServer();
+            saveToLocalStorage();
+            alert('Long Rest dokončen!');
+        }
+
+        // Open edit modal
+        function openEditSpellCharacter() {
+            const character = characters.find(c => c.id === currentSpellCharacterId);
+            if (!character) return;
+
+            document.getElementById('editSpellCharName').textContent = character.name;
+            document.getElementById('spellcasterLevelInput').value = character.spellcasterLevel || 0;
+            document.getElementById('hitDiceMaxInput').value = character.hitDice?.max || 0;
+
+            // Render custom features editor
+            renderCustomFeaturesEditor();
+
+            document.getElementById('editSpellCharacterModal').style.display = 'block';
+        }
+
+        function closeEditSpellCharacter() {
+            document.getElementById('editSpellCharacterModal').style.display = 'none';
+        }
+
+        function renderCustomFeaturesEditor() {
+            const character = characters.find(c => c.id === currentSpellCharacterId);
+            if (!character) return;
+
+            const container = document.getElementById('customFeaturesEditor');
+            let html = '';
+
+            if (character.customFeatures && character.customFeatures.length > 0) {
+                character.customFeatures.forEach((feature, index) => {
+                    html += `
+                        <div class="feature-editor">
+                            <div class="feature-editor-row">
+                                <input type="text" placeholder="Název feature" value="${feature.name}" id="featureName${index}">
+                                <input type="number" placeholder="Max uses" value="${feature.maxUses}" id="featureMaxUses${index}" min="1">
+                            </div>
+                            <div class="feature-editor-row">
+                                <select id="featureRestType${index}">
+                                    <option value="short" ${feature.restType === 'short' ? 'selected' : ''}>Short Rest</option>
+                                    <option value="long" ${feature.restType === 'long' ? 'selected' : ''}>Long Rest</option>
+                                </select>
+                                <select id="featureRegainType${index}">
+                                    <option value="all" ${feature.regainType === 'all' ? 'selected' : ''}>Všechny</option>
+                                    <option value="fixed" ${feature.regainType === 'fixed' ? 'selected' : ''}>Fixní počet</option>
+                                    <option value="input" ${feature.regainType === 'input' ? 'selected' : ''}>Zadání hráčem</option>
+                                </select>
+                                <input type="number" placeholder="Regain amount" value="${feature.regainAmount || 0}" id="featureRegainAmount${index}" min="0">
+                            </div>
+                            <div class="feature-editor-row">
+                                <select id="featureStatusEffect${index}">
+                                    <option value="">-- Žádný status --</option>
+                                    <option value="buff" ${feature.statusEffect === 'buff' ? 'selected' : ''}>Buff</option>
+                                    <option value="neutral" ${feature.statusEffect === 'neutral' ? 'selected' : ''}>Neutral</option>
+                                </select>
+                                <input type="text" placeholder="Název statusu" value="${feature.statusName || ''}" id="featureStatusName${index}">
+                                <button class="remove-feature-btn" onclick="removeCustomFeature(${index})">❌ Odebrat</button>
+                            </div>
+                        </div>
+                    `;
+                });
+            } else {
+                html = '<p style="color: #7f8c8d; text-align: center; padding: 10px;">Žádné features</p>';
+            }
+
+            container.innerHTML = html;
+        }
+
+        function addCustomFeatureEditor() {
+            const character = characters.find(c => c.id === currentSpellCharacterId);
+            if (!character) return;
+
+            if (!character.customFeatures) {
+                character.customFeatures = [];
+            }
+
+            character.customFeatures.push({
+                name: 'Nová Feature',
+                maxUses: 1,
+                used: 0,
+                restType: 'short',
+                regainType: 'all',
+                regainAmount: 1,
+                statusEffect: '',
+                statusName: ''
+            });
+
+            renderCustomFeaturesEditor();
+        }
+
+        function removeCustomFeature(index) {
+            const character = characters.find(c => c.id === currentSpellCharacterId);
+            if (!character) return;
+
+            if (confirm('Opravdu chcete odstranit tuto feature?')) {
+                character.customFeatures.splice(index, 1);
+                renderCustomFeaturesEditor();
+            }
+        }
+
+        function saveSpellCharacter() {
+            saveState();
+            const character = characters.find(c => c.id === currentSpellCharacterId);
+            if (!character) return;
+
+            // Save spellcaster level
+            const newLevel = parseInt(document.getElementById('spellcasterLevelInput').value) || 0;
+            character.spellcasterLevel = newLevel;
+            updateSpellSlotsForLevel(character);
+
+            // Save hit dice
+            const newHitDiceMax = parseInt(document.getElementById('hitDiceMaxInput').value) || 0;
+            const oldMax = character.hitDice.max;
+            character.hitDice.max = newHitDiceMax;
+            // Adjust current if max changed
+            if (newHitDiceMax < character.hitDice.current) {
+                character.hitDice.current = newHitDiceMax;
+            } else if (newHitDiceMax > oldMax) {
+                // Increase current proportionally
+                character.hitDice.current = Math.min(newHitDiceMax, character.hitDice.current + (newHitDiceMax - oldMax));
+            }
+
+            // Save custom features
+            if (character.customFeatures) {
+                character.customFeatures.forEach((feature, index) => {
+                    const nameInput = document.getElementById(`featureName${index}`);
+                    const maxUsesInput = document.getElementById(`featureMaxUses${index}`);
+                    const restTypeSelect = document.getElementById(`featureRestType${index}`);
+                    const regainTypeSelect = document.getElementById(`featureRegainType${index}`);
+                    const regainAmountInput = document.getElementById(`featureRegainAmount${index}`);
+                    const statusEffectSelect = document.getElementById(`featureStatusEffect${index}`);
+                    const statusNameInput = document.getElementById(`featureStatusName${index}`);
+
+                    if (nameInput) feature.name = nameInput.value;
+                    if (maxUsesInput) {
+                        const newMax = parseInt(maxUsesInput.value) || 1;
+                        feature.maxUses = newMax;
+                        // Adjust used if it exceeds new max
+                        if (feature.used > newMax) {
+                            feature.used = newMax;
+                        }
+                    }
+                    if (restTypeSelect) feature.restType = restTypeSelect.value;
+                    if (regainTypeSelect) feature.regainType = regainTypeSelect.value;
+                    if (regainAmountInput) feature.regainAmount = parseInt(regainAmountInput.value) || 0;
+                    if (statusEffectSelect) feature.statusEffect = statusEffectSelect.value;
+                    if (statusNameInput) feature.statusName = statusNameInput.value;
+                });
+            }
+
+            closeEditSpellCharacter();
+            renderSpellTracking();
+            syncToServer();
+            saveToLocalStorage();
+            alert('Změny uloženy!');
         }
 
         // Initialize WebSocket
