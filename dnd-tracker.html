@@ -1183,9 +1183,9 @@
             <h3>⚙️ Upravit <span id="editSpellCharName"></span></h3>
 
             <div class="edit-form-group">
-                <label>✨ Spellcaster Level (0-20):</label>
-                <input type="number" id="spellcasterLevelInput" min="0" max="20" value="0">
-                <small style="color: #7f8c8d; display: block; margin-top: 3px;">Nastavte level pro automatické určení spell slotů podle D&D 5e pravidel</small>
+                <label>✨ Spellcaster Level (0-30, včetně Epic levelů):</label>
+                <input type="number" id="spellcasterLevelInput" min="0" max="30" value="0">
+                <small style="color: #7f8c8d; display: block; margin-top: 3px;">Levely 1-20 = standardní D&D 5e, levely 21-30 = Epic spell sloty</small>
             </div>
 
             <div class="edit-form-group">
@@ -3122,6 +3122,7 @@
                             <div>
                                 ${char.groupName ? `<button onclick="unlinkFromGroup(${char.id})" class="control-btn" style="background: #95a5a6;" title="Oddělit od skupiny">🔗</button>` : ''}
                                 ${char.type === 'monster' ? `<button onclick="duplicateMonster(${char.id})" class="btn-success control-btn">➕</button>` : ''}
+                                ${char.type === 'player' ? `<button onclick="openCharacterSheet(${char.id})" class="btn-purple control-btn" title="Character Sheet">📋</button>` : ''}
                                 <button onclick="removeCharacter(${char.id})" class="btn-danger control-btn">❌</button>
                             </div>
                             ` : ''}
@@ -3527,28 +3528,39 @@
 
         // ===== SPELL TRACKING FUNCTIONS =====
 
-        // D&D 5e Spell Slots Table
+        // D&D 5e Spell Slots Table (with Epic levels 21-30)
         const SPELL_SLOTS_TABLE = {
-            1: [2, 0, 0, 0, 0, 0, 0, 0, 0],
-            2: [3, 0, 0, 0, 0, 0, 0, 0, 0],
-            3: [4, 2, 0, 0, 0, 0, 0, 0, 0],
-            4: [4, 3, 0, 0, 0, 0, 0, 0, 0],
-            5: [4, 3, 2, 0, 0, 0, 0, 0, 0],
-            6: [4, 3, 3, 0, 0, 0, 0, 0, 0],
-            7: [4, 3, 3, 1, 0, 0, 0, 0, 0],
-            8: [4, 3, 3, 2, 0, 0, 0, 0, 0],
-            9: [4, 3, 3, 3, 1, 0, 0, 0, 0],
-            10: [4, 3, 3, 3, 2, 0, 0, 0, 0],
-            11: [4, 3, 3, 3, 2, 1, 0, 0, 0],
-            12: [4, 3, 3, 3, 2, 1, 0, 0, 0],
-            13: [4, 3, 3, 3, 2, 1, 1, 0, 0],
-            14: [4, 3, 3, 3, 2, 1, 1, 0, 0],
-            15: [4, 3, 3, 3, 2, 1, 1, 1, 0],
-            16: [4, 3, 3, 3, 2, 1, 1, 1, 0],
-            17: [4, 3, 3, 3, 2, 1, 1, 1, 1],
-            18: [4, 3, 3, 3, 3, 1, 1, 1, 1],
-            19: [4, 3, 3, 3, 3, 2, 1, 1, 1],
-            20: [4, 3, 3, 3, 3, 2, 2, 1, 1]
+            1: [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            2: [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            3: [4, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            4: [4, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            5: [4, 3, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            6: [4, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            7: [4, 3, 3, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+            8: [4, 3, 3, 2, 0, 0, 0, 0, 0, 0, 0, 0],
+            9: [4, 3, 3, 3, 1, 0, 0, 0, 0, 0, 0, 0],
+            10: [4, 3, 3, 3, 2, 0, 0, 0, 0, 0, 0, 0],
+            11: [4, 3, 3, 3, 2, 1, 0, 0, 0, 0, 0, 0],
+            12: [4, 3, 3, 3, 2, 1, 0, 0, 0, 0, 0, 0],
+            13: [4, 3, 3, 3, 2, 1, 1, 0, 0, 0, 0, 0],
+            14: [4, 3, 3, 3, 2, 1, 1, 0, 0, 0, 0, 0],
+            15: [4, 3, 3, 3, 2, 1, 1, 1, 0, 0, 0, 0],
+            16: [4, 3, 3, 3, 2, 1, 1, 1, 0, 0, 0, 0],
+            17: [4, 3, 3, 3, 2, 1, 1, 1, 1, 0, 0, 0],
+            18: [4, 3, 3, 3, 3, 1, 1, 1, 1, 0, 0, 0],
+            19: [4, 3, 3, 3, 3, 2, 1, 1, 1, 0, 0, 0],
+            20: [4, 3, 3, 3, 3, 2, 2, 1, 1, 0, 0, 0],
+            // Epic levels 21-30
+            21: [4, 3, 3, 3, 3, 2, 2, 1, 1, 2, 0, 0],  // 2x Epic 1
+            22: [4, 3, 3, 3, 3, 2, 2, 1, 1, 3, 0, 0],  // 3x Epic 1
+            23: [4, 3, 3, 3, 3, 2, 2, 1, 1, 3, 1, 0],  // 3x Epic 1, 1x Epic 2
+            24: [4, 3, 3, 3, 3, 2, 2, 1, 1, 3, 2, 0],  // 3x Epic 1, 2x Epic 2
+            25: [4, 3, 3, 3, 3, 2, 2, 1, 1, 3, 2, 0],  // 3x Epic 1, 2x Epic 2
+            26: [4, 3, 3, 3, 3, 2, 2, 1, 1, 3, 2, 1],  // 3x Epic 1, 2x Epic 2, 1x Epic 3
+            27: [4, 3, 3, 3, 3, 2, 2, 1, 1, 3, 2, 1],  // 3x Epic 1, 2x Epic 2, 1x Epic 3
+            28: [4, 3, 3, 3, 3, 2, 2, 1, 1, 3, 2, 1],  // 3x Epic 1, 2x Epic 2, 1x Epic 3
+            29: [4, 3, 3, 3, 3, 2, 2, 1, 1, 3, 2, 1],  // 3x Epic 1, 2x Epic 2, 1x Epic 3
+            30: [4, 3, 3, 3, 3, 2, 2, 1, 1, 3, 2, 1]   // 3x Epic 1, 2x Epic 2, 1x Epic 3
         };
 
         let currentSpellCharacterId = null;
@@ -3612,6 +3624,16 @@
             renderSpellTracking();
         }
 
+        // Open character sheet from character card
+        function openCharacterSheet(characterId) {
+            // Switch to spells page
+            switchPage('spells');
+            // Set the dropdown value
+            document.getElementById('spellCharacterSelect').value = characterId;
+            // Load the character
+            loadSpellCharacter();
+        }
+
         function showEmptySpellState() {
             document.getElementById('spellTrackingContent').innerHTML = `
                 <div class="empty-state">
@@ -3642,12 +3664,14 @@
                 html += '<h3 style="margin-bottom: 15px;">✨ Spell Sloty</h3>';
                 html += '<div class="spell-slots-container">';
 
-                for (let level = 1; level <= 9; level++) {
+                const maxLevel = character.spellcasterLevel > 20 ? 12 : 9;
+                for (let level = 1; level <= maxLevel; level++) {
                     const slots = character.spellSlots[level];
                     if (slots && slots.max > 0) {
+                        let levelName = level <= 9 ? `Level ${level}` : `Epic ${level - 9}`;
                         html += `
                             <div class="spell-level-group">
-                                <div class="spell-level-title">Level ${level} (${slots.max - slots.used}/${slots.max})</div>
+                                <div class="spell-level-title">${levelName} (${slots.max - slots.used}/${slots.max})</div>
                                 <div class="spell-slots">
                         `;
                         for (let i = 0; i < slots.max; i++) {
