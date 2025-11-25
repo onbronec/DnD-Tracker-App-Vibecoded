@@ -917,6 +917,7 @@
         <div class="nav-bar">
             <button class="nav-btn active" onclick="switchPage('combat')">⚔️ Combat Tracker</button>
             <button class="nav-btn" onclick="switchPage('spells')">✨ Spell & Ability Tracking</button>
+            <button class="nav-btn" onclick="switchPage('monsters')">👹 Monster Abilities</button>
         </div>
 
         <!-- Combat Tracker Page (Main Page) -->
@@ -999,6 +1000,32 @@
             </div>
         </div>
         <!-- End Spell Page -->
+
+        <!-- Monster Abilities Page -->
+        <div id="monstersPage" class="page">
+            <div class="section">
+                <div class="spell-page-header">
+                    <div>
+                        <h2>👹 Monster Abilities & Spellcasting</h2>
+                        <p style="color: #7f8c8d; font-size: 0.9em; margin-top: 5px;">Spravujte spell sloty, abilities a legendary actions pro monstra</p>
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <select id="monsterCharacterSelect" class="character-select" onchange="loadMonsterCharacter()">
+                            <option value="">-- Vyberte monstrum --</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div id="monsterAbilityContent">
+                    <div class="empty-state">
+                        <div class="empty-state-icon">👹</div>
+                        <h3>Vyberte monstrum</h3>
+                        <p>Zvolte monstrum ze seznamu výše pro správu abilities a spellcastingu</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <!-- End Monster Page -->
 
     </div>
     <!-- End Container -->
@@ -2505,6 +2532,11 @@
             const newChar = characters[combatState.currentTurn];
             if (newChar && newChar.type === 'monster') {
                 newChar.revealedToPlayers = true;
+
+                // Reset legendary actions at the start of monster's turn
+                if (newChar.monsterAbilities && newChar.monsterAbilities.legendaryActions && newChar.monsterAbilities.legendaryActions.enabled) {
+                    newChar.monsterAbilities.legendaryActions.used = 0;
+                }
             }
 
             updateInitiativeDisplay();
@@ -3717,6 +3749,7 @@
         };
 
         let currentSpellCharacterId = null;
+        let currentMonsterCharacterId = null;
 
         // Page Switching
         function switchPage(pageName) {
@@ -3732,6 +3765,10 @@
                 document.getElementById('spellsPage').classList.add('active');
                 document.querySelectorAll('.nav-btn')[1].classList.add('active');
                 populateSpellCharacterSelect();
+            } else if (pageName === 'monsters') {
+                document.getElementById('monstersPage').classList.add('active');
+                document.querySelectorAll('.nav-btn')[2].classList.add('active');
+                populateMonsterCharacterSelect();
             }
         }
 
@@ -3775,6 +3812,299 @@
             currentSpellCharacterId = characterId;
             document.getElementById('editSpellCharBtn').style.display = 'inline-block';
             renderSpellTracking();
+        }
+
+        // ===== MONSTER ABILITIES TRACKING FUNCTIONS =====
+
+        // Populate monster character select dropdown with monsters only
+        function populateMonsterCharacterSelect() {
+            const select = document.getElementById('monsterCharacterSelect');
+            const monsterCharacters = characters.filter(char => char.type === 'monster');
+
+            select.innerHTML = '<option value="">-- Vyberte monstrum --</option>';
+            monsterCharacters.forEach(char => {
+                const option = document.createElement('option');
+                option.value = char.id;
+                option.textContent = char.name;
+                select.appendChild(option);
+            });
+
+            // If current monster is still selected, keep it
+            if (currentMonsterCharacterId) {
+                select.value = currentMonsterCharacterId;
+                if (select.value !== currentMonsterCharacterId) {
+                    // Monster was removed, reset
+                    currentMonsterCharacterId = null;
+                    showEmptyMonsterState();
+                }
+            }
+        }
+
+        // Load selected monster
+        function loadMonsterCharacter() {
+            const select = document.getElementById('monsterCharacterSelect');
+            const characterId = parseFloat(select.value);
+
+            if (!characterId) {
+                currentMonsterCharacterId = null;
+                showEmptyMonsterState();
+                return;
+            }
+
+            currentMonsterCharacterId = characterId;
+            renderMonsterAbilities();
+        }
+
+        function showEmptyMonsterState() {
+            document.getElementById('monsterAbilityContent').innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-icon">👹</div>
+                    <h3>Vyberte monstrum</h3>
+                    <p>Zvolte monstrum ze seznamu výše pro správu abilities a spellcastingu</p>
+                </div>
+            `;
+        }
+
+        function renderMonsterAbilities() {
+            const monster = characters.find(c => c.id === currentMonsterCharacterId);
+            if (!monster) {
+                showEmptyMonsterState();
+                return;
+            }
+
+            // Initialize monsterAbilities if doesn't exist
+            if (!monster.monsterAbilities) {
+                monster.monsterAbilities = {
+                    enabled: false,
+                    spellcastingType: 'none', // 'none', 'per-day', or 'level-based'
+                    spellcastingLevel: 0,
+                    spellSlots: {},
+                    perDaySpells: [], // For per-day spellcasting
+                    legendaryActions: {
+                        enabled: false,
+                        max: 3,
+                        used: 0
+                    },
+                    customFeatures: []
+                };
+            }
+
+            let html = `
+                <div style="margin-bottom: 20px;">
+                    <h3 style="color: #3498db;">👹 ${monster.name}</h3>
+                    <p style="color: #7f8c8d; font-size: 0.9em;">Ability Tracker pro toto monstrum</p>
+                </div>
+            `;
+
+            const abilities = monster.monsterAbilities;
+
+            // Legendary Actions Section
+            if (abilities.legendaryActions && abilities.legendaryActions.enabled) {
+                html += `
+                    <div style="margin: 20px 0; padding: 15px; background: #fff3cd; border-radius: 8px;">
+                        <h4 style="color: #856404; margin-bottom: 10px;">⚡ Legendary Actions</h4>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span>Použito: ${abilities.legendaryActions.used} / ${abilities.legendaryActions.max}</span>
+                            <button class="control-btn btn-success" onclick="changeLegendaryActions(-1)">-1</button>
+                            <button class="control-btn btn-danger" onclick="changeLegendaryActions(1)">+1</button>
+                        </div>
+                        <small style="color: #856404; display: block; margin-top: 5px;">
+                            Automaticky se resetuje na začátku tahu monstra
+                        </small>
+                    </div>
+                `;
+            }
+
+            // Spellcasting Section
+            if (abilities.spellcastingType !== 'none') {
+                html += `<h3 style="margin: 20px 0;">✨ Spellcasting</h3>`;
+
+                if (abilities.spellcastingType === 'level-based' && abilities.spellcastingLevel > 0) {
+                    // Standard spell slots (like players)
+                    const slotsArray = SPELL_SLOTS_TABLE[abilities.spellcastingLevel] || [];
+                    html += `<div class="spell-slots-grid">`;
+
+                    for (let level = 1; level <= 9; level++) {
+                        const maxSlots = abilities.spellSlots[level]?.max || slotsArray[level - 1] || 0;
+                        if (maxSlots > 0) {
+                            const used = abilities.spellSlots[level]?.used || 0;
+                            html += `
+                                <div class="spell-level-container">
+                                    <div class="spell-level-header">
+                                        <span class="spell-level-label">Level ${level}</span>
+                                        <input type="number" min="0" value="${maxSlots}"
+                                               onchange="updateMonsterSpellSlotMax(${level}, this.value)"
+                                               style="width: 50px; padding: 3px;" title="Upravit počet slotů">
+                                    </div>
+                                    <div class="spell-slots">
+                            `;
+
+                            for (let i = 0; i < maxSlots; i++) {
+                                const slotUsed = i < used;
+                                html += `<div class="spell-slot ${slotUsed ? 'used' : ''}"
+                                              onclick="toggleMonsterSpellSlot(${level}, ${i})"></div>`;
+                            }
+
+                            html += `</div></div>`;
+                        }
+                    }
+                    html += `</div>`;
+                } else if (abilities.spellcastingType === 'per-day') {
+                    // Per-day spells
+                    html += `<p style="color: #7f8c8d; margin: 10px 0;">Per-day spellcasting (zatím neimplementováno - bude v další verzi)</p>`;
+                }
+            }
+
+            // Custom Features Section
+            html += `
+                <h3 style="margin: 30px 0 15px 0;">🎯 Custom Features & Abilities</h3>
+                <div class="custom-features-container">
+            `;
+
+            if (abilities.customFeatures && abilities.customFeatures.length > 0) {
+                abilities.customFeatures.forEach((feature, index) => {
+                    html += `
+                        <div class="feature-item">
+                            <div class="feature-info">
+                                <div class="feature-name">${feature.name}</div>
+                                <div class="feature-meta">${feature.used}/${feature.maxUses} použito</div>
+                            </div>
+                            <div class="feature-uses">
+                    `;
+
+                    if (feature.maxUses > 10) {
+                        const usagePercent = (feature.used / feature.maxUses) * 100;
+                        const barColorClass = usagePercent >= 75 ? 'low' : usagePercent >= 50 ? 'medium' : '';
+                        html += `
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <button class="control-btn btn-success" onclick="changeMonsterFeatureUses(${index}, -1)">-1</button>
+                                <div style="flex: 1; min-width: 150px;">
+                                    <div class="hp-bar">
+                                        <div class="hp-fill ${barColorClass}" style="width: ${usagePercent}%"></div>
+                                    </div>
+                                </div>
+                                <input type="number" class="custom-input" min="0" max="${feature.maxUses}" value="${feature.used}"
+                                       onchange="setMonsterFeatureUses(${index}, this.value)" style="width: 60px;">
+                                <button class="control-btn btn-danger" onclick="changeMonsterFeatureUses(${index}, 1)">+1</button>
+                            </div>
+                        `;
+                    } else {
+                        for (let i = 0; i < feature.maxUses; i++) {
+                            const used = i < feature.used;
+                            html += `<div class="use-checkbox ${used ? 'used' : ''}" onclick="toggleMonsterCustomFeature(${index}, ${i})"></div>`;
+                        }
+                    }
+
+                    html += `</div></div>`;
+                });
+            } else {
+                html += '<p style="color: #7f8c8d; text-align: center; padding: 20px;">Žádné custom features pro toto monstrum.</p>';
+            }
+
+            html += `</div>`;
+
+            html += `
+                <div style="margin-top: 30px; padding: 15px; background: #e8f5e9; border-radius: 8px;">
+                    <p style="color: #2e7d32; margin: 0;">
+                        <strong>ℹ️ Poznámka:</strong> Monster Ability Tracker je v základní verzi.
+                        Konfigurace abilities (přidání/úprava) zatím probíhá přes databázi monster a import funkci.
+                        Per-day spellcasting a plný auto-parser budou přidány v další verzi.
+                    </p>
+                </div>
+            `;
+
+            document.getElementById('monsterAbilityContent').innerHTML = html;
+        }
+
+        // Helper functions for monster abilities
+        function changeLegendaryActions(change) {
+            const monster = characters.find(c => c.id === currentMonsterCharacterId);
+            if (!monster || !monster.monsterAbilities) return;
+
+            const la = monster.monsterAbilities.legendaryActions;
+            la.used = Math.max(0, Math.min(la.max, la.used + change));
+
+            renderMonsterAbilities();
+            syncToServer();
+            saveToLocalStorage();
+        }
+
+        function toggleMonsterSpellSlot(level, slotIndex) {
+            const monster = characters.find(c => c.id === currentMonsterCharacterId);
+            if (!monster || !monster.monsterAbilities || !monster.monsterAbilities.spellSlots[level]) return;
+
+            const slots = monster.monsterAbilities.spellSlots[level];
+
+            if (slotIndex < slots.used) {
+                slots.used = slotIndex;
+            } else {
+                slots.used = slotIndex + 1;
+            }
+
+            renderMonsterAbilities();
+            syncToServer();
+            saveToLocalStorage();
+        }
+
+        function updateMonsterSpellSlotMax(level, newMax) {
+            const monster = characters.find(c => c.id === currentMonsterCharacterId);
+            if (!monster || !monster.monsterAbilities) return;
+
+            newMax = parseInt(newMax) || 0;
+            if (!monster.monsterAbilities.spellSlots[level]) {
+                monster.monsterAbilities.spellSlots[level] = { max: 0, used: 0 };
+            }
+
+            monster.monsterAbilities.spellSlots[level].max = newMax;
+            monster.monsterAbilities.spellSlots[level].used = Math.min(
+                monster.monsterAbilities.spellSlots[level].used,
+                newMax
+            );
+
+            renderMonsterAbilities();
+            syncToServer();
+            saveToLocalStorage();
+        }
+
+        function changeMonsterFeatureUses(featureIndex, change) {
+            const monster = characters.find(c => c.id === currentMonsterCharacterId);
+            if (!monster || !monster.monsterAbilities || !monster.monsterAbilities.customFeatures[featureIndex]) return;
+
+            const feature = monster.monsterAbilities.customFeatures[featureIndex];
+            feature.used = Math.max(0, Math.min(feature.maxUses, feature.used + change));
+
+            renderMonsterAbilities();
+            syncToServer();
+            saveToLocalStorage();
+        }
+
+        function setMonsterFeatureUses(featureIndex, value) {
+            const monster = characters.find(c => c.id === currentMonsterCharacterId);
+            if (!monster || !monster.monsterAbilities || !monster.monsterAbilities.customFeatures[featureIndex]) return;
+
+            const feature = monster.monsterAbilities.customFeatures[featureIndex];
+            feature.used = Math.max(0, Math.min(feature.maxUses, parseInt(value) || 0));
+
+            renderMonsterAbilities();
+            syncToServer();
+            saveToLocalStorage();
+        }
+
+        function toggleMonsterCustomFeature(featureIndex, useIndex) {
+            const monster = characters.find(c => c.id === currentMonsterCharacterId);
+            if (!monster || !monster.monsterAbilities || !monster.monsterAbilities.customFeatures[featureIndex]) return;
+
+            const feature = monster.monsterAbilities.customFeatures[featureIndex];
+
+            if (useIndex < feature.used) {
+                feature.used = useIndex;
+            } else {
+                feature.used = useIndex + 1;
+            }
+
+            renderMonsterAbilities();
+            syncToServer();
+            saveToLocalStorage();
         }
 
         // Open character sheet from character card
