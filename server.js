@@ -24,6 +24,32 @@ app.get('/', (req, res) => {
 // Autosave endpoints
 const AUTOSAVE_FILE = path.join(__dirname, 'dnd-tracker-autosave.json');
 
+// Load autosave on server start
+function loadAutosaveOnStartup() {
+    try {
+        if (fs.existsSync(AUTOSAVE_FILE)) {
+            const data = fs.readFileSync(AUTOSAVE_FILE, 'utf8');
+            const autosaveData = JSON.parse(data);
+
+            if (autosaveData.characters) {
+                gameState.characters = autosaveData.characters;
+            }
+            if (autosaveData.combatState) {
+                gameState.combatState = autosaveData.combatState;
+            }
+            if (autosaveData.monsterDatabase) {
+                gameState.monsterDatabase = autosaveData.monsterDatabase;
+            }
+
+            console.log('✅ Autosave loaded successfully from:', autosaveData.timestamp);
+        } else {
+            console.log('ℹ️  No autosave file found, starting with empty state');
+        }
+    } catch (error) {
+        console.error('❌ Error loading autosave on startup:', error);
+    }
+}
+
 app.post('/api/autosave', (req, res) => {
     try {
         const data = req.body;
@@ -240,4 +266,7 @@ server.listen(PORT, () => {
     console.log(`   http://${localIP}:${PORT}?mode=player`);
     console.log(`\n⚠️  Make sure all devices are on the same Wi-Fi network`);
     console.log('========================================\n');
+
+    // Load autosave after server starts
+    loadAutosaveOnStartup();
 });
