@@ -983,6 +983,7 @@
                         <p style="color: #7f8c8d; font-size: 0.9em; margin-top: 5px;">Spravujte spell sloty, abilities a hit dice pro postavy</p>
                     </div>
                     <div style="display: flex; gap: 10px; align-items: center;">
+                        <button onclick="backToInitiative('spellCharacterSelect')" class="control-btn" style="background: #3498db;" title="Zpět na iniciativu">⬅️ Initiative</button>
                         <select id="spellCharacterSelect" class="character-select" onchange="loadSpellCharacter()">
                             <option value="">-- Vyberte postavu --</option>
                         </select>
@@ -1010,6 +1011,7 @@
                         <p style="color: #7f8c8d; font-size: 0.9em; margin-top: 5px;">Spravujte spell sloty, abilities a legendary actions pro monstra</p>
                     </div>
                     <div style="display: flex; gap: 10px; align-items: center;">
+                        <button onclick="backToInitiative('monsterCharacterSelect')" class="control-btn" style="background: #3498db;" title="Zpět na iniciativu">⬅️ Initiative</button>
                         <select id="monsterCharacterSelect" class="character-select" onchange="loadMonsterCharacter()">
                             <option value="">-- Vyberte monstrum --</option>
                         </select>
@@ -2037,7 +2039,9 @@
                         spellcasterLevel: 0,
                         spellSlots: {},
                         customFeatures: [],
-                        hitDice: { max: 0, current: 0 }
+                        hitDice: { max: 0, current: 0 },
+                        // Monster Abilities - deep copy z databáze
+                        monsterAbilities: monster.monsterAbilities ? JSON.parse(JSON.stringify(monster.monsterAbilities)) : undefined
                     };
 
                     characters.push(character);
@@ -4693,6 +4697,40 @@
             document.getElementById('monsterCharacterSelect').value = characterId;
             // Load the monster
             loadMonsterCharacter();
+        }
+
+        // Back to Initiative from spell/monster abilities page
+        function backToInitiative(selectId) {
+            // Get selected character ID from dropdown
+            const characterId = document.getElementById(selectId).value;
+
+            // Switch to combat page
+            switchPage('combat');
+
+            // If a character is selected, scroll to it
+            if (characterId) {
+                // Wait a bit for the page to render
+                setTimeout(() => {
+                    // Find the character card element
+                    const characterCards = document.querySelectorAll('.character-card');
+                    for (let card of characterCards) {
+                        // Check if this card belongs to the character
+                        // We'll look for buttons with the character ID in their onclick
+                        const buttons = card.querySelectorAll('button[onclick*="(' + characterId + ')"]');
+                        if (buttons.length > 0) {
+                            // Scroll to this card
+                            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            // Optionally highlight it briefly
+                            card.style.transition = 'all 0.3s';
+                            card.style.boxShadow = '0 0 20px rgba(52, 152, 219, 0.6)';
+                            setTimeout(() => {
+                                card.style.boxShadow = '';
+                            }, 2000);
+                            break;
+                        }
+                    }
+                }, 100);
+            }
         }
 
         function showEmptySpellState() {
