@@ -1200,6 +1200,59 @@
                     </div>
                 </div>
 
+                <!-- Monster Abilities Editor -->
+                <div style="background: #e8f5e9; padding: 15px; border-radius: 5px; margin-bottom: 15px;">
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                        <input type="checkbox" id="editMonsterAbilitiesEnabled" onchange="toggleMonsterAbilitiesEditor()">
+                        <h4 style="margin: 0; color: #27ae60;">👹 Monster Ability Tracker</h4>
+                    </div>
+                    <small style="color: #7f8c8d; display: block; margin-bottom: 10px;">Aktivujte pro tracking spellů, custom features a legendary actions</small>
+
+                    <div id="monsterAbilitiesEditorContent" style="display: none;">
+                        <!-- Spellcasting Type -->
+                        <div style="margin-bottom: 15px;">
+                            <label style="display: block; margin-bottom: 5px;"><strong>Spellcasting Type:</strong></label>
+                            <select id="editMonsterSpellcastingType" style="width: 100%; padding: 8px;" onchange="updateSpellcastingEditor()">
+                                <option value="none">Žádné spellcasting</option>
+                                <option value="per-day">Per-day (At Will, 3/Day, 1/Day...)</option>
+                                <option value="level-based">Level-based (standardní spell sloty)</option>
+                            </select>
+                        </div>
+
+                        <!-- Level-based Spellcasting Level -->
+                        <div id="editMonsterSpellcastingLevelContainer" style="display: none; margin-bottom: 15px;">
+                            <label style="display: block; margin-bottom: 5px;"><strong>Spellcaster Level:</strong></label>
+                            <input type="number" id="editMonsterSpellcastingLevel" min="1" max="30" value="1" style="width: 100%; padding: 8px;">
+                        </div>
+
+                        <!-- Per-Day Spells Editor -->
+                        <div id="editMonsterPerDaySpells" style="display: none; margin-bottom: 15px;">
+                            <label style="display: block; margin-bottom: 5px;"><strong>Per-Day Spells:</strong></label>
+                            <div id="perDaySpellsList" style="margin-bottom: 10px;"></div>
+                            <button onclick="addPerDaySpell()" class="btn-success control-btn" style="width: 100%;">➕ Přidat Spell</button>
+                        </div>
+
+                        <!-- Custom Features Editor -->
+                        <div style="margin-bottom: 15px;">
+                            <label style="display: block; margin-bottom: 5px;"><strong>Custom Features:</strong></label>
+                            <div id="customFeaturesList" style="margin-bottom: 10px;"></div>
+                            <button onclick="addCustomFeatureToMonster()" class="btn-success control-btn" style="width: 100%;">➕ Přidat Custom Feature</button>
+                        </div>
+
+                        <!-- Legendary Actions Editor -->
+                        <div style="margin-bottom: 15px;">
+                            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                                <input type="checkbox" id="editMonsterLegendaryEnabled">
+                                <label style="margin: 0;"><strong>Legendary Actions</strong></label>
+                            </div>
+                            <div style="margin-left: 25px;">
+                                <label style="display: block; margin-bottom: 5px;">Maximální počet:</label>
+                                <input type="number" id="editMonsterLegendaryMax" min="1" max="10" value="3" style="width: 100px; padding: 8px;">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <button onclick="saveEditedMonster()" class="btn-success" style="width: 100%; padding: 12px; font-size: 1.1em;">💾 Uložit změny</button>
             </div>
         </div>
@@ -1590,6 +1643,8 @@
                     customFeatures: []
                 };
 
+                console.log('🔍 Parser Debug - Starting Monster Abilities parsing');
+
                 // Detect Spellcasting from actions
                 const spellcastingBlock = monster.actions.find(action =>
                     action.toLowerCase().includes('spellcasting') ||
@@ -1597,11 +1652,13 @@
                 );
 
                 if (spellcastingBlock) {
+                    console.log('✅ Found spellcasting block:', spellcastingBlock.substring(0, 100));
                     monster.monsterAbilities.enabled = true;
 
                     // Check for level-based spellcasting
                     const levelMatch = spellcastingBlock.match(/(\d+)(?:th|st|nd|rd)[-\s]level\s+spellcaster/i);
                     if (levelMatch) {
+                        console.log('✅ Level-based spellcasting detected, level:', levelMatch[1]);
                         monster.monsterAbilities.spellcastingType = 'level-based';
                         monster.monsterAbilities.spellcastingLevel = parseInt(levelMatch[1]);
 
@@ -1611,6 +1668,7 @@
                         while ((match = customSlotsRegex.exec(spellcastingBlock)) !== null) {
                             const spellLevel = parseInt(match[1]);
                             const slotCount = parseInt(match[2]);
+                            console.log(`  Slot: Level ${spellLevel} = ${slotCount} slots`);
                             monster.monsterAbilities.spellSlots[spellLevel] = {
                                 max: slotCount,
                                 used: 0
@@ -1619,24 +1677,65 @@
                     }
                     // Check for per-day spellcasting
                     else if (spellcastingBlock.match(/at will|\/day/i)) {
+                        console.log('✅ Per-day spellcasting detected');
                         monster.monsterAbilities.spellcastingType = 'per-day';
 
-                        // Parse per-day spells
-                        const perDayRegex = /(?:(\d+)\/day|at will)[^:]*:\s*([^\n]+)/gi;
-                        let pdMatch;
-                        while ((pdMatch = perDayRegex.exec(spellcastingBlock)) !== null) {
-                            const uses = pdMatch[1] ? parseInt(pdMatch[1]) : 999;
-                            const spellsText = pdMatch[2];
+                        // Parse per-day spells - improved regex for multiline
+                        // Match: "At Will:", "3/Day:", "1/Day:" followed by spell list until next usage line or end
+                        const lines = spellcastingBlock.split('\n');
+                        let currentUses = null;
+                        let currentSpells = [];
 
-                            const spells = spellsText
-                                .split(',')
-                                .map(s => s.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').trim())
-                                .filter(s => s.length > 0);
+                        for (let line of lines) {
+                            // Check if line starts with usage pattern
+                            const usageMatch = line.match(/^((?:(\d+)\/[Dd]ay)|(?:[Aa]t [Ww]ill))[^:]*:\s*(.*)$/);
+                            if (usageMatch) {
+                                // Save previous group
+                                if (currentUses !== null && currentSpells.length > 0) {
+                                    currentSpells.forEach(spellName => {
+                                        console.log(`  Adding spell: ${spellName} (${currentUses === 999 ? 'At Will' : currentUses + '/Day'})`);
+                                        monster.monsterAbilities.perDaySpells.push({
+                                            name: spellName,
+                                            maxUses: currentUses,
+                                            used: 0
+                                        });
+                                    });
+                                }
 
-                            spells.forEach(spellName => {
+                                // Start new group
+                                currentUses = usageMatch[2] ? parseInt(usageMatch[2]) : 999; // At will = 999
+                                currentSpells = [];
+
+                                // Parse spells on same line
+                                const spellsOnLine = usageMatch[3];
+                                if (spellsOnLine && spellsOnLine.trim()) {
+                                    const spells = spellsOnLine
+                                        .split(',')
+                                        .map(s => s.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').trim())
+                                        .filter(s => s.length > 0 && !s.match(/^counterspells?$/i)); // Skip "Counterspells:" label
+
+                                    currentSpells.push(...spells);
+                                }
+                            } else if (currentUses !== null && line.trim()) {
+                                // Continue parsing spells from continuation lines
+                                const spells = line
+                                    .split(',')
+                                    .map(s => s.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').trim())
+                                    .filter(s => s.length > 0 && !s.match(/^[\-•]\s*$/) && !s.match(/^counterspells?$/i));
+
+                                if (spells.length > 0) {
+                                    currentSpells.push(...spells);
+                                }
+                            }
+                        }
+
+                        // Save last group
+                        if (currentUses !== null && currentSpells.length > 0) {
+                            currentSpells.forEach(spellName => {
+                                console.log(`  Adding spell: ${spellName} (${currentUses === 999 ? 'At Will' : currentUses + '/Day'})`);
                                 monster.monsterAbilities.perDaySpells.push({
                                     name: spellName,
-                                    maxUses: uses,
+                                    maxUses: currentUses,
                                     used: 0
                                 });
                             });
@@ -1646,6 +1745,7 @@
 
                 // Detect Legendary Actions
                 if (monster.legendaryActions && monster.legendaryActions.length > 0) {
+                    console.log('✅ Legendary Actions detected');
                     monster.monsterAbilities.enabled = true;
                     monster.monsterAbilities.legendaryActions.enabled = true;
 
@@ -1653,43 +1753,52 @@
                     const laCountMatch = laText.match(/can take (\d+) legendary action/i);
                     if (laCountMatch) {
                         monster.monsterAbilities.legendaryActions.max = parseInt(laCountMatch[1]);
+                        console.log(`  Count: ${monster.monsterAbilities.legendaryActions.max}`);
                     }
                 }
 
-                // Parse custom features
+                // Parse custom features - improved to handle multiline traits
                 const allTraits = [
                     ...monster.defensiveTraits,
                     ...monster.traits,
                     ...monster.bonusActions
                 ];
 
-                allTraits.forEach(trait => {
-                    const featureMatch = trait.match(/^\*\*([^(]+?)\s*\(([^)]+)\)\*\*/);
+                console.log(`🔍 Checking ${allTraits.length} traits for custom features`);
+                allTraits.forEach((trait, idx) => {
+                    // Match pattern at start: **Name (usage).**
+                    const featureMatch = trait.match(/^\*\*([^(]+?)\s*\(([^)]+)\)\.\*\*/);
                     if (featureMatch) {
                         const featureName = featureMatch[1].trim();
                         const usageInfo = featureMatch[2].trim();
+                        console.log(`  Checking trait ${idx}: "${featureName}" with usage "${usageInfo}"`);
 
                         let maxUses = 0;
                         let restType = 'none';
 
-                        if (usageInfo.match(/(\d+)\/long\s*rest/i)) {
-                            const match = usageInfo.match(/(\d+)\/long\s*rest/i);
+                        if (usageInfo.match(/(\d+)\/[Ll]ong\s*[Rr]est/i)) {
+                            const match = usageInfo.match(/(\d+)\/[Ll]ong\s*[Rr]est/i);
                             maxUses = parseInt(match[1]);
                             restType = 'long';
-                        } else if (usageInfo.match(/(\d+)\/short\s*rest/i)) {
-                            const match = usageInfo.match(/(\d+)\/short\s*rest/i);
+                            console.log(`    ✅ Matched: ${maxUses}/Long Rest`);
+                        } else if (usageInfo.match(/(\d+)\/[Ss]hort\s*[Rr]est/i)) {
+                            const match = usageInfo.match(/(\d+)\/[Ss]hort\s*[Rr]est/i);
                             maxUses = parseInt(match[1]);
                             restType = 'short';
-                        } else if (usageInfo.match(/(\d+)\/day/i)) {
-                            const match = usageInfo.match(/(\d+)\/day/i);
+                            console.log(`    ✅ Matched: ${maxUses}/Short Rest`);
+                        } else if (usageInfo.match(/(\d+)\/[Dd]ay/i)) {
+                            const match = usageInfo.match(/(\d+)\/[Dd]ay/i);
                             maxUses = parseInt(match[1]);
                             restType = 'day';
-                        } else if (usageInfo.match(/recharge\s*(\d+)/i)) {
+                            console.log(`    ✅ Matched: ${maxUses}/Day`);
+                        } else if (usageInfo.match(/[Rr]echarge\s*(\d+)/i)) {
                             maxUses = 1;
                             restType = 'recharge';
-                        } else if (usageInfo.match(/1\/rest/i)) {
+                            console.log(`    ✅ Matched: Recharge`);
+                        } else if (usageInfo.match(/1\/[Rr]est/i)) {
                             maxUses = 1;
                             restType = 'long';
+                            console.log(`    ✅ Matched: 1/Rest`);
                         }
 
                         if (maxUses > 0) {
@@ -1700,9 +1809,17 @@
                                 used: 0,
                                 restType: restType
                             });
+                            console.log(`    ➕ Added custom feature: ${featureName} (${maxUses} uses)`);
                         }
                     }
                 });
+
+                console.log('🔍 Parser Debug - Monster Abilities Summary:');
+                console.log(`  Enabled: ${monster.monsterAbilities.enabled}`);
+                console.log(`  Spellcasting Type: ${monster.monsterAbilities.spellcastingType}`);
+                console.log(`  Per-Day Spells: ${monster.monsterAbilities.perDaySpells.length}`);
+                console.log(`  Custom Features: ${monster.monsterAbilities.customFeatures.length}`);
+                console.log(`  Legendary Actions: ${monster.monsterAbilities.legendaryActions.enabled}`);
 
                 // Pokud nemáme jméno, zkus najít první nadpis
                 if (!monster.name) {
@@ -1967,6 +2084,39 @@
             document.getElementById('editMonsterPowerName').value = monster.powerName || 'Power';
             document.getElementById('editMonsterMaxPower').value = monster.maxPower || 0;
 
+            // Initialize monsterAbilities if not present
+            if (!monster.monsterAbilities) {
+                monster.monsterAbilities = {
+                    enabled: false,
+                    spellcastingType: 'none',
+                    spellcastingLevel: 0,
+                    spellSlots: {},
+                    perDaySpells: [],
+                    legendaryActions: {
+                        enabled: false,
+                        max: 3,
+                        used: 0
+                    },
+                    customFeatures: []
+                };
+            }
+
+            // Naplň Monster Abilities formulář
+            const abilities = monster.monsterAbilities;
+            document.getElementById('editMonsterAbilitiesEnabled').checked = abilities.enabled;
+            document.getElementById('editMonsterSpellcastingType').value = abilities.spellcastingType || 'none';
+            document.getElementById('editMonsterSpellcastingLevel').value = abilities.spellcastingLevel || 1;
+            document.getElementById('editMonsterLegendaryEnabled').checked = abilities.legendaryActions.enabled;
+            document.getElementById('editMonsterLegendaryMax').value = abilities.legendaryActions.max || 3;
+
+            // Zobraz/skryj editor content
+            toggleMonsterAbilitiesEditor();
+            updateSpellcastingEditor();
+
+            // Renderuj seznamy
+            renderPerDaySpellsList();
+            renderCustomFeaturesList();
+
             document.getElementById('editMonsterModal').style.display = 'block';
         }
 
@@ -1991,12 +2141,176 @@
             monster.powerName = document.getElementById('editMonsterPowerName').value || 'Power';
             monster.maxPower = parseInt(document.getElementById('editMonsterMaxPower').value) || 0;
 
+            // Aktualizuj Monster Abilities
+            if (!monster.monsterAbilities) {
+                monster.monsterAbilities = {
+                    enabled: false,
+                    spellcastingType: 'none',
+                    spellcastingLevel: 0,
+                    spellSlots: {},
+                    perDaySpells: [],
+                    legendaryActions: { enabled: false, max: 3, used: 0 },
+                    customFeatures: []
+                };
+            }
+
+            monster.monsterAbilities.enabled = document.getElementById('editMonsterAbilitiesEnabled').checked;
+            monster.monsterAbilities.spellcastingType = document.getElementById('editMonsterSpellcastingType').value;
+            monster.monsterAbilities.spellcastingLevel = parseInt(document.getElementById('editMonsterSpellcastingLevel').value) || 1;
+            monster.monsterAbilities.legendaryActions.enabled = document.getElementById('editMonsterLegendaryEnabled').checked;
+            monster.monsterAbilities.legendaryActions.max = parseInt(document.getElementById('editMonsterLegendaryMax').value) || 3;
+
+            // perDaySpells a customFeatures jsou již uloženy v monster objektu během editace
+
             // Ulož do localStorage a aktualizuj zobrazení
             saveMonsterDatabaseToStorage();
             renderMonsterList();
             closeEditMonsterModal();
 
             alert('Monstrum aktualizováno!');
+        }
+
+        // ===== MONSTER ABILITIES EDITOR FUNCTIONS =====
+
+        function toggleMonsterAbilitiesEditor() {
+            const enabled = document.getElementById('editMonsterAbilitiesEnabled').checked;
+            const content = document.getElementById('monsterAbilitiesEditorContent');
+            content.style.display = enabled ? 'block' : 'none';
+        }
+
+        function updateSpellcastingEditor() {
+            const spellcastingType = document.getElementById('editMonsterSpellcastingType').value;
+            const levelContainer = document.getElementById('editMonsterSpellcastingLevelContainer');
+            const perDayContainer = document.getElementById('editMonsterPerDaySpells');
+
+            levelContainer.style.display = spellcastingType === 'level-based' ? 'block' : 'none';
+            perDayContainer.style.display = spellcastingType === 'per-day' ? 'block' : 'none';
+        }
+
+        function renderPerDaySpellsList() {
+            if (!currentEditingMonsterId) return;
+            const monster = monsterDatabase.find(m => m.id === currentEditingMonsterId);
+            if (!monster || !monster.monsterAbilities) return;
+
+            const listDiv = document.getElementById('perDaySpellsList');
+            const spells = monster.monsterAbilities.perDaySpells || [];
+
+            if (spells.length === 0) {
+                listDiv.innerHTML = '<p style="color: #7f8c8d; font-style: italic;">Žádné per-day spells</p>';
+                return;
+            }
+
+            listDiv.innerHTML = spells.map((spell, idx) => `
+                <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 8px; padding: 8px; background: #f8f9fa; border-radius: 5px;">
+                    <input type="text" value="${spell.name}" onchange="updatePerDaySpell(${idx}, 'name', this.value)" style="flex: 2; padding: 5px;">
+                    <input type="number" value="${spell.maxUses}" onchange="updatePerDaySpell(${idx}, 'maxUses', this.value)" min="1" max="999" style="width: 80px; padding: 5px;" placeholder="Max">
+                    <small style="color: #7f8c8d;">${spell.maxUses === 999 ? 'At Will' : spell.maxUses + '/Day'}</small>
+                    <button onclick="removePerDaySpell(${idx})" class="btn-danger control-btn">🗑️</button>
+                </div>
+            `).join('');
+        }
+
+        function addPerDaySpell() {
+            if (!currentEditingMonsterId) return;
+            const monster = monsterDatabase.find(m => m.id === currentEditingMonsterId);
+            if (!monster || !monster.monsterAbilities) return;
+
+            monster.monsterAbilities.perDaySpells.push({
+                name: 'Nový spell',
+                maxUses: 3,
+                used: 0
+            });
+
+            renderPerDaySpellsList();
+        }
+
+        function updatePerDaySpell(index, field, value) {
+            if (!currentEditingMonsterId) return;
+            const monster = monsterDatabase.find(m => m.id === currentEditingMonsterId);
+            if (!monster || !monster.monsterAbilities) return;
+
+            if (field === 'name') {
+                monster.monsterAbilities.perDaySpells[index].name = value;
+            } else if (field === 'maxUses') {
+                monster.monsterAbilities.perDaySpells[index].maxUses = parseInt(value) || 1;
+                renderPerDaySpellsList(); // Re-render to update the label
+            }
+        }
+
+        function removePerDaySpell(index) {
+            if (!currentEditingMonsterId) return;
+            const monster = monsterDatabase.find(m => m.id === currentEditingMonsterId);
+            if (!monster || !monster.monsterAbilities) return;
+
+            monster.monsterAbilities.perDaySpells.splice(index, 1);
+            renderPerDaySpellsList();
+        }
+
+        function renderCustomFeaturesList() {
+            if (!currentEditingMonsterId) return;
+            const monster = monsterDatabase.find(m => m.id === currentEditingMonsterId);
+            if (!monster || !monster.monsterAbilities) return;
+
+            const listDiv = document.getElementById('customFeaturesList');
+            const features = monster.monsterAbilities.customFeatures || [];
+
+            if (features.length === 0) {
+                listDiv.innerHTML = '<p style="color: #7f8c8d; font-style: italic;">Žádné custom features</p>';
+                return;
+            }
+
+            listDiv.innerHTML = features.map((feature, idx) => `
+                <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 8px; padding: 8px; background: #f8f9fa; border-radius: 5px;">
+                    <input type="text" value="${feature.name}" onchange="updateCustomFeature(${idx}, 'name', this.value)" style="flex: 2; padding: 5px;">
+                    <input type="number" value="${feature.maxUses}" onchange="updateCustomFeature(${idx}, 'maxUses', this.value)" min="1" max="99" style="width: 70px; padding: 5px;" placeholder="Uses">
+                    <select onchange="updateCustomFeature(${idx}, 'restType', this.value)" style="padding: 5px;">
+                        <option value="long" ${feature.restType === 'long' ? 'selected' : ''}>Long Rest</option>
+                        <option value="short" ${feature.restType === 'short' ? 'selected' : ''}>Short Rest</option>
+                        <option value="day" ${feature.restType === 'day' ? 'selected' : ''}>Day</option>
+                        <option value="recharge" ${feature.restType === 'recharge' ? 'selected' : ''}>Recharge</option>
+                        <option value="none" ${feature.restType === 'none' ? 'selected' : ''}>None</option>
+                    </select>
+                    <button onclick="removeCustomFeature(${idx})" class="btn-danger control-btn">🗑️</button>
+                </div>
+            `).join('');
+        }
+
+        function addCustomFeatureToMonster() {
+            if (!currentEditingMonsterId) return;
+            const monster = monsterDatabase.find(m => m.id === currentEditingMonsterId);
+            if (!monster || !monster.monsterAbilities) return;
+
+            monster.monsterAbilities.customFeatures.push({
+                name: 'Nový feature',
+                maxUses: 3,
+                used: 0,
+                restType: 'long'
+            });
+
+            renderCustomFeaturesList();
+        }
+
+        function updateCustomFeature(index, field, value) {
+            if (!currentEditingMonsterId) return;
+            const monster = monsterDatabase.find(m => m.id === currentEditingMonsterId);
+            if (!monster || !monster.monsterAbilities) return;
+
+            if (field === 'name') {
+                monster.monsterAbilities.customFeatures[index].name = value;
+            } else if (field === 'maxUses') {
+                monster.monsterAbilities.customFeatures[index].maxUses = parseInt(value) || 1;
+            } else if (field === 'restType') {
+                monster.monsterAbilities.customFeatures[index].restType = value;
+            }
+        }
+
+        function removeCustomFeature(index) {
+            if (!currentEditingMonsterId) return;
+            const monster = monsterDatabase.find(m => m.id === currentEditingMonsterId);
+            if (!monster || !monster.monsterAbilities) return;
+
+            monster.monsterAbilities.customFeatures.splice(index, 1);
+            renderCustomFeaturesList();
         }
 
         // Tooltip systém
