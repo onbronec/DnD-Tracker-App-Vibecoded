@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const socketIO = require('socket.io');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const server = http.createServer(app);
@@ -9,12 +10,44 @@ const io = socketIO(server);
 
 const PORT = 3000;
 
+// Middleware for parsing JSON
+app.use(express.json({ limit: '50mb' }));
+
 // Serve static files
 app.use(express.static(__dirname));
 
 // Serve the main HTML file for root path
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'dnd-tracker.html'));
+});
+
+// Autosave endpoints
+const AUTOSAVE_FILE = path.join(__dirname, 'dnd-tracker-autosave.json');
+
+app.post('/api/autosave', (req, res) => {
+    try {
+        const data = req.body;
+        fs.writeFileSync(AUTOSAVE_FILE, JSON.stringify(data, null, 2), 'utf8');
+        console.log('Autosave created successfully');
+        res.json({ success: true, message: 'Autosave created' });
+    } catch (error) {
+        console.error('Error creating autosave:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/api/autosave', (req, res) => {
+    try {
+        if (fs.existsSync(AUTOSAVE_FILE)) {
+            const data = fs.readFileSync(AUTOSAVE_FILE, 'utf8');
+            res.json({ success: true, data: JSON.parse(data) });
+        } else {
+            res.json({ success: false, message: 'No autosave found' });
+        }
+    } catch (error) {
+        console.error('Error loading autosave:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
 });
 
 // Game state stored in memory
