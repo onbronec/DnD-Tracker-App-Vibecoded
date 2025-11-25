@@ -931,6 +931,7 @@
                 <button onclick="document.getElementById('combatFileInput').click()" class="btn-success">⚔️ Načíst stav boje</button>
                 <input type="file" id="combatFileInput" accept=".json" onchange="loadCombatState(event)" style="display:none;">
                 <button onclick="openMonsterDatabase()" class="btn-purple">📚 Databáze monster</button>
+                <button onclick="saveAutosave()" class="btn-success" title="Vytvoří autosave s aktuálním stavem aplikace">💾 Autosave</button>
                 <button onclick="clearAll()" class="btn-danger">🗑️ Vymazat vše</button>
             </div>
         </div>
@@ -1013,6 +1014,7 @@
                 <button onclick="exportMonsterDatabase()" class="btn-warning">💾 Exportovat databázi</button>
                 <button onclick="document.getElementById('monsterDbFileInput').click()">📂 Importovat databázi</button>
                 <input type="file" id="monsterDbFileInput" accept=".json" onchange="importMonsterDatabase(event)" style="display:none;">
+                <button onclick="clearMonsterDatabase()" class="btn-danger">🗑️ Vyčistit databázi</button>
             </div>
 
             <div id="monsterList" style="max-height: 500px; overflow-y: auto;"></div>
@@ -2010,6 +2012,18 @@
             event.target.value = '';
         }
 
+        function clearMonsterDatabase() {
+            if (!confirm('Opravdu chcete vymazat celou databázi monster?\n\nTato akce je nevratná!')) {
+                return;
+            }
+
+            monsterDatabase = [];
+            saveMonsterDatabaseToStorage();
+            renderMonsterList();
+            syncToServer();
+            alert('Databáze monster byla vyčištěna.');
+        }
+
         // ===== FILE NAME MODAL FUNCTIONS =====
         let fileNameCallback = null;
         let currentFileData = null;
@@ -2460,6 +2474,7 @@
             updateInitiativeDisplay();
             renderCharacters();
             syncToServer();
+            saveAutosave(); // Autosave when combat starts
         }
 
         function nextTurn() {
@@ -2479,6 +2494,11 @@
                 combatState.round++;
                 combatState.currentTurn = 0;
                 combatState.playedThisRound = [];
+
+                // Autosave at the start of new round (except first round)
+                if (combatState.round > 1) {
+                    saveAutosave();
+                }
             }
 
             // Odhal novou postavu na tahu (pokud je to monstrum)
@@ -2540,6 +2560,7 @@
 
             renderCharacters();
             syncToServer();
+            saveAutosave(); // Autosave when combat ends
         }
 
         function closeCombat() {
@@ -2568,6 +2589,7 @@
 
             renderCharacters();
             syncToServer();
+            saveAutosave(); // Autosave when combat is closed
         }
 
         function openEffectModal(id) {
@@ -2915,6 +2937,125 @@
                 }
             } catch (error) {
                 console.error('Error loading from localStorage:', error);
+            }
+        }
+
+        // ===== AUTOSAVE FUNCTIONS =====
+        async function saveAutosave() {
+            // Only DM can trigger autosave when connected to server
+            if (!isDM || !isConnected) {
+                return;
+            }
+
+            try {
+                const data = {
+                    characters: characters.map(char => ({
+                        name: char.name,
+                        type: char.type,
+                        maxHp: char.maxHp,
+                        currentHp: char.currentHp,
+                        tempHp: char.tempHp,
+                        ac: char.ac,
+                        initBonus: char.initBonus,
+                        maxPower: char.maxPower,
+                        currentPower: char.currentPower,
+                        powerName: char.powerName,
+                        effects: char.effects,
+                        initiative: char.initiative,
+                        monsterData: char.monsterData,
+                        groupId: char.groupId,
+                        groupName: char.groupName,
+                        revealedToPlayers: char.revealedToPlayers,
+                        spellcasterLevel: char.spellcasterLevel,
+                        spellSlots: char.spellSlots,
+                        customFeatures: char.customFeatures,
+                        hitDice: char.hitDice
+                    })),
+                    combatState: combatState,
+                    monsterDatabase: monsterDatabase,
+                    timestamp: new Date().toISOString()
+                };
+
+                const response = await fetch('/api/autosave', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    console.log('✅ Autosave created:', new Date().toLocaleTimeString());
+                } else {
+                    console.error('❌ Autosave failed:', result.error);
+                }
+            } catch (error) {
+                console.error('❌ Error creating autosave:', error);
+            }
+        }
+
+        async function loadAutosave() {
+            try {
+                const response = await fetch('/api/autosave');
+                const result = await response.json();
+
+                if (result.success && result.data) {
+                    const data = result.data;
+
+                    if (data.characters && Array.isArray(data.characters)) {
+                        characters = data.characters.map(char => ({
+                            ...char,
+                            id: Date.now() + Math.random(),
+                            tempHp: char.tempHp || 0,
+                            ac: char.ac || 10,
+                            effects: char.effects || [],
+                            initiative: char.initiative || null,
+                            groupId: char.groupId || null,
+                            groupName: char.groupName || null,
+                            revealedToPlayers: char.revealedToPlayers !== undefined ? char.revealedToPlayers : (char.type === 'player'),
+                            spellcasterLevel: char.spellcasterLevel || 0,
+                            spellSlots: char.spellSlots || {},
+                            customFeatures: char.customFeatures || [],
+                            hitDice: char.hitDice || { max: 0, current: 0 }
+                        }));
+
+                        if (data.combatState) {
+                            combatState = data.combatState;
+                        }
+
+                        if (data.monsterDatabase) {
+                            monsterDatabase = data.monsterDatabase;
+                            saveMonsterDatabaseToStorage();
+                            renderMonsterList();
+                        }
+
+                        renderCharacters();
+
+                        // Restore combat UI state
+                        if (combatState.active) {
+                            document.getElementById('startBtn').classList.add('hidden');
+                            document.getElementById('prevBtn').classList.remove('hidden');
+                            document.getElementById('nextBtn').classList.remove('hidden');
+                            document.getElementById('endBtn').classList.remove('hidden');
+                            document.getElementById('closeBtn').classList.remove('hidden');
+                            document.getElementById('saveCombatBtn').style.display = 'inline-block';
+                            updateInitiativeDisplay();
+                        }
+
+                        // Sync to server after loading autosave
+                        syncToServer();
+
+                        console.log('✅ Autosave loaded successfully from:', new Date(data.timestamp).toLocaleString());
+                        return true;
+                    }
+                } else {
+                    console.log('ℹ️ No autosave found');
+                    return false;
+                }
+            } catch (error) {
+                console.error('❌ Error loading autosave:', error);
+                return false;
             }
         }
 
@@ -3516,14 +3657,26 @@
 
         // Inicializace
         if (isDM) {
-            loadFromLocalStorage();
-            loadMonsterDatabaseFromStorage();
-            // Auto-save každých 30 sekund (DM only)
-            autoSaveInterval = setInterval(saveToLocalStorage, 30000);
-        }
+            // Try to load autosave first, fallback to localStorage
+            loadAutosave().then((autosaveLoaded) => {
+                if (!autosaveLoaded) {
+                    // No autosave found, load from localStorage
+                    loadFromLocalStorage();
+                    loadMonsterDatabaseFromStorage();
+                }
+                // Render characters after loading
+                if (characters.length === 0) {
+                    renderCharacters();
+                }
+            });
 
-        if (characters.length === 0) {
-            renderCharacters();
+            // Auto-save každých 30 sekund (DM only) - using localStorage
+            autoSaveInterval = setInterval(saveToLocalStorage, 30000);
+        } else {
+            // Players don't use autosave
+            if (characters.length === 0) {
+                renderCharacters();
+            }
         }
 
         // ===== SPELL TRACKING FUNCTIONS =====
@@ -3739,7 +3892,7 @@
                             <div class="feature-info">
                                 <div class="feature-name">${feature.name}</div>
                                 <div class="feature-meta">
-                                    ${available}/${feature.maxUses} dostupných • Obnovení: ${restTypeStr}
+                                    ${feature.used}/${feature.maxUses} použito • Obnovení: ${restTypeStr}
                                     ${feature.statusEffect ? ` • Status: ${feature.statusName}` : ''}
                                 </div>
                             </div>
@@ -3748,18 +3901,20 @@
 
                     // If maxUses > 10, use health bar instead of checkboxes
                     if (feature.maxUses > 10) {
+                        const usagePercent = (feature.used / feature.maxUses) * 100;
+                        const barColorClass = usagePercent >= 75 ? 'low' : usagePercent >= 50 ? 'medium' : '';
                         html += `
                             <div style="display: flex; align-items: center; gap: 10px;">
-                                <button class="control-btn btn-danger" onclick="changeFeatureUses(${index}, -1)">-1</button>
+                                <button class="control-btn btn-success" onclick="changeFeatureUses(${index}, -1)">-1</button>
                                 <div style="flex: 1; min-width: 150px;">
                                     <div class="hp-bar">
-                                        <div class="hp-fill ${available <= feature.maxUses * 0.25 ? 'low' : available <= feature.maxUses * 0.5 ? 'medium' : ''}"
-                                             style="width: ${(available / feature.maxUses) * 100}%"></div>
+                                        <div class="hp-fill ${barColorClass}"
+                                             style="width: ${usagePercent}%"></div>
                                     </div>
                                 </div>
                                 <input type="number" class="custom-input" min="0" max="${feature.maxUses}" value="${feature.used}"
                                        onchange="setFeatureUses(${index}, this.value)" style="width: 60px;">
-                                <button class="control-btn btn-success" onclick="changeFeatureUses(${index}, 1)">+1</button>
+                                <button class="control-btn btn-danger" onclick="changeFeatureUses(${index}, 1)">+1</button>
                             </div>
                         `;
                     } else {
@@ -3888,9 +4043,8 @@
                 // If clicking unused checkbox, mark as used
                 feature.used = useIndex + 1;
 
-                // Add status effect if configured
-                if (feature.statusEffect && feature.statusName && useIndex === 0) {
-                    // Only add effect when marking first use
+                // Add status effect if configured and character doesn't have it
+                if (feature.statusEffect && feature.statusName) {
                     const hasEffect = character.effects.some(e => {
                         const eName = typeof e === 'string' ? e : e.name;
                         return eName === feature.statusName;
@@ -3917,8 +4071,8 @@
             const newUsed = Math.max(0, Math.min(feature.maxUses, feature.used + change));
 
             // Handle status effects
-            if (newUsed > feature.used && newUsed === 1 && feature.statusEffect && feature.statusName) {
-                // Adding first use - add status
+            if (newUsed > 0 && feature.statusEffect && feature.statusName) {
+                // If any uses - add status if not present
                 const hasEffect = character.effects.some(e => {
                     const eName = typeof e === 'string' ? e : e.name;
                     return eName === feature.statusName;
@@ -3956,8 +4110,8 @@
             const oldUsed = feature.used;
 
             // Handle status effects
-            if (newUsed > 0 && oldUsed === 0 && feature.statusEffect && feature.statusName) {
-                // Adding first use - add status
+            if (newUsed > 0 && feature.statusEffect && feature.statusName) {
+                // If any uses - add status if not present
                 const hasEffect = character.effects.some(e => {
                     const eName = typeof e === 'string' ? e : e.name;
                     return eName === feature.statusName;
@@ -4146,12 +4300,61 @@
                                 <input type="number" placeholder="Počet" value="${feature.longRestRegainAmount || 0}" id="featureLongRestRegainAmount${index}" min="0">
                             </div>
                             <div class="feature-editor-row">
-                                <select id="featureStatusEffect${index}">
+                                <label style="font-weight: bold; font-size: 0.9em; width: 100%;">Status Effect:</label>
+                            </div>
+                            <div class="feature-editor-row">
+                                <select id="featureStatusName${index}" style="flex: 2;">
                                     <option value="">-- Žádný status --</option>
-                                    <option value="buff" ${feature.statusEffect === 'buff' ? 'selected' : ''}>Buff</option>
-                                    <option value="neutral" ${feature.statusEffect === 'neutral' ? 'selected' : ''}>Neutral</option>
+                                    <optgroup label="🔴 Debuffs">
+                                        <option value="Blinded" ${feature.statusName === 'Blinded' ? 'selected' : ''}>Blinded</option>
+                                        <option value="Charmed" ${feature.statusName === 'Charmed' ? 'selected' : ''}>Charmed</option>
+                                        <option value="Deafened" ${feature.statusName === 'Deafened' ? 'selected' : ''}>Deafened</option>
+                                        <option value="Exhaustion" ${feature.statusName === 'Exhaustion' ? 'selected' : ''}>Exhaustion</option>
+                                        <option value="Frightened" ${feature.statusName === 'Frightened' ? 'selected' : ''}>Frightened</option>
+                                        <option value="Grappled" ${feature.statusName === 'Grappled' ? 'selected' : ''}>Grappled</option>
+                                        <option value="Incapacitated" ${feature.statusName === 'Incapacitated' ? 'selected' : ''}>Incapacitated</option>
+                                        <option value="Paralyzed" ${feature.statusName === 'Paralyzed' ? 'selected' : ''}>Paralyzed</option>
+                                        <option value="Petrified" ${feature.statusName === 'Petrified' ? 'selected' : ''}>Petrified</option>
+                                        <option value="Poisoned" ${feature.statusName === 'Poisoned' ? 'selected' : ''}>Poisoned</option>
+                                        <option value="Prone" ${feature.statusName === 'Prone' ? 'selected' : ''}>Prone</option>
+                                        <option value="Restrained" ${feature.statusName === 'Restrained' ? 'selected' : ''}>Restrained</option>
+                                        <option value="Stunned" ${feature.statusName === 'Stunned' ? 'selected' : ''}>Stunned</option>
+                                        <option value="Unconscious" ${feature.statusName === 'Unconscious' ? 'selected' : ''}>Unconscious</option>
+                                        <option value="Defenseless" ${feature.statusName === 'Defenseless' ? 'selected' : ''}>Defenseless</option>
+                                        <option value="Impaired" ${feature.statusName === 'Impaired' ? 'selected' : ''}>Impaired</option>
+                                        <option value="Distracted" ${feature.statusName === 'Distracted' ? 'selected' : ''}>Distracted</option>
+                                        <option value="Hexblade_Curse" ${feature.statusName === 'Hexblade_Curse' ? 'selected' : ''}>Hexblade's Curse</option>
+                                        <option value="Moonlit" ${feature.statusName === 'Moonlit' ? 'selected' : ''}>Moonlit</option>
+                                        <option value="Confused" ${feature.statusName === 'Confused' ? 'selected' : ''}>Confused</option>
+                                        <option value="Divine_Ire" ${feature.statusName === 'Divine_Ire' ? 'selected' : ''}>Divine Ire</option>
+                                        <option value="Divine_Ire_Cyric" ${feature.statusName === 'Divine_Ire_Cyric' ? 'selected' : ''}>Divine Ire (Cyric)</option>
+                                    </optgroup>
+                                    <optgroup label="🟢 Buffs">
+                                        <option value="Hasted" ${feature.statusName === 'Hasted' ? 'selected' : ''}>Hasted</option>
+                                        <option value="Inspired" ${feature.statusName === 'Inspired' ? 'selected' : ''}>Inspired</option>
+                                        <option value="Invisible" ${feature.statusName === 'Invisible' ? 'selected' : ''}>Invisible</option>
+                                        <option value="Raging" ${feature.statusName === 'Raging' ? 'selected' : ''}>Raging</option>
+                                        <option value="Dodging" ${feature.statusName === 'Dodging' ? 'selected' : ''}>Dodging</option>
+                                        <option value="Heroic_Inspiration" ${feature.statusName === 'Heroic_Inspiration' ? 'selected' : ''}>Heroic Inspiration</option>
+                                        <option value="Spirit_Shroud" ${feature.statusName === 'Spirit_Shroud' ? 'selected' : ''}>Spirit Shroud</option>
+                                        <option value="Tensor_Transformation" ${feature.statusName === 'Tensor_Transformation' ? 'selected' : ''}>Tensor Transformation</option>
+                                        <option value="Retaliation_Aura" ${feature.statusName === 'Retaliation_Aura' ? 'selected' : ''}>Retaliation Aura</option>
+                                        <option value="Foresight" ${feature.statusName === 'Foresight' ? 'selected' : ''}>Foresight</option>
+                                        <option value="Elder_Champion" ${feature.statusName === 'Elder_Champion' ? 'selected' : ''}>Elder Champion</option>
+                                        <option value="Celestial_Revelation" ${feature.statusName === 'Celestial_Revelation' ? 'selected' : ''}>Celestial Revelation</option>
+                                        <option value="Power_of_Mercy" ${feature.statusName === 'Power_of_Mercy' ? 'selected' : ''}>Power of Mercy</option>
+                                        <option value="Sacred_Divine_Sense" ${feature.statusName === 'Sacred_Divine_Sense' ? 'selected' : ''}>Sacred Divine Sense</option>
+                                        <option value="Protective_Spirit" ${feature.statusName === 'Protective_Spirit' ? 'selected' : ''}>Protective Spirit</option>
+                                        <option value="Emissary_of_Redemtion" ${feature.statusName === 'Emissary_of_Redemtion' ? 'selected' : ''}>Emissary of Redemtion</option>
+                                        <option value="Rythm_of_War" ${feature.statusName === 'Rythm_of_War' ? 'selected' : ''}>Rythm of War</option>
+                                    </optgroup>
+                                    <optgroup label="🔵 Neutrální">
+                                        <option value="Concentrating" ${feature.statusName === 'Concentrating' ? 'selected' : ''}>Concentrating</option>
+                                        <option value="Marked" ${feature.statusName === 'Marked' ? 'selected' : ''}>Marked</option>
+                                        <option value="Irredeemable" ${feature.statusName === 'Irredeemable' ? 'selected' : ''}>Irredeemable</option>
+                                        <option value="Not_Harmonized" ${feature.statusName === 'Not_Harmonized' ? 'selected' : ''}>Not Harmonized</option>
+                                    </optgroup>
                                 </select>
-                                <input type="text" placeholder="Název statusu" value="${feature.statusName || ''}" id="featureStatusName${index}">
                                 <button class="remove-feature-btn" onclick="removeCustomFeature(${index})">❌ Odebrat</button>
                             </div>
                         </div>
@@ -4228,8 +4431,7 @@
                     const shortRestRegainAmountInput = document.getElementById(`featureShortRestRegainAmount${index}`);
                     const longRestRegainTypeSelect = document.getElementById(`featureLongRestRegainType${index}`);
                     const longRestRegainAmountInput = document.getElementById(`featureLongRestRegainAmount${index}`);
-                    const statusEffectSelect = document.getElementById(`featureStatusEffect${index}`);
-                    const statusNameInput = document.getElementById(`featureStatusName${index}`);
+                    const statusNameSelect = document.getElementById(`featureStatusName${index}`);
 
                     if (nameInput) feature.name = nameInput.value;
                     if (maxUsesInput) {
@@ -4244,8 +4446,10 @@
                     if (shortRestRegainAmountInput) feature.shortRestRegainAmount = parseInt(shortRestRegainAmountInput.value) || 0;
                     if (longRestRegainTypeSelect) feature.longRestRegainType = longRestRegainTypeSelect.value;
                     if (longRestRegainAmountInput) feature.longRestRegainAmount = parseInt(longRestRegainAmountInput.value) || 0;
-                    if (statusEffectSelect) feature.statusEffect = statusEffectSelect.value;
-                    if (statusNameInput) feature.statusName = statusNameInput.value;
+                    if (statusNameSelect) {
+                        feature.statusName = statusNameSelect.value;
+                        feature.statusEffect = statusNameSelect.value ? true : false;
+                    }
                 });
             }
 
