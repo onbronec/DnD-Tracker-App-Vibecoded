@@ -1029,6 +1029,34 @@
         </div>
         <!-- End Monster Page -->
 
+        <!-- Inventory Tracking Page -->
+        <div id="inventoryPage" class="page">
+            <div class="section">
+                <div class="spell-page-header">
+                    <div>
+                        <h2>🎒 Inventory Tracking</h2>
+                        <p style="color: #7f8c8d; font-size: 0.9em; margin-top: 5px;">Spravujte peníze, itemy a vybavení pro postavy</p>
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <button onclick="backToInitiative('inventoryCharacterSelect')" class="control-btn" style="background: #3498db;" title="Zpět na iniciativu">⬅️ Initiative</button>
+                        <select id="inventoryCharacterSelect" class="character-select" onchange="loadInventoryCharacter()">
+                            <option value="">-- Vyberte postavu --</option>
+                        </select>
+                        <button class="control-btn" onclick="openItemDatabase()" style="background: #9b59b6;" title="Databáze itemů">📚 Databáze</button>
+                    </div>
+                </div>
+
+                <div id="inventoryContent">
+                    <div class="empty-state">
+                        <div class="empty-state-icon">🎒</div>
+                        <h3>Vyberte postavu</h3>
+                        <p>Zvolte postavu ze seznamu výše pro správu inventáře</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <!-- End Inventory Page -->
+
     </div>
     <!-- End Container -->
 
@@ -1073,6 +1101,61 @@
                 <div id="monsterPreviewContent"></div>
                 <button onclick="saveMonsterToDatabase()" class="btn-success" style="margin-top: 10px;">💾 Uložit do databáze</button>
             </div>
+        </div>
+    </div>
+
+    <!-- Modal pro databázi itemů -->
+    <div id="itemDatabaseModal" class="modal">
+        <div class="modal-content" style="max-width: 900px;">
+            <span class="close" onclick="closeItemDatabase()">&times;</span>
+            <h3>📚 Databáze itemů</h3>
+
+            <div class="file-controls" style="margin-bottom: 15px;">
+                <button onclick="openAddItemModal()" class="btn-success">➕ Přidat item</button>
+                <button onclick="exportItemDatabase()" class="btn-warning">💾 Exportovat databázi</button>
+                <button onclick="document.getElementById('itemDbFileInput').click()">📂 Importovat databázi</button>
+                <input type="file" id="itemDbFileInput" accept=".json" onchange="importItemDatabase(event)" style="display:none;">
+                <button onclick="clearItemDatabase()" class="btn-danger">🗑️ Vyčistit databázi</button>
+            </div>
+
+            <div id="itemList" style="max-height: 500px; overflow-y: auto;"></div>
+        </div>
+    </div>
+
+    <!-- Modal pro přidání/import itemu -->
+    <div id="addItemModal" class="modal">
+        <div class="modal-content" style="max-width: 700px;">
+            <span class="close" onclick="closeAddItemModal()">&times;</span>
+            <h3>➕ Přidat item do databáze</h3>
+
+            <div style="margin: 15px 0;">
+                <label>Typ itemu:</label>
+                <select id="itemTypeSelect" style="width: 100%; padding: 8px; margin: 5px 0;">
+                    <option value="magic">Magický item</option>
+                    <option value="potion">Potion</option>
+                </select>
+            </div>
+
+            <div style="margin: 15px 0;">
+                <h4>Vložte popis itemu:</h4>
+                <textarea id="itemDescInput" placeholder="Vložte celý popis itemu..." style="width: 100%; height: 300px; padding: 10px; font-family: monospace; font-size: 0.9em;"></textarea>
+                <button onclick="parseItem()" class="btn-success">Parsovat item</button>
+            </div>
+
+            <div id="itemPreview" style="display: none; margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px;">
+                <h4>Náhled:</h4>
+                <div id="itemPreviewContent"></div>
+                <button onclick="saveItemToDatabase()" class="btn-success" style="margin-top: 10px;">💾 Uložit do databáze</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal pro transfer itemů -->
+    <div id="transferItemModal" class="modal">
+        <div class="modal-content" style="max-width: 500px;">
+            <span class="close" onclick="closeTransferModal()">&times;</span>
+            <h3>🔄 Transfer itemu</h3>
+            <div id="transferContent"></div>
         </div>
     </div>
 
@@ -3363,7 +3446,9 @@
                         spellcasterLevel: char.spellcasterLevel,
                         spellSlots: char.spellSlots,
                         customFeatures: char.customFeatures,
-                        hitDice: char.hitDice
+                        hitDice: char.hitDice,
+                        // Inventory properties
+                        inventory: char.inventory
                     })),
                     combatState: combatState,
                     timestamp: new Date().toISOString()
@@ -3393,7 +3478,16 @@
                             spellcasterLevel: char.spellcasterLevel || 0,
                             spellSlots: char.spellSlots || {},
                             customFeatures: char.customFeatures || [],
-                            hitDice: char.hitDice || { max: 0, current: 0 }
+                            hitDice: char.hitDice || { max: 0, current: 0 },
+                            // Inventory properties
+                            inventory: char.inventory || {
+                                currency: { manaCoins: 0, platinum: 0, gold: 0, silver: 0, copper: 0 },
+                                spellComponents: [],
+                                potions: [],
+                                scrolls: [],
+                                generalItems: [],
+                                magicItems: []
+                            }
                         }));
 
                         if (data.combatState) {
@@ -3743,6 +3837,7 @@
                                 ${char.groupName ? `<button onclick="unlinkFromGroup(${char.id})" class="control-btn" style="background: #95a5a6;" title="Oddělit od skupiny">🔗</button>` : ''}
                                 ${char.type === 'monster' ? `<button onclick="duplicateMonster(${char.id})" class="btn-success control-btn">➕</button>` : ''}
                                 ${char.type === 'player' ? `<button onclick="openCharacterSheet(${char.id})" class="btn-purple control-btn" title="Character Sheet">📋</button>` : ''}
+                                ${char.type === 'player' ? `<button onclick="openInventoryPage(${char.id})" class="btn-purple control-btn" title="Inventory">🎒</button>` : ''}
                                 ${char.type === 'monster' && char.monsterAbilities && char.monsterAbilities.enabled ? `<button onclick="openMonsterSheet(${char.id})" class="btn-purple control-btn" title="Monster Abilities">👹</button>` : ''}
                                 <button onclick="removeCharacter(${char.id})" class="btn-danger control-btn">❌</button>
                             </div>
@@ -3973,6 +4068,7 @@
                         characters = characters.concat(newCharacters);
                         renderCharacters();
                         populateSpellCharacterSelect(); // Refresh spell page character select
+                        populateInventoryCharacterSelect(); // Refresh inventory page character select
                         syncToServer();
                         alert(`Úspěšně načteno ${newCharacters.length} postav!`);
                     } else {
@@ -4143,6 +4239,7 @@
                     // No autosave found, load from localStorage
                     loadFromLocalStorage();
                     loadMonsterDatabaseFromStorage();
+                    loadItemDatabase();
                 }
                 // Render characters after loading
                 if (characters.length === 0) {
@@ -4217,6 +4314,9 @@
                 document.getElementById('monstersPage').classList.add('active');
                 document.querySelectorAll('.nav-btn')[2].classList.add('active');
                 populateMonsterCharacterSelect();
+            } else if (pageName === 'inventory') {
+                document.getElementById('inventoryPage').classList.add('active');
+                populateInventoryCharacterSelect();
             }
         }
 
@@ -4731,6 +4831,906 @@
                     }
                 }, 100);
             }
+        }
+
+        // ===== INVENTORY TRACKING FUNCTIONS =====
+
+        let currentInventoryCharacterId = null;
+        let itemDatabase = [];
+
+        // Open inventory page from character card
+        function openInventoryPage(characterId) {
+            // Switch to inventory page
+            switchPage('inventory');
+            // Set the dropdown value
+            document.getElementById('inventoryCharacterSelect').value = characterId;
+            // Load the character
+            loadInventoryCharacter();
+        }
+
+        // Populate inventory character select dropdown with players only
+        function populateInventoryCharacterSelect() {
+            const select = document.getElementById('inventoryCharacterSelect');
+            const playerCharacters = characters.filter(char => char.type === 'player');
+
+            select.innerHTML = '<option value="">-- Vyberte postavu --</option>';
+            playerCharacters.forEach(char => {
+                const option = document.createElement('option');
+                option.value = char.id;
+                option.textContent = char.name;
+                select.appendChild(option);
+            });
+
+            // If current character is still selected, keep it
+            if (currentInventoryCharacterId) {
+                select.value = currentInventoryCharacterId;
+                if (select.value !== currentInventoryCharacterId) {
+                    // Character was removed, reset
+                    currentInventoryCharacterId = null;
+                    showEmptyInventoryState();
+                }
+            }
+        }
+
+        // Load selected character's inventory
+        function loadInventoryCharacter() {
+            const select = document.getElementById('inventoryCharacterSelect');
+            const characterId = parseFloat(select.value);
+
+            if (!characterId) {
+                currentInventoryCharacterId = null;
+                showEmptyInventoryState();
+                return;
+            }
+
+            currentInventoryCharacterId = characterId;
+            renderInventory();
+        }
+
+        function showEmptyInventoryState() {
+            document.getElementById('inventoryContent').innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-icon">🎒</div>
+                    <h3>Vyberte postavu</h3>
+                    <p>Zvolte postavu ze seznamu výše pro správu inventáře</p>
+                </div>
+            `;
+        }
+
+        // Render inventory for current character
+        function renderInventory() {
+            const character = characters.find(c => c.id === currentInventoryCharacterId);
+            if (!character) {
+                showEmptyInventoryState();
+                return;
+            }
+
+            // Initialize inventory if doesn't exist
+            if (!character.inventory) {
+                character.inventory = {
+                    currency: { manaCoins: 0, platinum: 0, gold: 0, silver: 0, copper: 0 },
+                    spellComponents: [],
+                    potions: [],
+                    scrolls: [],
+                    generalItems: [],
+                    magicItems: []
+                };
+            }
+
+            const inv = character.inventory;
+
+            let html = `
+                <div style="margin-bottom: 20px;">
+                    <h3 style="color: #3498db;">🎒 ${character.name}</h3>
+                    <p style="color: #7f8c8d; font-size: 0.9em;">Inventář a vybavení</p>
+                </div>
+            `;
+
+            // Currency Section
+            html += `
+                <div style="margin: 20px 0; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 10px; color: white;">
+                    <h4 style="margin-bottom: 15px; color: white;">💰 Peníze</h4>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px;">
+                        <div style="background: rgba(255,255,255,0.2); padding: 10px; border-radius: 5px;">
+                            <label style="display: block; margin-bottom: 5px; font-weight: bold;">✨ Mana Coins</label>
+                            <input type="number" value="${inv.currency.manaCoins}" onchange="updateCurrency('manaCoins', this.value)"
+                                   style="width: 100%; padding: 8px; border-radius: 5px; border: none; text-align: center; font-size: 1.1em;">
+                        </div>
+                        <div style="background: rgba(255,255,255,0.2); padding: 10px; border-radius: 5px;">
+                            <label style="display: block; margin-bottom: 5px; font-weight: bold;">⚪ Platinum</label>
+                            <input type="number" value="${inv.currency.platinum}" onchange="updateCurrency('platinum', this.value)"
+                                   style="width: 100%; padding: 8px; border-radius: 5px; border: none; text-align: center; font-size: 1.1em;">
+                        </div>
+                        <div style="background: rgba(255,255,255,0.2); padding: 10px; border-radius: 5px;">
+                            <label style="display: block; margin-bottom: 5px; font-weight: bold;">🟡 Gold</label>
+                            <input type="number" value="${inv.currency.gold}" onchange="updateCurrency('gold', this.value)"
+                                   style="width: 100%; padding: 8px; border-radius: 5px; border: none; text-align: center; font-size: 1.1em;">
+                        </div>
+                        <div style="background: rgba(255,255,255,0.2); padding: 10px; border-radius: 5px;">
+                            <label style="display: block; margin-bottom: 5px; font-weight: bold;">⚪ Silver</label>
+                            <input type="number" value="${inv.currency.silver}" onchange="updateCurrency('silver', this.value)"
+                                   style="width: 100%; padding: 8px; border-radius: 5px; border: none; text-align: center; font-size: 1.1em;">
+                        </div>
+                        <div style="background: rgba(255,255,255,0.2); padding: 10px; border-radius: 5px;">
+                            <label style="display: block; margin-bottom: 5px; font-weight: bold;">🟤 Copper</label>
+                            <input type="number" value="${inv.currency.copper}" onchange="updateCurrency('copper', this.value)"
+                                   style="width: 100%; padding: 8px; border-radius: 5px; border: none; text-align: center; font-size: 1.1em;">
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // Spell Components Section
+            html += `
+                <div style="margin: 20px 0; padding: 15px; background: #e8f5e9; border-radius: 8px;">
+                    <h4 style="color: #2e7d32; margin-bottom: 10px;">🧪 Spell Komponenty</h4>
+                    <button onclick="addSpellComponent()" class="btn-success" style="margin-bottom: 10px;">➕ Přidat komponentu</button>
+                    <div id="spellComponentsList">
+                        ${inv.spellComponents.map((comp, idx) => `
+                            <div style="background: white; padding: 10px; margin: 5px 0; border-radius: 5px; display: flex; align-items: center; gap: 10px;">
+                                <strong style="flex: 1;">${comp.name}</strong>
+                                ${comp.trackingType === 'count' ?
+                                    `<span>Množství: <input type="number" value="${comp.count}" onchange="updateSpellComponent(${idx}, 'count', this.value)" style="width: 80px; padding: 5px; text-align: center;"></span>` :
+                                    `<span>Hodnota: <input type="number" value="${comp.goldValue}" onchange="updateSpellComponent(${idx}, 'goldValue', this.value)" style="width: 80px; padding: 5px; text-align: center;"> gp</span>`
+                                }
+                                <button onclick="removeSpellComponent(${idx})" class="btn-danger">🗑️</button>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+
+            // Potions Section
+            html += `
+                <div style="margin: 20px 0; padding: 15px; background: #fce4ec; border-radius: 8px;">
+                    <h4 style="color: #c2185b; margin-bottom: 10px;">🧪 Potions</h4>
+                    <button onclick="addPotionFromDatabase()" class="btn-success" style="margin-bottom: 10px;">➕ Přidat z databáze</button>
+                    <div id="potionsList">
+                        ${inv.potions.map((potion, idx) => `
+                            <div style="background: white; padding: 10px; margin: 5px 0; border-radius: 5px; display: flex; align-items: center; gap: 10px;">
+                                <strong style="flex: 1;">${potion.name}</strong>
+                                <span>Množství: <input type="number" value="${potion.quantity}" onchange="updatePotion(${idx}, this.value)" style="width: 60px; padding: 5px; text-align: center;"></span>
+                                <button onclick="transferItem('potion', ${idx})" class="control-btn" style="background: #ff9800;">🔄</button>
+                                <button onclick="removePotion(${idx})" class="btn-danger">🗑️</button>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+
+            // Scrolls Section
+            html += `
+                <div style="margin: 20px 0; padding: 15px; background: #fff3e0; border-radius: 8px;">
+                    <h4 style="color: #e65100; margin-bottom: 10px;">📜 Scrolls</h4>
+                    <button onclick="addScroll()" class="btn-success" style="margin-bottom: 10px;">➕ Přidat scroll</button>
+                    <div id="scrollsList">
+                        ${inv.scrolls.map((scroll, idx) => `
+                            <div style="background: white; padding: 10px; margin: 5px 0; border-radius: 5px; display: flex; align-items: center; gap: 10px;">
+                                <strong style="flex: 1;">${scroll.spellName}</strong>
+                                <span>Množství: <input type="number" value="${scroll.quantity}" onchange="updateScroll(${idx}, this.value)" style="width: 60px; padding: 5px; text-align: center;"></span>
+                                <button onclick="transferItem('scroll', ${idx})" class="control-btn" style="background: #ff9800;">🔄</button>
+                                <button onclick="removeScroll(${idx})" class="btn-danger">🗑️</button>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+
+            // General Items Section
+            html += `
+                <div style="margin: 20px 0; padding: 15px; background: #e3f2fd; border-radius: 8px;">
+                    <h4 style="color: #1565c0; margin-bottom: 10px;">🎯 Obyčejné itemy</h4>
+                    <button onclick="addGeneralItem()" class="btn-success" style="margin-bottom: 10px;">➕ Přidat item</button>
+                    <div id="generalItemsList">
+                        ${inv.generalItems.map((item, idx) => `
+                            <div style="background: white; padding: 10px; margin: 5px 0; border-radius: 5px; display: flex; align-items: center; gap: 10px;">
+                                <span style="flex: 1;">${item}</span>
+                                <button onclick="transferItem('general', ${idx})" class="control-btn" style="background: #ff9800;">🔄</button>
+                                <button onclick="removeGeneralItem(${idx})" class="btn-danger">🗑️</button>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+
+            // Magic Items Section
+            const attunedCount = inv.magicItems.filter(item => item.attuned).length;
+            html += `
+                <div style="margin: 20px 0; padding: 15px; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); border-radius: 8px; color: white;">
+                    <h4 style="color: white; margin-bottom: 10px;">✨ Magické itemy</h4>
+                    <p style="margin-bottom: 10px; font-size: 0.9em;">Attuned: ${attunedCount}/3</p>
+                    <button onclick="addMagicItemFromDatabase()" class="btn-success" style="margin-bottom: 10px;">➕ Přidat z databáze</button>
+                    <button onclick="addMagicItem()" class="btn-success" style="margin-bottom: 10px;">➕ Přidat vlastní</button>
+                    <div id="magicItemsList">
+                        ${inv.magicItems.map((item, idx) => `
+                            <div style="background: rgba(255,255,255,0.95); color: #333; padding: 15px; margin: 10px 0; border-radius: 5px;">
+                                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                                    <strong style="flex: 1; font-size: 1.1em;">${item.name}</strong>
+                                    <label style="display: flex; align-items: center; gap: 5px;">
+                                        <input type="checkbox" ${item.attuned ? 'checked' : ''}
+                                               ${attunedCount >= 3 && !item.attuned ? 'disabled' : ''}
+                                               onchange="toggleAttunement(${idx}, this.checked)">
+                                        Attuned
+                                    </label>
+                                    <button onclick="transferItem('magic', ${idx})" class="control-btn" style="background: #ff9800;">🔄</button>
+                                    <button onclick="removeMagicItem(${idx})" class="btn-danger">🗑️</button>
+                                </div>
+                                <div style="background: rgba(0,0,0,0.05); padding: 8px; border-radius: 3px; margin-bottom: 5px;">
+                                    <strong>Typ:</strong> ${item.itemType || 'N/A'}
+                                </div>
+                                <div style="background: rgba(0,0,0,0.05); padding: 8px; border-radius: 3px; white-space: pre-wrap; font-size: 0.9em;">
+                                    ${item.description || 'Žádný popis'}
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('inventoryContent').innerHTML = html;
+        }
+
+        // Currency functions
+        function updateCurrency(type, value) {
+            const character = characters.find(c => c.id === currentInventoryCharacterId);
+            if (!character) return;
+            character.inventory.currency[type] = parseInt(value) || 0;
+            saveToLocalStorage();
+        }
+
+        // Spell Component functions
+        function addSpellComponent() {
+            const name = prompt('Název komponenty:');
+            if (!name) return;
+
+            const trackingType = confirm('Trackovat počet kusů? (Cancel = trackovat hodnotu v goldu)') ? 'count' : 'value';
+
+            const character = characters.find(c => c.id === currentInventoryCharacterId);
+            if (!character) return;
+
+            const component = {
+                name: name,
+                trackingType: trackingType,
+                count: trackingType === 'count' ? 0 : undefined,
+                goldValue: trackingType === 'value' ? 0 : undefined
+            };
+
+            character.inventory.spellComponents.push(component);
+            saveToLocalStorage();
+            renderInventory();
+        }
+
+        function updateSpellComponent(index, field, value) {
+            const character = characters.find(c => c.id === currentInventoryCharacterId);
+            if (!character) return;
+            character.inventory.spellComponents[index][field] = parseInt(value) || 0;
+            saveToLocalStorage();
+        }
+
+        function removeSpellComponent(index) {
+            const character = characters.find(c => c.id === currentInventoryCharacterId);
+            if (!character) return;
+            character.inventory.spellComponents.splice(index, 1);
+            saveToLocalStorage();
+            renderInventory();
+        }
+
+        // Potion functions
+        function addPotionFromDatabase() {
+            const potions = itemDatabase.filter(item => item.type === 'potion');
+            if (potions.length === 0) {
+                alert('Databáze neobsahuje žádné potions. Přidejte je nejdřív do databáze.');
+                return;
+            }
+
+            let html = '<h4>Vyberte potion:</h4><div style="max-height: 400px; overflow-y: auto;">';
+            potions.forEach((potion, idx) => {
+                html += `
+                    <div style="background: #f8f9fa; padding: 10px; margin: 5px 0; border-radius: 5px; cursor: pointer;"
+                         onclick="selectPotionFromDatabase(${idx})">
+                        <strong>${potion.name}</strong>
+                        <p style="margin: 5px 0; font-size: 0.9em;">${potion.description.substring(0, 100)}...</p>
+                    </div>
+                `;
+            });
+            html += '</div>';
+
+            document.getElementById('transferContent').innerHTML = html;
+            document.getElementById('transferItemModal').style.display = 'block';
+        }
+
+        function selectPotionFromDatabase(dbIndex) {
+            const potions = itemDatabase.filter(item => item.type === 'potion');
+            const potion = potions[dbIndex];
+
+            const character = characters.find(c => c.id === currentInventoryCharacterId);
+            if (!character) return;
+
+            const existing = character.inventory.potions.find(p => p.name === potion.name);
+            if (existing) {
+                existing.quantity++;
+            } else {
+                character.inventory.potions.push({
+                    name: potion.name,
+                    description: potion.description,
+                    quantity: 1
+                });
+            }
+
+            saveToLocalStorage();
+            closeTransferModal();
+            renderInventory();
+        }
+
+        function updatePotion(index, value) {
+            const character = characters.find(c => c.id === currentInventoryCharacterId);
+            if (!character) return;
+            const newValue = parseInt(value) || 0;
+            if (newValue <= 0) {
+                character.inventory.potions.splice(index, 1);
+            } else {
+                character.inventory.potions[index].quantity = newValue;
+            }
+            saveToLocalStorage();
+            renderInventory();
+        }
+
+        function removePotion(index) {
+            const character = characters.find(c => c.id === currentInventoryCharacterId);
+            if (!character) return;
+            character.inventory.potions.splice(index, 1);
+            saveToLocalStorage();
+            renderInventory();
+        }
+
+        // Scroll functions
+        function addScroll() {
+            const spellName = prompt('Název spellu:');
+            if (!spellName) return;
+
+            const character = characters.find(c => c.id === currentInventoryCharacterId);
+            if (!character) return;
+
+            const existing = character.inventory.scrolls.find(s => s.spellName === spellName);
+            if (existing) {
+                existing.quantity++;
+            } else {
+                character.inventory.scrolls.push({
+                    spellName: spellName,
+                    quantity: 1
+                });
+            }
+
+            saveToLocalStorage();
+            renderInventory();
+        }
+
+        function updateScroll(index, value) {
+            const character = characters.find(c => c.id === currentInventoryCharacterId);
+            if (!character) return;
+            const newValue = parseInt(value) || 0;
+            if (newValue <= 0) {
+                character.inventory.scrolls.splice(index, 1);
+            } else {
+                character.inventory.scrolls[index].quantity = newValue;
+            }
+            saveToLocalStorage();
+            renderInventory();
+        }
+
+        function removeScroll(index) {
+            const character = characters.find(c => c.id === currentInventoryCharacterId);
+            if (!character) return;
+            character.inventory.scrolls.splice(index, 1);
+            saveToLocalStorage();
+            renderInventory();
+        }
+
+        // General Item functions
+        function addGeneralItem() {
+            const itemDesc = prompt('Popis itemu:');
+            if (!itemDesc) return;
+
+            const character = characters.find(c => c.id === currentInventoryCharacterId);
+            if (!character) return;
+
+            character.inventory.generalItems.push(itemDesc);
+            saveToLocalStorage();
+            renderInventory();
+        }
+
+        function removeGeneralItem(index) {
+            const character = characters.find(c => c.id === currentInventoryCharacterId);
+            if (!character) return;
+            character.inventory.generalItems.splice(index, 1);
+            saveToLocalStorage();
+            renderInventory();
+        }
+
+        // Magic Item functions
+        function addMagicItem() {
+            const name = prompt('Název magického itemu:');
+            if (!name) return;
+
+            const itemType = prompt('Typ itemu (např. Weapon, Armor, Wondrous item):') || 'Wondrous item';
+            const description = prompt('Popis itemu:') || '';
+
+            const character = characters.find(c => c.id === currentInventoryCharacterId);
+            if (!character) return;
+
+            character.inventory.magicItems.push({
+                name: name,
+                itemType: itemType,
+                description: description,
+                attuned: false
+            });
+
+            saveToLocalStorage();
+            renderInventory();
+        }
+
+        function addMagicItemFromDatabase() {
+            const magicItems = itemDatabase.filter(item => item.type === 'magic');
+            if (magicItems.length === 0) {
+                alert('Databáze neobsahuje žádné magické itemy. Přidejte je nejdřív do databáze.');
+                return;
+            }
+
+            let html = '<h4>Vyberte magický item:</h4><div style="max-height: 400px; overflow-y: auto;">';
+            magicItems.forEach((item, idx) => {
+                html += `
+                    <div style="background: #f8f9fa; padding: 10px; margin: 5px 0; border-radius: 5px; cursor: pointer;"
+                         onclick="selectMagicItemFromDatabase(${idx})">
+                        <strong>${item.name}</strong>
+                        <p style="margin: 5px 0; font-size: 0.9em; color: #666;">${item.itemType || 'N/A'} - ${item.rarity || 'Unknown'}</p>
+                        <p style="margin: 5px 0; font-size: 0.9em;">${item.description.substring(0, 100)}...</p>
+                    </div>
+                `;
+            });
+            html += '</div>';
+
+            document.getElementById('transferContent').innerHTML = html;
+            document.getElementById('transferItemModal').style.display = 'block';
+        }
+
+        function selectMagicItemFromDatabase(dbIndex) {
+            const magicItems = itemDatabase.filter(item => item.type === 'magic');
+            const item = magicItems[dbIndex];
+
+            const character = characters.find(c => c.id === currentInventoryCharacterId);
+            if (!character) return;
+
+            character.inventory.magicItems.push({
+                name: item.name,
+                itemType: item.itemType,
+                description: item.description,
+                attuned: false
+            });
+
+            saveToLocalStorage();
+            closeTransferModal();
+            renderInventory();
+        }
+
+        function toggleAttunement(index, isAttuned) {
+            const character = characters.find(c => c.id === currentInventoryCharacterId);
+            if (!character) return;
+
+            const attunedCount = character.inventory.magicItems.filter(item => item.attuned).length;
+
+            if (isAttuned && attunedCount >= 3) {
+                alert('Můžete mít attuned maximálně 3 itemy!');
+                renderInventory();
+                return;
+            }
+
+            character.inventory.magicItems[index].attuned = isAttuned;
+            saveToLocalStorage();
+            renderInventory();
+        }
+
+        function removeMagicItem(index) {
+            const character = characters.find(c => c.id === currentInventoryCharacterId);
+            if (!character) return;
+            character.inventory.magicItems.splice(index, 1);
+            saveToLocalStorage();
+            renderInventory();
+        }
+
+        // Transfer Item functions
+        function transferItem(type, index) {
+            const character = characters.find(c => c.id === currentInventoryCharacterId);
+            if (!character) return;
+
+            const playerCharacters = characters.filter(c => c.type === 'player' && c.id !== currentInventoryCharacterId);
+            if (playerCharacters.length === 0) {
+                alert('Nejsou žádné další postavy pro transfer!');
+                return;
+            }
+
+            let item;
+            let itemName;
+
+            switch(type) {
+                case 'potion':
+                    item = character.inventory.potions[index];
+                    itemName = item.name;
+                    break;
+                case 'scroll':
+                    item = character.inventory.scrolls[index];
+                    itemName = item.spellName;
+                    break;
+                case 'general':
+                    item = character.inventory.generalItems[index];
+                    itemName = item;
+                    break;
+                case 'magic':
+                    item = character.inventory.magicItems[index];
+                    itemName = item.name;
+                    break;
+            }
+
+            let html = `
+                <h4>Transfer: ${itemName}</h4>
+                <p style="margin: 10px 0;">Vyberte cílovou postavu:</p>
+                <div style="max-height: 300px; overflow-y: auto;">
+            `;
+
+            playerCharacters.forEach(char => {
+                html += `
+                    <div style="background: #f8f9fa; padding: 15px; margin: 5px 0; border-radius: 5px; cursor: pointer; border: 2px solid #ddd;"
+                         onclick="executeTransfer('${type}', ${index}, ${char.id})"
+                         onmouseover="this.style.borderColor='#3498db'"
+                         onmouseout="this.style.borderColor='#ddd'">
+                        <strong style="font-size: 1.1em;">${char.name}</strong>
+                    </div>
+                `;
+            });
+
+            html += '</div>';
+
+            document.getElementById('transferContent').innerHTML = html;
+            document.getElementById('transferItemModal').style.display = 'block';
+        }
+
+        function executeTransfer(type, index, targetCharId) {
+            const sourceChar = characters.find(c => c.id === currentInventoryCharacterId);
+            const targetChar = characters.find(c => c.id === targetCharId);
+
+            if (!sourceChar || !targetChar) return;
+
+            // Initialize target inventory if needed
+            if (!targetChar.inventory) {
+                targetChar.inventory = {
+                    currency: { manaCoins: 0, platinum: 0, gold: 0, silver: 0, copper: 0 },
+                    spellComponents: [],
+                    potions: [],
+                    scrolls: [],
+                    generalItems: [],
+                    magicItems: []
+                };
+            }
+
+            let item;
+
+            switch(type) {
+                case 'potion':
+                    item = sourceChar.inventory.potions[index];
+                    const existingPotion = targetChar.inventory.potions.find(p => p.name === item.name);
+                    if (existingPotion) {
+                        existingPotion.quantity += item.quantity;
+                    } else {
+                        targetChar.inventory.potions.push({...item});
+                    }
+                    sourceChar.inventory.potions.splice(index, 1);
+                    break;
+
+                case 'scroll':
+                    item = sourceChar.inventory.scrolls[index];
+                    const existingScroll = targetChar.inventory.scrolls.find(s => s.spellName === item.spellName);
+                    if (existingScroll) {
+                        existingScroll.quantity += item.quantity;
+                    } else {
+                        targetChar.inventory.scrolls.push({...item});
+                    }
+                    sourceChar.inventory.scrolls.splice(index, 1);
+                    break;
+
+                case 'general':
+                    item = sourceChar.inventory.generalItems[index];
+                    targetChar.inventory.generalItems.push(item);
+                    sourceChar.inventory.generalItems.splice(index, 1);
+                    break;
+
+                case 'magic':
+                    item = sourceChar.inventory.magicItems[index];
+                    targetChar.inventory.magicItems.push({...item, attuned: false});
+                    sourceChar.inventory.magicItems.splice(index, 1);
+                    break;
+            }
+
+            saveToLocalStorage();
+            closeTransferModal();
+            renderInventory();
+            alert(`Item transferován do inventáře: ${targetChar.name}`);
+        }
+
+        function closeTransferModal() {
+            document.getElementById('transferItemModal').style.display = 'none';
+        }
+
+        // ===== ITEM DATABASE FUNCTIONS =====
+
+        function loadItemDatabase() {
+            try {
+                const saved = localStorage.getItem('dnd-item-database');
+                if (saved) {
+                    itemDatabase = JSON.parse(saved);
+                }
+            } catch (error) {
+                console.error('Error loading item database:', error);
+            }
+        }
+
+        function saveItemDatabase() {
+            try {
+                localStorage.setItem('dnd-item-database', JSON.stringify(itemDatabase));
+            } catch (error) {
+                console.error('Error saving item database:', error);
+            }
+        }
+
+        function openItemDatabase() {
+            loadItemDatabase();
+            renderItemDatabase();
+            document.getElementById('itemDatabaseModal').style.display = 'block';
+        }
+
+        function closeItemDatabase() {
+            document.getElementById('itemDatabaseModal').style.display = 'none';
+        }
+
+        function renderItemDatabase() {
+            const listDiv = document.getElementById('itemList');
+
+            if (itemDatabase.length === 0) {
+                listDiv.innerHTML = '<p style="text-align: center; color: #7f8c8d; padding: 20px;">Databáze je prázdná. Přidejte itemy pomocí tlačítka výše.</p>';
+                return;
+            }
+
+            let html = '';
+
+            // Group by type
+            const potions = itemDatabase.filter(item => item.type === 'potion');
+            const magicItems = itemDatabase.filter(item => item.type === 'magic');
+
+            if (potions.length > 0) {
+                html += '<h4 style="color: #c2185b; margin-top: 15px;">🧪 Potions</h4>';
+                potions.forEach((item, idx) => {
+                    html += `
+                        <div style="background: #fce4ec; padding: 15px; margin: 10px 0; border-radius: 5px;">
+                            <div style="display: flex; justify-content: between; align-items: center; margin-bottom: 10px;">
+                                <strong style="flex: 1; font-size: 1.1em;">${item.name}</strong>
+                                <span style="color: #666; margin-right: 10px;">${item.rarity || 'Unknown'}</span>
+                                <button onclick="removeFromItemDatabase(${itemDatabase.indexOf(item)})" class="btn-danger">🗑️</button>
+                            </div>
+                            <div style="background: white; padding: 10px; border-radius: 3px; white-space: pre-wrap; font-size: 0.9em;">
+                                ${item.description}
+                            </div>
+                        </div>
+                    `;
+                });
+            }
+
+            if (magicItems.length > 0) {
+                html += '<h4 style="color: #9c27b0; margin-top: 15px;">✨ Magické itemy</h4>';
+                magicItems.forEach((item, idx) => {
+                    html += `
+                        <div style="background: #f3e5f5; padding: 15px; margin: 10px 0; border-radius: 5px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <div style="flex: 1;">
+                                    <strong style="font-size: 1.1em; display: block;">${item.name}</strong>
+                                    <span style="color: #666; font-size: 0.9em;">${item.itemType || 'N/A'} - ${item.rarity || 'Unknown'}</span>
+                                </div>
+                                <button onclick="removeFromItemDatabase(${itemDatabase.indexOf(item)})" class="btn-danger">🗑️</button>
+                            </div>
+                            <div style="background: white; padding: 10px; border-radius: 3px; white-space: pre-wrap; font-size: 0.9em;">
+                                ${item.description}
+                            </div>
+                        </div>
+                    `;
+                });
+            }
+
+            listDiv.innerHTML = html;
+        }
+
+        function removeFromItemDatabase(index) {
+            if (!confirm('Opravdu chcete odstranit tento item z databáze?')) return;
+            itemDatabase.splice(index, 1);
+            saveItemDatabase();
+            renderItemDatabase();
+        }
+
+        function exportItemDatabase() {
+            const dataStr = JSON.stringify(itemDatabase, null, 2);
+            const dataBlob = new Blob([dataStr], {type: 'application/json'});
+            const url = URL.createObjectURL(dataBlob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'item-database.json';
+            link.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function importItemDatabase(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const imported = JSON.parse(e.target.result);
+                    if (Array.isArray(imported)) {
+                        itemDatabase = imported;
+                        saveItemDatabase();
+                        renderItemDatabase();
+                        alert('Databáze úspěšně importována!');
+                    }
+                } catch (error) {
+                    alert('Chyba při importu databáze!');
+                }
+            };
+            reader.readAsText(file);
+            event.target.value = '';
+        }
+
+        function clearItemDatabase() {
+            if (!confirm('Opravdu chcete vymazat celou databázi itemů?')) return;
+            itemDatabase = [];
+            saveItemDatabase();
+            renderItemDatabase();
+        }
+
+        function openAddItemModal() {
+            document.getElementById('itemDescInput').value = '';
+            document.getElementById('itemPreview').style.display = 'none';
+            document.getElementById('addItemModal').style.display = 'block';
+        }
+
+        function closeAddItemModal() {
+            document.getElementById('addItemModal').style.display = 'none';
+        }
+
+        let parsedItemData = null;
+
+        function parseItem() {
+            const text = document.getElementById('itemDescInput').value.trim();
+            const type = document.getElementById('itemTypeSelect').value;
+
+            if (!text) {
+                alert('Zadejte popis itemu!');
+                return;
+            }
+
+            if (type === 'potion') {
+                parsedItemData = parsePotionItem(text);
+            } else {
+                parsedItemData = parseMagicItem(text);
+            }
+
+            if (parsedItemData) {
+                displayItemPreview(parsedItemData);
+            }
+        }
+
+        function parsePotionItem(text) {
+            const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+
+            let item = {
+                type: 'potion',
+                name: '',
+                rarity: '',
+                itemType: 'Potion',
+                description: ''
+            };
+
+            // First line is usually the name
+            item.name = lines[0];
+
+            // Look for rarity
+            const rarityLine = lines.find(l => l.toLowerCase().includes('rarity:'));
+            if (rarityLine) {
+                item.rarity = rarityLine.split(':')[1].trim().split('(')[0].trim();
+            }
+
+            // Find where properties start
+            const propsIndex = lines.findIndex(l => l.toLowerCase().includes('properties'));
+            if (propsIndex >= 0) {
+                item.description = lines.slice(propsIndex + 1).join('\n');
+            } else {
+                item.description = lines.slice(2).join('\n');
+            }
+
+            return item;
+        }
+
+        function parseMagicItem(text) {
+            const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+
+            let item = {
+                type: 'magic',
+                name: '',
+                rarity: '',
+                attunementReq: '',
+                itemType: '',
+                description: ''
+            };
+
+            // First line is usually the name
+            item.name = lines[0];
+
+            // Look for rarity
+            const rarityLine = lines.find(l => l.toLowerCase().includes('rarity:'));
+            if (rarityLine) {
+                const rarityText = rarityLine.split(':')[1].trim();
+                item.rarity = rarityText.split('(')[0].trim();
+
+                // Check for attunement requirement
+                if (rarityText.toLowerCase().includes('requires attunement')) {
+                    const match = rarityText.match(/\(requires attunement(.*?)\)/i);
+                    item.attunementReq = match ? match[1].trim() : 'anyone';
+                }
+            }
+
+            // Look for item type
+            const typeLine = lines.find(l => l.toLowerCase().includes('item type:'));
+            if (typeLine) {
+                item.itemType = typeLine.split(':')[1].trim();
+            }
+
+            // Find where properties start
+            const propsIndex = lines.findIndex(l => l.toLowerCase().includes('properties'));
+            if (propsIndex >= 0) {
+                item.description = lines.slice(propsIndex + 1).join('\n');
+            } else {
+                // Take everything after the metadata
+                const startIndex = Math.max(
+                    lines.indexOf(rarityLine || ''),
+                    lines.indexOf(typeLine || '')
+                ) + 1;
+                item.description = lines.slice(startIndex).join('\n');
+            }
+
+            return item;
+        }
+
+        function displayItemPreview(item) {
+            let html = `
+                <div style="background: white; padding: 15px; border-radius: 5px;">
+                    <h4>${item.name}</h4>
+                    <p><strong>Typ:</strong> ${item.type === 'potion' ? 'Potion' : 'Magický item'}</p>
+                    <p><strong>Item Type:</strong> ${item.itemType}</p>
+                    <p><strong>Rarity:</strong> ${item.rarity}</p>
+                    ${item.attunementReq ? `<p><strong>Attunement:</strong> ${item.attunementReq}</p>` : ''}
+                    <div style="margin-top: 10px; padding: 10px; background: #f8f9fa; border-radius: 3px; white-space: pre-wrap;">
+                        ${item.description}
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('itemPreviewContent').innerHTML = html;
+            document.getElementById('itemPreview').style.display = 'block';
+        }
+
+        function saveItemToDatabase() {
+            if (!parsedItemData) return;
+
+            itemDatabase.push(parsedItemData);
+            saveItemDatabase();
+            closeAddItemModal();
+            renderItemDatabase();
+            alert('Item přidán do databáze!');
         }
 
         function showEmptySpellState() {
