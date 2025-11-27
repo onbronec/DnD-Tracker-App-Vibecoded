@@ -85,9 +85,8 @@ let gameState = {
         round: 1,
         playedThisRound: []
     },
-    monsterDatabase: [],
-    historyStack: [],
-    redoStack: []
+    monsterDatabase: []
+    // historyStack a redoStack jsou nyní lokální pro každého klienta
 };
 
 const MAX_HISTORY = 20;
@@ -104,25 +103,7 @@ function filterStateForPlayers(state) {
         char.type === 'player' || (char.type === 'monster' && char.revealedToPlayers)
     );
 
-    // Filter history stack - remove hidden monsters from past states
-    if (filteredState.historyStack) {
-        filteredState.historyStack = filteredState.historyStack.map(historyEntry => ({
-            ...historyEntry,
-            characters: historyEntry.characters ? historyEntry.characters.filter(char =>
-                char.type === 'player' || (char.type === 'monster' && char.revealedToPlayers)
-            ) : []
-        }));
-    }
-
-    // Filter redo stack - remove hidden monsters from future states
-    if (filteredState.redoStack) {
-        filteredState.redoStack = filteredState.redoStack.map(redoEntry => ({
-            ...redoEntry,
-            characters: redoEntry.characters ? redoEntry.characters.filter(char =>
-                char.type === 'player' || (char.type === 'monster' && char.revealedToPlayers)
-            ) : []
-        }));
-    }
+    // historyStack a redoStack jsou nyní lokální pro každého klienta, takže je nefiltrujeme
 
     return filteredState;
 }
@@ -166,8 +147,7 @@ io.on('connection', (socket) => {
             if (data.characters) gameState.characters = data.characters;
             if (data.combatState) gameState.combatState = data.combatState;
             if (data.monsterDatabase) gameState.monsterDatabase = data.monsterDatabase;
-            if (data.historyStack !== undefined) gameState.historyStack = data.historyStack;
-            if (data.redoStack !== undefined) gameState.redoStack = data.redoStack;
+            // historyStack a redoStack jsou nyní lokální pro každého klienta
 
             // Broadcast to all OTHER clients with appropriate filtering
             broadcastState(socket.id);

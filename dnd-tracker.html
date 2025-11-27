@@ -1444,9 +1444,8 @@
                 combatState = serverState.combatState || combatState;
                 monsterDatabase = serverState.monsterDatabase || [];
 
-                // Použít globální historii ze serveru
-                historyStack = serverState.historyStack || [];
-                redoStack = serverState.redoStack || [];
+                // NEPŘEPISOVAT historyStack a redoStack - historie je lokální pro každého klienta
+                // a používá per-page strukturu (objekt s klíči: combat, spells, monsters, inventory)
 
                 renderCharacters();
                 renderMonsterList();
@@ -1486,9 +1485,8 @@
                 socket.emit('update-state', {
                     characters,
                     combatState,
-                    monsterDatabase,
-                    historyStack,
-                    redoStack
+                    monsterDatabase
+                    // historyStack a redoStack jsou lokální pro každého klienta
                 });
             }
         }
