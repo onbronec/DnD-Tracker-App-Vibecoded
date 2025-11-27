@@ -3925,6 +3925,62 @@
             draggedCharacterIndex = null;
         }
 
+        // Track if drag listeners are already attached
+        let dragListenersAttached = false;
+
+        // Setup drag and drop event listeners using event delegation
+        function setupDragAndDropListeners() {
+            const listDiv = document.getElementById('characterList');
+            if (!listDiv) return;
+
+            // Only attach listeners once
+            if (dragListenersAttached) return;
+            dragListenersAttached = true;
+
+            // Add event delegation for all drag events
+            listDiv.addEventListener('dragstart', function(e) {
+                const card = e.target.closest('.character-card');
+                if (!card || !combatState.active) return;
+
+                const index = parseInt(card.getAttribute('data-index'));
+                handleDragStart(e, index);
+            });
+
+            listDiv.addEventListener('dragover', function(e) {
+                const card = e.target.closest('.character-card');
+                if (!card || !combatState.active || draggedCharacterIndex === null) return;
+                handleDragOver(e);
+            });
+
+            listDiv.addEventListener('dragenter', function(e) {
+                const card = e.target.closest('.character-card');
+                if (!card || !combatState.active || draggedCharacterIndex === null) return;
+
+                const index = parseInt(card.getAttribute('data-index'));
+                handleDragEnter(e, index);
+            });
+
+            listDiv.addEventListener('dragleave', function(e) {
+                const card = e.target.closest('.character-card');
+                if (!card || !combatState.active) return;
+                handleDragLeave(e);
+            });
+
+            listDiv.addEventListener('drop', function(e) {
+                const card = e.target.closest('.character-card');
+                if (!card || !combatState.active || draggedCharacterIndex === null) return;
+
+                const index = parseInt(card.getAttribute('data-index'));
+                handleDrop(e, index);
+            });
+
+            listDiv.addEventListener('dragend', function(e) {
+                const card = e.target.closest('.character-card');
+                if (!card) return;
+                handleDragEnd(e);
+            });
+        }
+
         function renderCharacters() {
             const listDiv = document.getElementById('characterList');
             const visibleChars = getVisibleCharacters();
@@ -3940,12 +3996,6 @@
                     <div class="character-card ${isActive ? 'active' : ''} ${hasPlayed ? 'played' : ''}"
                          draggable="${combatState.active ? 'true' : 'false'}"
                          data-index="${index}"
-                         ondragstart="handleDragStart(event, ${index})"
-                         ondragover="handleDragOver(event)"
-                         ondragenter="handleDragEnter(event, ${index})"
-                         ondragleave="handleDragLeave(event)"
-                         ondrop="handleDrop(event, ${index})"
-                         ondragend="handleDragEnd(event)"
                          style="${combatState.active ? 'cursor: move;' : ''}"
                     >
                         <div class="character-header">
@@ -4089,6 +4139,10 @@
                     </div>
                 `;
             }).join('');
+
+            // Setup drag and drop event delegation
+            setupDragAndDropListeners();
+
             saveToLocalStorage();
         }
 
