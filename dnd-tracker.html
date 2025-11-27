@@ -918,6 +918,7 @@
             <button class="nav-btn active" onclick="switchPage('combat')">⚔️ Combat Tracker</button>
             <button class="nav-btn" onclick="switchPage('spells')">✨ Spell & Ability Tracking</button>
             <button class="nav-btn" onclick="switchPage('monsters')">👹 Monster Abilities</button>
+            <button class="nav-btn" onclick="switchPage('inventory')">🎒 Inventory</button>
         </div>
 
         <!-- Combat Tracker Page (Main Page) -->
@@ -1307,7 +1308,15 @@
                         <!-- Level-based Spellcasting Level -->
                         <div id="editMonsterSpellcastingLevelContainer" style="display: none; margin-bottom: 15px;">
                             <label style="display: block; margin-bottom: 5px;"><strong>Spellcaster Level:</strong></label>
-                            <input type="number" id="editMonsterSpellcastingLevel" min="1" max="30" value="1" style="width: 100%; padding: 8px;">
+                            <input type="number" id="editMonsterSpellcastingLevel" min="1" max="30" value="1" style="width: 100%; padding: 8px;" onchange="initializeSpellSlotsFromLevel()">
+                            <small style="color: #7f8c8d; display: block; margin-top: 3px;">Změna levelu automaticky naplní spell sloty podle tabulky</small>
+                        </div>
+
+                        <!-- Spell Slots Editor (for level-based) -->
+                        <div id="editMonsterSpellSlotsContainer" style="display: none; margin-bottom: 15px;">
+                            <label style="display: block; margin-bottom: 5px;"><strong>Spell Sloty:</strong></label>
+                            <small style="color: #7f8c8d; display: block; margin-bottom: 10px;">Upravte počet spell slotů pro jednotlivé levely. Nastavte 0 pro odstranění.</small>
+                            <div id="spellSlotsList" style="margin-bottom: 10px;"></div>
                         </div>
 
                         <!-- Per-Day Spells Editor -->
@@ -2203,6 +2212,7 @@
             // Renderuj seznamy
             renderPerDaySpellsList();
             renderCustomFeaturesList();
+            renderSpellSlotsList();
 
             document.getElementById('editMonsterModal').style.display = 'block';
         }
@@ -2268,10 +2278,16 @@
         function updateSpellcastingEditor() {
             const spellcastingType = document.getElementById('editMonsterSpellcastingType').value;
             const levelContainer = document.getElementById('editMonsterSpellcastingLevelContainer');
+            const spellSlotsContainer = document.getElementById('editMonsterSpellSlotsContainer');
             const perDayContainer = document.getElementById('editMonsterPerDaySpells');
 
             levelContainer.style.display = spellcastingType === 'level-based' ? 'block' : 'none';
+            spellSlotsContainer.style.display = spellcastingType === 'level-based' ? 'block' : 'none';
             perDayContainer.style.display = spellcastingType === 'per-day' ? 'block' : 'none';
+
+            if (spellcastingType === 'level-based') {
+                renderSpellSlotsList();
+            }
         }
 
         function renderPerDaySpellsList() {
@@ -2331,6 +2347,84 @@
 
             monster.monsterAbilities.perDaySpells.splice(index, 1);
             renderPerDaySpellsList();
+        }
+
+        function initializeSpellSlotsFromLevel() {
+            if (!currentEditingMonsterId) return;
+            const monster = monsterDatabase.find(m => m.id === currentEditingMonsterId);
+            if (!monster || !monster.monsterAbilities) return;
+
+            const level = parseInt(document.getElementById('editMonsterSpellcastingLevel').value) || 1;
+            const slotsArray = SPELL_SLOTS_TABLE[level] || [];
+
+            // Initialize spell slots from table
+            monster.monsterAbilities.spellSlots = {};
+            for (let i = 1; i <= 9; i++) {
+                const maxSlots = slotsArray[i - 1] || 0;
+                if (maxSlots > 0) {
+                    monster.monsterAbilities.spellSlots[i] = {
+                        max: maxSlots,
+                        used: 0
+                    };
+                }
+            }
+
+            renderSpellSlotsList();
+        }
+
+        function renderSpellSlotsList() {
+            if (!currentEditingMonsterId) return;
+            const monster = monsterDatabase.find(m => m.id === currentEditingMonsterId);
+            if (!monster || !monster.monsterAbilities) return;
+
+            const listDiv = document.getElementById('spellSlotsList');
+            const spellSlots = monster.monsterAbilities.spellSlots || {};
+
+            // Show all 9 levels with current values or 0
+            let html = '<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">';
+
+            for (let level = 1; level <= 9; level++) {
+                const currentMax = spellSlots[level]?.max || 0;
+                html += `
+                    <div style="display: flex; align-items: center; gap: 8px; padding: 8px; background: #f8f9fa; border-radius: 5px;">
+                        <label style="min-width: 60px; font-weight: bold;">Level ${level}:</label>
+                        <input type="number"
+                               value="${currentMax}"
+                               onchange="updateMonsterSpellSlotInDatabase(${level}, this.value)"
+                               min="0"
+                               max="20"
+                               style="width: 60px; padding: 5px; text-align: center;">
+                    </div>
+                `;
+            }
+
+            html += '</div>';
+            listDiv.innerHTML = html;
+        }
+
+        function updateMonsterSpellSlotInDatabase(level, value) {
+            if (!currentEditingMonsterId) return;
+            const monster = monsterDatabase.find(m => m.id === currentEditingMonsterId);
+            if (!monster || !monster.monsterAbilities) return;
+
+            const maxSlots = parseInt(value) || 0;
+
+            if (maxSlots > 0) {
+                // Add or update the spell slot
+                if (!monster.monsterAbilities.spellSlots[level]) {
+                    monster.monsterAbilities.spellSlots[level] = { max: maxSlots, used: 0 };
+                } else {
+                    monster.monsterAbilities.spellSlots[level].max = maxSlots;
+                    // Keep used value, but cap it at new max
+                    monster.monsterAbilities.spellSlots[level].used = Math.min(
+                        monster.monsterAbilities.spellSlots[level].used,
+                        maxSlots
+                    );
+                }
+            } else {
+                // Remove the spell slot level if set to 0
+                delete monster.monsterAbilities.spellSlots[level];
+            }
         }
 
         function renderCustomFeaturesList() {
@@ -3523,6 +3617,7 @@
             try {
                 const data = {
                     characters: characters.map(char => ({
+                        id: char.id,
                         name: char.name,
                         type: char.type,
                         maxHp: char.maxHp,
@@ -3542,7 +3637,9 @@
                         spellcasterLevel: char.spellcasterLevel,
                         spellSlots: char.spellSlots,
                         customFeatures: char.customFeatures,
-                        hitDice: char.hitDice
+                        hitDice: char.hitDice,
+                        inventory: char.inventory,
+                        monsterAbilities: char.monsterAbilities
                     })),
                     combatState: combatState,
                     monsterDatabase: monsterDatabase,
@@ -3579,7 +3676,7 @@
                     if (data.characters && Array.isArray(data.characters)) {
                         characters = data.characters.map(char => ({
                             ...char,
-                            id: Date.now() + Math.random(),
+                            id: char.id || (Date.now() + Math.random()),
                             tempHp: char.tempHp || 0,
                             ac: char.ac || 10,
                             effects: char.effects || [],
@@ -3590,7 +3687,18 @@
                             spellcasterLevel: char.spellcasterLevel || 0,
                             spellSlots: char.spellSlots || {},
                             customFeatures: char.customFeatures || [],
-                            hitDice: char.hitDice || { max: 0, current: 0 }
+                            hitDice: char.hitDice || { max: 0, current: 0 },
+                            inventory: char.inventory || {
+                                currency: { manaCoins: 0, platinum: 0, gold: 0, silver: 0, copper: 0 },
+                                spellComponents: [],
+                                potions: [],
+                                scrolls: [],
+                                weapons: [],
+                                armor: [],
+                                consumables: [],
+                                other: []
+                            },
+                            monsterAbilities: char.monsterAbilities || undefined
                         }));
 
                         if (data.combatState) {
@@ -3832,16 +3940,14 @@
                                 <span class="character-type">${char.type === 'player' ? 'Hráč' : 'Monstrum'}</span>
                                 ${char.groupName ? `<span class="group-badge" style="background: ${getGroupColor(char.groupId)}">Group ${char.groupName}</span>` : ''}
                             </div>
-                            ${isDM ? `
                             <div>
-                                ${char.groupName ? `<button onclick="unlinkFromGroup(${char.id})" class="control-btn" style="background: #95a5a6;" title="Oddělit od skupiny">🔗</button>` : ''}
-                                ${char.type === 'monster' ? `<button onclick="duplicateMonster(${char.id})" class="btn-success control-btn">➕</button>` : ''}
+                                ${isDM && char.groupName ? `<button onclick="unlinkFromGroup(${char.id})" class="control-btn" style="background: #95a5a6;" title="Oddělit od skupiny">🔗</button>` : ''}
+                                ${isDM && char.type === 'monster' ? `<button onclick="duplicateMonster(${char.id})" class="btn-success control-btn">➕</button>` : ''}
                                 ${char.type === 'player' ? `<button onclick="openCharacterSheet(${char.id})" class="btn-purple control-btn" title="Character Sheet">📋</button>` : ''}
                                 ${char.type === 'player' ? `<button onclick="openInventoryPage(${char.id})" class="btn-purple control-btn" title="Inventory">🎒</button>` : ''}
-                                ${char.type === 'monster' && char.monsterAbilities && char.monsterAbilities.enabled ? `<button onclick="openMonsterSheet(${char.id})" class="btn-purple control-btn" title="Monster Abilities">👹</button>` : ''}
-                                <button onclick="removeCharacter(${char.id})" class="btn-danger control-btn">❌</button>
+                                ${isDM && char.type === 'monster' && char.monsterAbilities && char.monsterAbilities.enabled ? `<button onclick="openMonsterSheet(${char.id})" class="btn-purple control-btn" title="Monster Abilities">👹</button>` : ''}
+                                ${isDM ? `<button onclick="removeCharacter(${char.id})" class="btn-danger control-btn">❌</button>` : ''}
                             </div>
-                            ` : ''}
                         </div>
                         
                         <div class="character-stats">
@@ -4224,6 +4330,12 @@
                     if (section) section.style.display = 'none';
                 });
 
+                // Hide Monster Tracking navigation button (DM-only feature)
+                const navButtons = document.querySelectorAll('.nav-btn');
+                if (navButtons[2]) { // Third button is Monster Abilities
+                    navButtons[2].style.display = 'none';
+                }
+
                 // Disable auto-save for players (server is source of truth)
                 if (autoSaveInterval) {
                     clearInterval(autoSaveInterval);
@@ -4316,6 +4428,7 @@
                 populateMonsterCharacterSelect();
             } else if (pageName === 'inventory') {
                 document.getElementById('inventoryPage').classList.add('active');
+                document.querySelectorAll('.nav-btn')[3].classList.add('active');
                 populateInventoryCharacterSelect();
             }
         }
