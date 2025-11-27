@@ -1511,8 +1511,19 @@
         };
         let currentEffectCharacterId = null;
         let autoSaveInterval = null;
-        let historyStack = [];
-        let redoStack = [];
+        let currentPage = 'combat'; // Aktuální stránka pro izolovanou historii
+        let historyStack = {
+            combat: [],
+            spells: [],
+            monsters: [],
+            inventory: []
+        };
+        let redoStack = {
+            combat: [],
+            spells: [],
+            monsters: [],
+            inventory: []
+        };
         const MAX_HISTORY = 20;
         let draggedCharacterIndex = null;
         let monsterDatabase = [];
@@ -3746,32 +3757,34 @@
                 characters: JSON.parse(JSON.stringify(characters)),
                 combatState: JSON.parse(JSON.stringify(combatState))
             };
-            historyStack.push(state);
-            if (historyStack.length > MAX_HISTORY) {
-                historyStack.shift();
+            // Uložit do stacku aktuální stránky
+            historyStack[currentPage].push(state);
+            if (historyStack[currentPage].length > MAX_HISTORY) {
+                historyStack[currentPage].shift();
             }
-            // Vymazat redo stack když uděláme novou akci
-            redoStack = [];
+            // Vymazat redo stack aktuální stránky když uděláme novou akci
+            redoStack[currentPage] = [];
         }
 
         function undo() {
-            if (historyStack.length === 0) {
-                alert('Nelze vrátit zpět - žádná historie změn!');
+            // Kontrola stacku aktuální stránky
+            if (historyStack[currentPage].length === 0) {
+                alert('Nelze vrátit zpět - žádná historie změn na této stránce!');
                 return;
             }
 
-            // Ulož současný stav do redo stacku
+            // Ulož současný stav do redo stacku aktuální stránky
             const currentState = {
                 characters: JSON.parse(JSON.stringify(characters)),
                 combatState: JSON.parse(JSON.stringify(combatState))
             };
-            redoStack.push(currentState);
-            if (redoStack.length > MAX_HISTORY) {
-                redoStack.shift();
+            redoStack[currentPage].push(currentState);
+            if (redoStack[currentPage].length > MAX_HISTORY) {
+                redoStack[currentPage].shift();
             }
 
-            // Obnov předchozí stav
-            const previousState = historyStack.pop();
+            // Obnov předchozí stav ze stacku aktuální stránky
+            const previousState = historyStack[currentPage].pop();
             characters = JSON.parse(JSON.stringify(previousState.characters));
             combatState = JSON.parse(JSON.stringify(previousState.combatState));
 
@@ -3800,23 +3813,24 @@
         }
 
         function redo() {
-            if (redoStack.length === 0) {
-                alert('Nelze posunout dopředu - žádná historie!');
+            // Kontrola redo stacku aktuální stránky
+            if (redoStack[currentPage].length === 0) {
+                alert('Nelze posunout dopředu - žádná historie na této stránce!');
                 return;
             }
 
-            // Ulož současný stav do history stacku
+            // Ulož současný stav do history stacku aktuální stránky
             const currentState = {
                 characters: JSON.parse(JSON.stringify(characters)),
                 combatState: JSON.parse(JSON.stringify(combatState))
             };
-            historyStack.push(currentState);
-            if (historyStack.length > MAX_HISTORY) {
-                historyStack.shift();
+            historyStack[currentPage].push(currentState);
+            if (historyStack[currentPage].length > MAX_HISTORY) {
+                historyStack[currentPage].shift();
             }
 
-            // Obnov následující stav
-            const nextState = redoStack.pop();
+            // Obnov následující stav ze stacku aktuální stránky
+            const nextState = redoStack[currentPage].pop();
             characters = JSON.parse(JSON.stringify(nextState.characters));
             combatState = JSON.parse(JSON.stringify(nextState.combatState));
 
@@ -4413,6 +4427,9 @@
             // Hide all pages
             document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
             document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
+
+            // Nastavit aktuální stránku pro izolovanou historii
+            currentPage = pageName;
 
             // Show selected page
             if (pageName === 'combat') {
