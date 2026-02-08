@@ -85,8 +85,20 @@ let gameState = {
         round: 1,
         playedThisRound: []
     },
-    monsterDatabase: []
-    // historyStack a redoStack jsou nyní lokální pro každého klienta
+    monsterDatabase: [],
+    // Server-side shared history (per page)
+    history: {
+        combat: [],
+        spells: [],
+        monsters: [],
+        inventory: []
+    },
+    redo: {
+        combat: [],
+        spells: [],
+        monsters: [],
+        inventory: []
+    }
 };
 
 const MAX_HISTORY = 20;
@@ -103,9 +115,22 @@ function filterStateForPlayers(state) {
         char.type === 'player' || (char.type === 'monster' && char.revealedToPlayers)
     );
 
-    // historyStack a redoStack jsou nyní lokální pro každého klienta, takže je nefiltrujeme
+    // Exclude monster abilities history from players (DM-only page)
+    if (filteredState.history) {
+        filteredState.history.monsters = [];
+    }
+    if (filteredState.redo) {
+        filteredState.redo.monsters = [];
+    }
 
     return filteredState;
+}
+
+// Filter characters for player view (used in history-applied)
+function filterCharactersForPlayers(characters) {
+    return characters.filter(char =>
+        char.type === 'player' || (char.type === 'monster' && char.revealedToPlayers)
+    );
 }
 
 // Broadcast state to all clients with appropriate filtering
@@ -213,6 +238,129 @@ io.on('connection', (socket) => {
     socket.on('update-combat', (combatData) => {
         gameState.combatState = combatData;
         socket.broadcast.emit('combat-updated', combatData);
+    });
+
+    // Save history entry (called before state-changing operations)
+    socket.on('save-history-entry', (data) => {
+        const { page, description, characters, combatState: cs } = data;
+        if (!page || !gameState.history[page]) return;
+
+        // Block players from saving monster abilities history
+        const clientMode = clientModes.get(socket.id) || 'player';
+        if (page === 'monsters' && clientMode !== 'dm') return;
+
+        gameState.history[page].push({
+            characters: characters,
+            combatState: cs,
+            description: description || '',
+            timestamp: Date.now()
+        });
+
+        // Trim to MAX_HISTORY
+        if (gameState.history[page].length > MAX_HISTORY) {
+            gameState.history[page].shift();
+        }
+
+        // New action clears redo stack
+        gameState.redo[page] = [];
+    });
+
+    // Request undo for a page
+    socket.on('request-undo', (data) => {
+        const { page } = data;
+        if (!page || !gameState.history[page]) return;
+
+        // Block players from undoing monster abilities
+        const clientMode = clientModes.get(socket.id) || 'player';
+        if (page === 'monsters' && clientMode !== 'dm') return;
+
+        if (gameState.history[page].length === 0) {
+            socket.emit('history-error', { message: 'Nelze vrátit zpět - žádná historie změn na této stránce!' });
+            return;
+        }
+
+        // Save current state to redo stack
+        gameState.redo[page].push({
+            characters: JSON.parse(JSON.stringify(gameState.characters)),
+            combatState: JSON.parse(JSON.stringify(gameState.combatState)),
+            description: 'Aktuální stav',
+            timestamp: Date.now()
+        });
+        if (gameState.redo[page].length > MAX_HISTORY) {
+            gameState.redo[page].shift();
+        }
+
+        // Pop from history and restore
+        const previousState = gameState.history[page].pop();
+        gameState.characters = JSON.parse(JSON.stringify(previousState.characters));
+        gameState.combatState = JSON.parse(JSON.stringify(previousState.combatState));
+
+        // Broadcast restored state to ALL clients (including sender)
+        io.sockets.sockets.forEach((clientSocket) => {
+            const targetMode = clientModes.get(clientSocket.id) || 'player';
+            const chars = targetMode === 'dm'
+                ? gameState.characters
+                : filterCharactersForPlayers(gameState.characters);
+
+            clientSocket.emit('history-applied', {
+                page: page,
+                description: previousState.description,
+                direction: 'undo',
+                characters: chars,
+                combatState: gameState.combatState
+            });
+        });
+
+        console.log(`Undo applied on page '${page}': ${previousState.description}`);
+    });
+
+    // Request redo for a page
+    socket.on('request-redo', (data) => {
+        const { page } = data;
+        if (!page || !gameState.redo[page]) return;
+
+        // Block players from redoing monster abilities
+        const clientMode = clientModes.get(socket.id) || 'player';
+        if (page === 'monsters' && clientMode !== 'dm') return;
+
+        if (gameState.redo[page].length === 0) {
+            socket.emit('history-error', { message: 'Nelze posunout dopředu - žádná historie na této stránce!' });
+            return;
+        }
+
+        // Save current state to history stack
+        gameState.history[page].push({
+            characters: JSON.parse(JSON.stringify(gameState.characters)),
+            combatState: JSON.parse(JSON.stringify(gameState.combatState)),
+            description: 'Stav před redo',
+            timestamp: Date.now()
+        });
+        if (gameState.history[page].length > MAX_HISTORY) {
+            gameState.history[page].shift();
+        }
+
+        // Pop from redo and restore
+        const nextState = gameState.redo[page].pop();
+        gameState.characters = JSON.parse(JSON.stringify(nextState.characters));
+        gameState.combatState = JSON.parse(JSON.stringify(nextState.combatState));
+
+        // Broadcast restored state to ALL clients (including sender)
+        io.sockets.sockets.forEach((clientSocket) => {
+            const targetMode = clientModes.get(clientSocket.id) || 'player';
+            const chars = targetMode === 'dm'
+                ? gameState.characters
+                : filterCharactersForPlayers(gameState.characters);
+
+            clientSocket.emit('history-applied', {
+                page: page,
+                description: nextState.description,
+                direction: 'redo',
+                characters: chars,
+                combatState: gameState.combatState
+            });
+        });
+
+        console.log(`Redo applied on page '${page}': ${nextState.description}`);
     });
 
     socket.on('disconnect', () => {

@@ -901,9 +901,41 @@
             font-size: 3em;
             margin-bottom: 10px;
         }
+
+        /* Toast Notifications */
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 10000;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            pointer-events: none;
+        }
+        .toast {
+            background: #2c3e50;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            font-size: 0.95em;
+            max-width: 400px;
+            animation: toastSlideIn 0.3s ease-out;
+            transition: opacity 0.5s ease-in;
+        }
+        .toast.fading { opacity: 0; }
+        .toast.undo { border-left: 4px solid #e67e22; }
+        .toast.redo { border-left: 4px solid #27ae60; }
+        .toast.info { border-left: 4px solid #3498db; }
+        @keyframes toastSlideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
     </style>
 </head>
 <body>
+    <div id="toastContainer" class="toast-container"></div>
     <div class="container">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
             <h1>🐉 DnD Combat Tracker</h1>
@@ -966,6 +998,10 @@
                 <button onclick="closeCombat()" class="btn-purple hidden" id="closeBtn">🔒 Uzavřít boj</button>
             </div>
             <div id="initiativeOrder" class="initiative-order hidden"></div>
+            <div id="restAllContainer" class="combat-controls" style="margin-top: 10px; display: flex; gap: 10px;">
+                <button onclick="shortRestAll()" class="btn-warning">🌙 Short Rest All</button>
+                <button onclick="longRestAll()" class="btn-success">☀️ Long Rest All</button>
+            </div>
         </div>
 
         <div class="section">
@@ -1129,25 +1165,140 @@
             <span class="close" onclick="closeAddItemModal()">&times;</span>
             <h3>➕ Přidat item do databáze</h3>
 
-            <div style="margin: 15px 0;">
-                <label>Typ itemu:</label>
-                <select id="itemTypeSelect" style="width: 100%; padding: 8px; margin: 5px 0;">
-                    <option value="magic">Magický item</option>
+            <div style="display: flex; gap: 0; margin-bottom: 15px; border-bottom: 2px solid #e0e0e0;">
+                <button id="itemTabForm" onclick="switchItemTab('form')" style="padding: 10px 20px; border: none; background: #3498db; color: white; cursor: pointer; border-radius: 5px 5px 0 0; font-weight: bold;">Formulář</button>
+                <button id="itemTabImport" onclick="switchItemTab('import')" style="padding: 10px 20px; border: none; background: #e0e0e0; color: #333; cursor: pointer; border-radius: 5px 5px 0 0;">Import z textu</button>
+            </div>
+
+            <div id="itemFormTab">
+                <div style="margin: 10px 0;">
+                    <label><strong>Typ itemu:</strong></label>
+                    <select id="structItemType" onchange="onStructItemTypeChange()" style="width: 100%; padding: 8px; margin: 5px 0;">
+                        <option value="potion">Potion</option>
+                        <option value="magic">Magický item</option>
+                    </select>
+                </div>
+                <div style="margin: 10px 0;">
+                    <label><strong>Název:</strong></label>
+                    <input type="text" id="structItemName" placeholder="Název itemu..." style="width: 100%; padding: 8px; margin: 5px 0;">
+                </div>
+                <div id="structSubtypeRow" style="margin: 10px 0; display: none;">
+                    <label><strong>Typ předmětu:</strong></label>
+                    <select id="structItemSubtype" style="width: 100%; padding: 8px; margin: 5px 0;">
+                        <option value="Wondrous item">Wondrous item</option>
+                        <option value="Weapon">Weapon</option>
+                        <option value="Armor">Armor</option>
+                        <option value="Ring">Ring</option>
+                        <option value="Rod">Rod</option>
+                        <option value="Staff">Staff</option>
+                        <option value="Wand">Wand</option>
+                        <option value="Other">Other</option>
+                    </select>
+                </div>
+                <div id="structRarityRow" style="margin: 10px 0;">
+                    <label><strong>Vzácnost:</strong></label>
+                    <select id="structItemRarity" style="width: 100%; padding: 8px; margin: 5px 0;">
+                        <option value="Common">Common</option>
+                        <option value="Uncommon">Uncommon</option>
+                        <option value="Rare">Rare</option>
+                        <option value="Very Rare">Very Rare</option>
+                        <option value="Legendary">Legendary</option>
+                    </select>
+                </div>
+                <div id="structAttunementRow" style="margin: 10px 0; display: none;">
+                    <label style="display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="structItemAttunement">
+                        <strong>Vyžaduje attunement</strong>
+                    </label>
+                </div>
+                <div style="margin: 10px 0;">
+                    <label><strong>Popis:</strong></label>
+                    <textarea id="structItemDesc" placeholder="Popis itemu..." style="width: 100%; height: 150px; padding: 10px; font-family: monospace; font-size: 0.9em;"></textarea>
+                </div>
+                <button onclick="saveStructuredItemToDatabase()" class="btn-success">💾 Uložit do databáze</button>
+            </div>
+
+            <div id="itemImportTab" style="display: none;">
+                <div style="margin: 15px 0;">
+                    <label>Typ itemu:</label>
+                    <select id="itemTypeSelect" style="width: 100%; padding: 8px; margin: 5px 0;">
+                        <option value="magic">Magický item</option>
+                        <option value="potion">Potion</option>
+                    </select>
+                </div>
+                <div style="margin: 15px 0;">
+                    <h4>Vložte popis itemu:</h4>
+                    <textarea id="itemDescInput" placeholder="Vložte celý popis itemu..." style="width: 100%; height: 300px; padding: 10px; font-family: monospace; font-size: 0.9em;"></textarea>
+                    <button onclick="parseItem()" class="btn-success">Parsovat item</button>
+                </div>
+                <div id="itemPreview" style="display: none; margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px;">
+                    <h4>Náhled:</h4>
+                    <div id="itemPreviewContent"></div>
+                    <button onclick="saveItemToDatabase()" class="btn-success" style="margin-top: 10px;">💾 Uložit do databáze</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal pro přidání itemu přímo do inventáře -->
+    <div id="addItemToInventoryModal" class="modal">
+        <div class="modal-content" style="max-width: 700px;">
+            <span class="close" onclick="closeAddItemToInventory()">&times;</span>
+            <h3>➕ Přidat item do inventáře</h3>
+
+            <div style="margin: 10px 0;">
+                <label><strong>Typ itemu:</strong></label>
+                <select id="invItemType" onchange="onInvItemTypeChange()" style="width: 100%; padding: 8px; margin: 5px 0;">
                     <option value="potion">Potion</option>
+                    <option value="magic">Magický item</option>
+                    <option value="scroll">Scroll</option>
+                    <option value="general">Obyčejný item</option>
                 </select>
             </div>
-
-            <div style="margin: 15px 0;">
-                <h4>Vložte popis itemu:</h4>
-                <textarea id="itemDescInput" placeholder="Vložte celý popis itemu..." style="width: 100%; height: 300px; padding: 10px; font-family: monospace; font-size: 0.9em;"></textarea>
-                <button onclick="parseItem()" class="btn-success">Parsovat item</button>
+            <div style="margin: 10px 0;">
+                <label><strong>Název:</strong></label>
+                <input type="text" id="invItemName" placeholder="Název itemu..." style="width: 100%; padding: 8px; margin: 5px 0;">
             </div>
-
-            <div id="itemPreview" style="display: none; margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px;">
-                <h4>Náhled:</h4>
-                <div id="itemPreviewContent"></div>
-                <button onclick="saveItemToDatabase()" class="btn-success" style="margin-top: 10px;">💾 Uložit do databáze</button>
+            <div id="invSubtypeRow" style="margin: 10px 0; display: none;">
+                <label><strong>Typ předmětu:</strong></label>
+                <select id="invItemSubtype" style="width: 100%; padding: 8px; margin: 5px 0;">
+                    <option value="Wondrous item">Wondrous item</option>
+                    <option value="Weapon">Weapon</option>
+                    <option value="Armor">Armor</option>
+                    <option value="Ring">Ring</option>
+                    <option value="Rod">Rod</option>
+                    <option value="Staff">Staff</option>
+                    <option value="Wand">Wand</option>
+                    <option value="Other">Other</option>
+                </select>
             </div>
+            <div id="invRarityRow" style="margin: 10px 0;">
+                <label><strong>Vzácnost:</strong></label>
+                <select id="invItemRarity" style="width: 100%; padding: 8px; margin: 5px 0;">
+                    <option value="Common">Common</option>
+                    <option value="Uncommon">Uncommon</option>
+                    <option value="Rare">Rare</option>
+                    <option value="Very Rare">Very Rare</option>
+                    <option value="Legendary">Legendary</option>
+                </select>
+            </div>
+            <div id="invAttunementRow" style="margin: 10px 0; display: none;">
+                <label style="display: flex; align-items: center; gap: 8px;">
+                    <input type="checkbox" id="invItemAttunement">
+                    <strong>Vyžaduje attunement</strong>
+                </label>
+            </div>
+            <div id="invDescRow" style="margin: 10px 0;">
+                <label><strong>Popis:</strong></label>
+                <textarea id="invItemDesc" placeholder="Popis itemu..." style="width: 100%; height: 150px; padding: 10px; font-family: monospace; font-size: 0.9em;"></textarea>
+            </div>
+            <div style="margin: 15px 0; padding: 10px; background: #f8f9fa; border-radius: 5px;">
+                <label style="display: flex; align-items: center; gap: 8px;">
+                    <input type="checkbox" id="invSaveToDb">
+                    <strong>Uložit také do databáze</strong>
+                </label>
+            </div>
+            <button onclick="saveItemToInventory()" class="btn-success">➕ Přidat do inventáře</button>
         </div>
     </div>
 
@@ -1444,12 +1595,12 @@
                 combatState = serverState.combatState || combatState;
                 monsterDatabase = serverState.monsterDatabase || [];
 
-                // NEPŘEPISOVAT historyStack a redoStack - historie je lokální pro každého klienta
-                // a používá per-page strukturu (objekt s klíči: combat, spells, monsters, inventory)
-
                 renderCharacters();
                 renderMonsterList();
                 updateInitiativeDisplay();
+                updateCombatButtonVisibility();
+                // Re-render current secondary page if applicable
+                refreshCurrentSecondaryPage();
                 isSyncing = false; // Clear flag
             });
 
@@ -1473,9 +1624,45 @@
                 isSyncing = true;
                 combatState = combatData;
                 updateInitiativeDisplay();
+                updateCombatButtonVisibility();
                 renderCharacters();
                 isSyncing = false;
             });
+
+            // Receive history undo/redo applied from server
+            socket.on('history-applied', (data) => {
+                isSyncing = true;
+                characters = (data.characters || []).map(char => ({
+                    ...char,
+                    revealedToPlayers: char.revealedToPlayers !== undefined ? char.revealedToPlayers : (char.type === 'player')
+                }));
+                combatState = data.combatState || combatState;
+                renderCharacters();
+                updateInitiativeDisplay();
+                updateCombatButtonVisibility();
+                // Re-render current secondary page
+                refreshCurrentSecondaryPage();
+                // Show toast notification
+                const direction = data.direction === 'undo' ? 'Zpět' : 'Vpřed';
+                showToast(`${direction}: ${data.description || 'Změna'}`, data.direction);
+                isSyncing = false;
+            });
+
+            // Receive history error from server
+            socket.on('history-error', (data) => {
+                showToast(data.message || 'Chyba historie', 'info');
+            });
+        }
+
+        // Helper to re-render the currently active secondary page
+        function refreshCurrentSecondaryPage() {
+            if (currentPage === 'spells' && currentSpellCharacterId) {
+                renderSpellTracking();
+            } else if (currentPage === 'monsters' && currentMonsterCharacterId) {
+                renderMonsterAbilities();
+            } else if (currentPage === 'inventory' && currentInventoryCharacterId) {
+                renderInventory();
+            }
         }
 
         // Send state updates to server
@@ -1486,7 +1673,6 @@
                     characters,
                     combatState,
                     monsterDatabase
-                    // historyStack a redoStack jsou lokální pro každého klienta
                 });
             }
         }
@@ -1500,6 +1686,51 @@
             }
         }
 
+        // Toast notification system
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => {
+                toast.classList.add('fading');
+                setTimeout(() => { toast.remove(); }, 500);
+            }, 3000);
+        }
+
+        // Debounced sync for input fields
+        let syncDebounceTimer = null;
+        function debouncedSync() {
+            clearTimeout(syncDebounceTimer);
+            syncDebounceTimer = setTimeout(() => syncToServer(), 300);
+        }
+
+        // Combat button visibility helper
+        function updateCombatButtonVisibility() {
+            if (combatState.active) {
+                document.getElementById('startBtn').classList.add('hidden');
+                document.getElementById('prevBtn').classList.remove('hidden');
+                document.getElementById('nextBtn').classList.remove('hidden');
+                document.getElementById('endBtn').classList.remove('hidden');
+                document.getElementById('closeBtn').classList.remove('hidden');
+                document.getElementById('saveCombatBtn').style.display = 'inline-block';
+                const restAllContainer = document.getElementById('restAllContainer');
+                if (restAllContainer) restAllContainer.style.display = 'none';
+                updateInitiativeDisplay();
+            } else {
+                document.getElementById('startBtn').classList.remove('hidden');
+                document.getElementById('prevBtn').classList.add('hidden');
+                document.getElementById('nextBtn').classList.add('hidden');
+                document.getElementById('endBtn').classList.add('hidden');
+                document.getElementById('closeBtn').classList.add('hidden');
+                document.getElementById('saveCombatBtn').style.display = 'none';
+                document.getElementById('initiativeOrder').classList.add('hidden');
+                const restAllContainer = document.getElementById('restAllContainer');
+                if (restAllContainer) restAllContainer.style.display = 'flex';
+            }
+        }
+
         let characters = [];
         let combatState = {
             active: false,
@@ -1510,19 +1741,7 @@
         let currentEffectCharacterId = null;
         let autoSaveInterval = null;
         let currentPage = 'combat'; // Aktuální stránka pro izolovanou historii
-        let historyStack = {
-            combat: [],
-            spells: [],
-            monsters: [],
-            inventory: []
-        };
-        let redoStack = {
-            combat: [],
-            spells: [],
-            monsters: [],
-            inventory: []
-        };
-        const MAX_HISTORY = 20;
+        // History is now server-side (shared across all clients)
         let draggedCharacterIndex = null;
         let monsterDatabase = [];
         let currentMonsterForStatblock = null;
@@ -2918,8 +3137,8 @@
         }
 
         function unlinkFromGroup(id) {
-            saveState();
             const character = characters.find(char => char.id === id);
+            saveState(`Odpojení ${character?.name || 'postavy'} ze skupiny`);
             if (character && character.groupId) {
                 character.groupId = null;
                 character.groupName = null;
@@ -2929,15 +3148,16 @@
         }
 
         function removeCharacter(id) {
-            saveState();
+            const charToRemove = characters.find(char => char.id === id);
+            saveState(`Odstranění ${charToRemove?.name || 'postavy'}`);
             characters = characters.filter(char => char.id !== id);
             renderCharacters();
             syncToServer();
         }
 
         function updateHp(id, change) {
-            saveState();
             const character = characters.find(char => char.id === id);
+            saveState(`${character?.name || 'Postava'}: ${change > 0 ? '+' : ''}${change} HP`);
             if (!character) return;
 
             if (change < 0) {
@@ -2976,10 +3196,10 @@
         }
 
         function setTempHp(id) {
-            saveState();
+            const character = characters.find(char => char.id === id);
             const input = document.querySelector(`[data-temp-id="${id}"]`);
             const tempHp = parseInt(input.value) || 0;
-            const character = characters.find(char => char.id === id);
+            saveState(`${character?.name || 'Postava'}: nastavení ${tempHp} temp HP`);
             if (character) {
                 character.tempHp = Math.max(0, tempHp);
                 input.value = '';
@@ -2989,11 +3209,11 @@
         }
 
         function applyMaxHpChange(id) {
-            saveState();
             const input = document.querySelector(`[data-maxhp-id="${id}"]`);
             const change = parseInt(input.value) || 0;
             if (change === 0) return;
             const character = characters.find(char => char.id === id);
+            saveState(`${character?.name || 'Postava'}: max HP ${change >= 0 ? '+' : ''}${change}`);
             if (!character) return;
             character.maxHp += change;
             if (character.currentHp > character.maxHp) {
@@ -3010,8 +3230,8 @@
         }
 
         function updatePower(id, change) {
-            saveState();
             const character = characters.find(char => char.id === id);
+            saveState(`${character?.name || 'Postava'}: ${change > 0 ? '+' : ''}${change} moc`);
             if (character) {
                 character.currentPower = Math.max(0, character.currentPower + change);
                 renderCharacters();
@@ -3020,8 +3240,8 @@
         }
 
         function setPower(id, value) {
-            saveState();
             const character = characters.find(char => char.id === id);
+            saveState(`${character?.name || 'Postava'}: nastavení moci na ${value}`);
             if (character) {
                 character.currentPower = Math.max(0, parseInt(value) || 0);
                 renderCharacters();
@@ -3030,8 +3250,8 @@
         }
 
         function setInitiative(id, value) {
-            saveState();
             const character = characters.find(char => char.id === id);
+            saveState(`${character?.name || 'Postava'}: nastavení iniciativy na ${value}`);
             if (character) {
                 const oldInitiative = character.initiative;
                 character.initiative = parseInt(value) || null;
@@ -3124,21 +3344,14 @@
                 firstChar.revealedToPlayers = true;
             }
 
-            document.getElementById('startBtn').classList.add('hidden');
-            document.getElementById('prevBtn').classList.remove('hidden');
-            document.getElementById('nextBtn').classList.remove('hidden');
-            document.getElementById('endBtn').classList.remove('hidden');
-            document.getElementById('closeBtn').classList.remove('hidden');
-            document.getElementById('saveCombatBtn').style.display = 'inline-block';
-
-            updateInitiativeDisplay();
+            updateCombatButtonVisibility();
             renderCharacters();
             syncToServer();
             saveAutosave(); // Autosave when combat starts
         }
 
         function nextTurn() {
-            saveState();
+            saveState('Další tah');
 
             // Odhal aktuální postavu pro hráče (pokud je to monstrum)
             const currentChar = characters[combatState.currentTurn];
@@ -3178,7 +3391,7 @@
         }
 
         function previousTurn() {
-            saveState();
+            saveState('Předchozí tah');
             if (combatState.currentTurn > 0) {
                 combatState.currentTurn--;
                 // Odstraň z playedThisRound pokud tam byl
@@ -3215,13 +3428,7 @@
                 }
             });
 
-            document.getElementById('startBtn').classList.remove('hidden');
-            document.getElementById('prevBtn').classList.add('hidden');
-            document.getElementById('nextBtn').classList.add('hidden');
-            document.getElementById('endBtn').classList.add('hidden');
-            document.getElementById('closeBtn').classList.add('hidden');
-            document.getElementById('saveCombatBtn').style.display = 'none';
-            document.getElementById('initiativeOrder').classList.add('hidden');
+            updateCombatButtonVisibility();
 
             renderCharacters();
             syncToServer();
@@ -3244,13 +3451,7 @@
                 return false;
             });
 
-            document.getElementById('startBtn').classList.remove('hidden');
-            document.getElementById('prevBtn').classList.add('hidden');
-            document.getElementById('nextBtn').classList.add('hidden');
-            document.getElementById('endBtn').classList.add('hidden');
-            document.getElementById('closeBtn').classList.add('hidden');
-            document.getElementById('saveCombatBtn').style.display = 'none';
-            document.getElementById('initiativeOrder').classList.add('hidden');
+            updateCombatButtonVisibility();
 
             renderCharacters();
             syncToServer();
@@ -3295,7 +3496,7 @@
         }
 
         function addEffect() {
-            saveState();
+            saveState('Přidání efektu');
             const effectSelect = document.getElementById('effectSelect');
             const customInput = document.getElementById('newEffect');
 
@@ -3340,7 +3541,7 @@
         }
 
         function changeEffectLevel(effectIndex, delta) {
-            saveState();
+            saveState('Změna úrovně efektu');
             const character = characters.find(char => char.id === currentEffectCharacterId);
             if (!character) return;
 
@@ -3357,7 +3558,7 @@
         }
 
         function removeEffect(effectIndex) {
-            saveState();
+            saveState('Odstranění efektu');
             const character = characters.find(char => char.id === currentEffectCharacterId);
             const effect = normalizeEffect(character.effects[effectIndex]);
             handleEffectRemoval(character, effect.name);
@@ -3368,8 +3569,8 @@
         }
 
         function removeEffectFromCharacter(id, effectIndex) {
-            saveState();
             const character = characters.find(char => char.id === id);
+            saveState(`Změna efektu ${character?.name || 'postavy'}`);
             if (!character) return;
             const effect = normalizeEffect(character.effects[effectIndex]);
             const effectDef = predefinedEffects[effect.name];
@@ -3598,17 +3799,7 @@
                         }
 
                         renderCharacters();
-
-                        // Obnovit UI tlačítka podle stavu boje
-                        if (combatState.active) {
-                            document.getElementById('startBtn').classList.add('hidden');
-                            document.getElementById('prevBtn').classList.remove('hidden');
-                            document.getElementById('nextBtn').classList.remove('hidden');
-                            document.getElementById('endBtn').classList.remove('hidden');
-                            document.getElementById('closeBtn').classList.remove('hidden');
-                            document.getElementById('saveCombatBtn').style.display = 'inline-block';
-                            updateInitiativeDisplay();
-                        }
+                        updateCombatButtonVisibility();
                     }
                 }
             } catch (error) {
@@ -3721,17 +3912,7 @@
                         }
 
                         renderCharacters();
-
-                        // Restore combat UI state
-                        if (combatState.active) {
-                            document.getElementById('startBtn').classList.add('hidden');
-                            document.getElementById('prevBtn').classList.remove('hidden');
-                            document.getElementById('nextBtn').classList.remove('hidden');
-                            document.getElementById('endBtn').classList.remove('hidden');
-                            document.getElementById('closeBtn').classList.remove('hidden');
-                            document.getElementById('saveCombatBtn').style.display = 'inline-block';
-                            updateInitiativeDisplay();
-                        }
+                        updateCombatButtonVisibility();
 
                         // Sync to server after loading autosave
                         syncToServer();
@@ -3749,117 +3930,34 @@
             }
         }
 
-        // History/Undo systém
-        function saveState() {
-            const state = {
-                characters: JSON.parse(JSON.stringify(characters)),
-                combatState: JSON.parse(JSON.stringify(combatState))
-            };
-            // Uložit do stacku aktuální stránky
-            historyStack[currentPage].push(state);
-            if (historyStack[currentPage].length > MAX_HISTORY) {
-                historyStack[currentPage].shift();
+        // History/Undo systém - server-side shared history
+        function saveState(description = '') {
+            if (socket && isConnected) {
+                socket.emit('save-history-entry', {
+                    page: currentPage,
+                    description: description,
+                    characters: JSON.parse(JSON.stringify(characters)),
+                    combatState: JSON.parse(JSON.stringify(combatState))
+                });
             }
-            // Vymazat redo stack aktuální stránky když uděláme novou akci
-            redoStack[currentPage] = [];
         }
 
         function undo() {
-            // Kontrola stacku aktuální stránky
-            if (historyStack[currentPage].length === 0) {
-                alert('Nelze vrátit zpět - žádná historie změn na této stránce!');
-                return;
+            if (socket && isConnected) {
+                socket.emit('request-undo', { page: currentPage });
             }
-
-            // Ulož současný stav do redo stacku aktuální stránky
-            const currentState = {
-                characters: JSON.parse(JSON.stringify(characters)),
-                combatState: JSON.parse(JSON.stringify(combatState))
-            };
-            redoStack[currentPage].push(currentState);
-            if (redoStack[currentPage].length > MAX_HISTORY) {
-                redoStack[currentPage].shift();
-            }
-
-            // Obnov předchozí stav ze stacku aktuální stránky
-            const previousState = historyStack[currentPage].pop();
-            characters = JSON.parse(JSON.stringify(previousState.characters));
-            combatState = JSON.parse(JSON.stringify(previousState.combatState));
-
-            // Obnovit UI podle stavu
-            renderCharacters();
-            if (combatState.active) {
-                document.getElementById('startBtn').classList.add('hidden');
-                document.getElementById('prevBtn').classList.remove('hidden');
-                document.getElementById('nextBtn').classList.remove('hidden');
-                document.getElementById('endBtn').classList.remove('hidden');
-                document.getElementById('closeBtn').classList.remove('hidden');
-                document.getElementById('saveCombatBtn').style.display = 'inline-block';
-                updateInitiativeDisplay();
-            } else {
-                document.getElementById('startBtn').classList.remove('hidden');
-                document.getElementById('prevBtn').classList.add('hidden');
-                document.getElementById('nextBtn').classList.add('hidden');
-                document.getElementById('endBtn').classList.add('hidden');
-                document.getElementById('closeBtn').classList.add('hidden');
-                document.getElementById('saveCombatBtn').style.display = 'none';
-                document.getElementById('initiativeOrder').classList.add('hidden');
-            }
-
-            // Synchronizovat se serverem
-            syncToServer();
         }
 
         function redo() {
-            // Kontrola redo stacku aktuální stránky
-            if (redoStack[currentPage].length === 0) {
-                alert('Nelze posunout dopředu - žádná historie na této stránce!');
-                return;
+            if (socket && isConnected) {
+                socket.emit('request-redo', { page: currentPage });
             }
-
-            // Ulož současný stav do history stacku aktuální stránky
-            const currentState = {
-                characters: JSON.parse(JSON.stringify(characters)),
-                combatState: JSON.parse(JSON.stringify(combatState))
-            };
-            historyStack[currentPage].push(currentState);
-            if (historyStack[currentPage].length > MAX_HISTORY) {
-                historyStack[currentPage].shift();
-            }
-
-            // Obnov následující stav ze stacku aktuální stránky
-            const nextState = redoStack[currentPage].pop();
-            characters = JSON.parse(JSON.stringify(nextState.characters));
-            combatState = JSON.parse(JSON.stringify(nextState.combatState));
-
-            // Obnovit UI podle stavu
-            renderCharacters();
-            if (combatState.active) {
-                document.getElementById('startBtn').classList.add('hidden');
-                document.getElementById('prevBtn').classList.remove('hidden');
-                document.getElementById('nextBtn').classList.remove('hidden');
-                document.getElementById('endBtn').classList.remove('hidden');
-                document.getElementById('closeBtn').classList.remove('hidden');
-                document.getElementById('saveCombatBtn').style.display = 'inline-block';
-                updateInitiativeDisplay();
-            } else {
-                document.getElementById('startBtn').classList.remove('hidden');
-                document.getElementById('prevBtn').classList.add('hidden');
-                document.getElementById('nextBtn').classList.add('hidden');
-                document.getElementById('endBtn').classList.add('hidden');
-                document.getElementById('closeBtn').classList.add('hidden');
-                document.getElementById('saveCombatBtn').style.display = 'none';
-                document.getElementById('initiativeOrder').classList.add('hidden');
-            }
-
-            // Synchronizovat se serverem
-            syncToServer();
         }
 
         // Drag and Drop funkce
         function handleDragStart(e, index) {
             if (!combatState.active) return;
-            saveState();
+            saveState('Přesun v iniciativě');
             draggedCharacterIndex = index;
             e.target.classList.add('dragging');
             e.dataTransfer.effectAllowed = 'move';
@@ -4284,30 +4382,14 @@
                         // Obnovit stav boje
                         combatState = data.combatState;
 
-                        // Vyčistit historii (nový začátek)
-                        historyStack = [];
-                        redoStack = [];
+                        // Historie je nyní server-side
 
                         renderCharacters();
+                        updateCombatButtonVisibility();
 
-                        // Obnovit UI podle stavu boje
                         if (combatState.active) {
-                            document.getElementById('startBtn').classList.add('hidden');
-                            document.getElementById('prevBtn').classList.remove('hidden');
-                            document.getElementById('nextBtn').classList.remove('hidden');
-                            document.getElementById('endBtn').classList.remove('hidden');
-                            document.getElementById('closeBtn').classList.remove('hidden');
-                            document.getElementById('saveCombatBtn').style.display = 'inline-block';
-                            updateInitiativeDisplay();
                             alert(`Stav boje načten! Kolo ${combatState.round}, na tahu: ${characters[combatState.currentTurn]?.name}`);
                         } else {
-                            document.getElementById('startBtn').classList.remove('hidden');
-                            document.getElementById('prevBtn').classList.add('hidden');
-                            document.getElementById('nextBtn').classList.add('hidden');
-                            document.getElementById('endBtn').classList.add('hidden');
-                            document.getElementById('closeBtn').classList.add('hidden');
-                            document.getElementById('saveCombatBtn').style.display = 'none';
-                            document.getElementById('initiativeOrder').classList.add('hidden');
                             alert(`Načteno ${characters.length} postav!`);
                         }
                     } else {
@@ -4491,14 +4573,38 @@
                 document.getElementById('spellsPage').classList.add('active');
                 document.querySelectorAll('.nav-btn')[1].classList.add('active');
                 populateSpellCharacterSelect();
+                // Auto-select first player if none selected
+                if (!currentSpellCharacterId) {
+                    const firstPlayer = characters.find(c => c.type === 'player');
+                    if (firstPlayer) {
+                        document.getElementById('spellCharacterSelect').value = firstPlayer.id;
+                        loadSpellCharacter();
+                    }
+                }
             } else if (pageName === 'monsters') {
                 document.getElementById('monstersPage').classList.add('active');
                 document.querySelectorAll('.nav-btn')[2].classList.add('active');
                 populateMonsterCharacterSelect();
+                // Auto-select first monster if none selected
+                if (!currentMonsterCharacterId) {
+                    const firstMonster = characters.find(c => c.type === 'monster');
+                    if (firstMonster) {
+                        document.getElementById('monsterCharacterSelect').value = firstMonster.id;
+                        loadMonsterCharacter();
+                    }
+                }
             } else if (pageName === 'inventory') {
                 document.getElementById('inventoryPage').classList.add('active');
                 document.querySelectorAll('.nav-btn')[3].classList.add('active');
                 populateInventoryCharacterSelect();
+                // Auto-select first player if none selected
+                if (!currentInventoryCharacterId) {
+                    const firstPlayer = characters.find(c => c.type === 'player');
+                    if (firstPlayer) {
+                        document.getElementById('inventoryCharacterSelect').value = firstPlayer.id;
+                        loadInventoryCharacter();
+                    }
+                }
             }
         }
 
@@ -5166,7 +5272,8 @@
             html += `
                 <div style="margin: 20px 0; padding: 15px; background: #fce4ec; border-radius: 8px;">
                     <h4 style="color: #c2185b; margin-bottom: 10px;">🧪 Potions</h4>
-                    <button onclick="addPotionFromDatabase()" class="btn-success" style="margin-bottom: 10px;">➕ Přidat z databáze</button>
+                    <button onclick="openAddItemToInventory('potion')" class="btn-success" style="margin-bottom: 10px;">➕ Přidat potion</button>
+                    <button onclick="addPotionFromDatabase()" class="btn-success" style="margin-bottom: 10px; background: #9b59b6;">📚 Z databáze</button>
                     <div id="potionsList">
                         ${inv.potions.map((potion, idx) => `
                             <div style="background: white; padding: 10px; margin: 5px 0; border-radius: 5px; display: flex; align-items: center; gap: 10px;">
@@ -5221,8 +5328,8 @@
                 <div style="margin: 20px 0; padding: 15px; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); border-radius: 8px; color: white;">
                     <h4 style="color: white; margin-bottom: 10px;">✨ Magické itemy</h4>
                     <p style="margin-bottom: 10px; font-size: 0.9em;">Attuned: ${attunedCount}/3</p>
-                    <button onclick="addMagicItemFromDatabase()" class="btn-success" style="margin-bottom: 10px;">➕ Přidat z databáze</button>
-                    <button onclick="addMagicItem()" class="btn-success" style="margin-bottom: 10px;">➕ Přidat vlastní</button>
+                    <button onclick="openAddItemToInventory('magic')" class="btn-success" style="margin-bottom: 10px;">➕ Přidat magický item</button>
+                    <button onclick="addMagicItemFromDatabase()" class="btn-success" style="margin-bottom: 10px; background: #9b59b6;">📚 Z databáze</button>
                     <div id="magicItemsList">
                         ${inv.magicItems.map((item, idx) => `
                             <div style="background: rgba(255,255,255,0.95); color: #333; padding: 15px; margin: 10px 0; border-radius: 5px;">
@@ -5258,6 +5365,7 @@
             if (!character) return;
             character.inventory.currency[type] = parseInt(value) || 0;
             saveToLocalStorage();
+            debouncedSync();
         }
 
         // Spell Component functions
@@ -5279,6 +5387,7 @@
 
             character.inventory.spellComponents.push(component);
             saveToLocalStorage();
+            syncToServer();
             renderInventory();
         }
 
@@ -5287,6 +5396,7 @@
             if (!character) return;
             character.inventory.spellComponents[index][field] = parseInt(value) || 0;
             saveToLocalStorage();
+            debouncedSync();
         }
 
         function removeSpellComponent(index) {
@@ -5294,6 +5404,7 @@
             if (!character) return;
             character.inventory.spellComponents.splice(index, 1);
             saveToLocalStorage();
+            syncToServer();
             renderInventory();
         }
 
@@ -5340,6 +5451,7 @@
             }
 
             saveToLocalStorage();
+            syncToServer();
             closeTransferModal();
             renderInventory();
         }
@@ -5354,6 +5466,7 @@
                 character.inventory.potions[index].quantity = newValue;
             }
             saveToLocalStorage();
+            syncToServer();
             renderInventory();
         }
 
@@ -5362,6 +5475,7 @@
             if (!character) return;
             character.inventory.potions.splice(index, 1);
             saveToLocalStorage();
+            syncToServer();
             renderInventory();
         }
 
@@ -5384,6 +5498,7 @@
             }
 
             saveToLocalStorage();
+            syncToServer();
             renderInventory();
         }
 
@@ -5397,6 +5512,7 @@
                 character.inventory.scrolls[index].quantity = newValue;
             }
             saveToLocalStorage();
+            syncToServer();
             renderInventory();
         }
 
@@ -5405,6 +5521,7 @@
             if (!character) return;
             character.inventory.scrolls.splice(index, 1);
             saveToLocalStorage();
+            syncToServer();
             renderInventory();
         }
 
@@ -5418,6 +5535,7 @@
 
             character.inventory.generalItems.push(itemDesc);
             saveToLocalStorage();
+            syncToServer();
             renderInventory();
         }
 
@@ -5426,6 +5544,7 @@
             if (!character) return;
             character.inventory.generalItems.splice(index, 1);
             saveToLocalStorage();
+            syncToServer();
             renderInventory();
         }
 
@@ -5448,6 +5567,7 @@
             });
 
             saveToLocalStorage();
+            syncToServer();
             renderInventory();
         }
 
@@ -5490,6 +5610,7 @@
             });
 
             saveToLocalStorage();
+            syncToServer();
             closeTransferModal();
             renderInventory();
         }
@@ -5508,6 +5629,7 @@
 
             character.inventory.magicItems[index].attuned = isAttuned;
             saveToLocalStorage();
+            syncToServer();
             renderInventory();
         }
 
@@ -5516,6 +5638,7 @@
             if (!character) return;
             character.inventory.magicItems.splice(index, 1);
             saveToLocalStorage();
+            syncToServer();
             renderInventory();
         }
 
@@ -5632,6 +5755,7 @@
             }
 
             saveToLocalStorage();
+            syncToServer();
             closeTransferModal();
             renderInventory();
             alert(`Item transferován do inventáře: ${targetChar.name}`);
@@ -5775,13 +5899,191 @@
         }
 
         function openAddItemModal() {
+            // Reset import tab
             document.getElementById('itemDescInput').value = '';
             document.getElementById('itemPreview').style.display = 'none';
+            // Reset structured form
+            document.getElementById('structItemType').value = 'potion';
+            document.getElementById('structItemName').value = '';
+            document.getElementById('structItemSubtype').value = 'Wondrous item';
+            document.getElementById('structItemRarity').value = 'Common';
+            document.getElementById('structItemAttunement').checked = false;
+            document.getElementById('structItemDesc').value = '';
+            onStructItemTypeChange();
+            // Default to form tab
+            switchItemTab('form');
             document.getElementById('addItemModal').style.display = 'block';
         }
 
         function closeAddItemModal() {
             document.getElementById('addItemModal').style.display = 'none';
+        }
+
+        function switchItemTab(tabName) {
+            const formTab = document.getElementById('itemFormTab');
+            const importTab = document.getElementById('itemImportTab');
+            const btnForm = document.getElementById('itemTabForm');
+            const btnImport = document.getElementById('itemTabImport');
+            if (tabName === 'form') {
+                formTab.style.display = 'block';
+                importTab.style.display = 'none';
+                btnForm.style.background = '#3498db';
+                btnForm.style.color = 'white';
+                btnImport.style.background = '#e0e0e0';
+                btnImport.style.color = '#333';
+            } else {
+                formTab.style.display = 'none';
+                importTab.style.display = 'block';
+                btnForm.style.background = '#e0e0e0';
+                btnForm.style.color = '#333';
+                btnImport.style.background = '#3498db';
+                btnImport.style.color = 'white';
+            }
+        }
+
+        function onStructItemTypeChange() {
+            const type = document.getElementById('structItemType').value;
+            document.getElementById('structSubtypeRow').style.display = type === 'magic' ? 'block' : 'none';
+            document.getElementById('structAttunementRow').style.display = type === 'magic' ? 'block' : 'none';
+            document.getElementById('structRarityRow').style.display = (type === 'potion' || type === 'magic') ? 'block' : 'none';
+        }
+
+        function saveStructuredItemToDatabase() {
+            const type = document.getElementById('structItemType').value;
+            const name = document.getElementById('structItemName').value.trim();
+            if (!name) {
+                alert('Zadejte název itemu!');
+                return;
+            }
+            const description = document.getElementById('structItemDesc').value.trim();
+
+            let item;
+            if (type === 'potion') {
+                item = {
+                    type: 'potion',
+                    name: name,
+                    rarity: document.getElementById('structItemRarity').value,
+                    itemType: 'Potion',
+                    description: description
+                };
+            } else {
+                item = {
+                    type: 'magic',
+                    name: name,
+                    rarity: document.getElementById('structItemRarity').value,
+                    itemType: document.getElementById('structItemSubtype').value,
+                    attunementReq: document.getElementById('structItemAttunement').checked ? 'anyone' : '',
+                    description: description
+                };
+            }
+
+            itemDatabase.push(item);
+            saveItemDatabase();
+            closeAddItemModal();
+            renderItemDatabase();
+            alert('Item přidán do databáze!');
+        }
+
+        function openAddItemToInventory(preselectedType) {
+            if (!currentInventoryCharacterId) {
+                alert('Nejdřív vyberte postavu!');
+                return;
+            }
+            // Reset form
+            document.getElementById('invItemType').value = preselectedType || 'potion';
+            document.getElementById('invItemName').value = '';
+            document.getElementById('invItemSubtype').value = 'Wondrous item';
+            document.getElementById('invItemRarity').value = 'Common';
+            document.getElementById('invItemAttunement').checked = false;
+            document.getElementById('invItemDesc').value = '';
+            document.getElementById('invSaveToDb').checked = false;
+            onInvItemTypeChange();
+            document.getElementById('addItemToInventoryModal').style.display = 'block';
+        }
+
+        function closeAddItemToInventory() {
+            document.getElementById('addItemToInventoryModal').style.display = 'none';
+        }
+
+        function onInvItemTypeChange() {
+            const type = document.getElementById('invItemType').value;
+            document.getElementById('invSubtypeRow').style.display = type === 'magic' ? 'block' : 'none';
+            document.getElementById('invAttunementRow').style.display = type === 'magic' ? 'block' : 'none';
+            document.getElementById('invRarityRow').style.display = (type === 'potion' || type === 'magic') ? 'block' : 'none';
+            document.getElementById('invDescRow').style.display = (type === 'general' || type === 'scroll') ? 'none' : 'block';
+        }
+
+        function saveItemToInventory() {
+            const type = document.getElementById('invItemType').value;
+            const name = document.getElementById('invItemName').value.trim();
+            if (!name) {
+                alert('Zadejte název itemu!');
+                return;
+            }
+
+            const character = characters.find(c => c.id === currentInventoryCharacterId);
+            if (!character) return;
+
+            const description = document.getElementById('invItemDesc').value.trim();
+            const saveToDb = document.getElementById('invSaveToDb').checked;
+
+            if (type === 'potion') {
+                const existing = character.inventory.potions.find(p => p.name === name);
+                if (existing) {
+                    existing.quantity++;
+                } else {
+                    character.inventory.potions.push({
+                        name: name,
+                        description: description,
+                        quantity: 1
+                    });
+                }
+                if (saveToDb) {
+                    itemDatabase.push({
+                        type: 'potion',
+                        name: name,
+                        rarity: document.getElementById('invItemRarity').value,
+                        itemType: 'Potion',
+                        description: description
+                    });
+                    saveItemDatabase();
+                }
+            } else if (type === 'magic') {
+                character.inventory.magicItems.push({
+                    name: name,
+                    itemType: document.getElementById('invItemSubtype').value,
+                    description: description,
+                    attuned: false
+                });
+                if (saveToDb) {
+                    itemDatabase.push({
+                        type: 'magic',
+                        name: name,
+                        rarity: document.getElementById('invItemRarity').value,
+                        itemType: document.getElementById('invItemSubtype').value,
+                        attunementReq: document.getElementById('invItemAttunement').checked ? 'anyone' : '',
+                        description: description
+                    });
+                    saveItemDatabase();
+                }
+            } else if (type === 'scroll') {
+                const existing = character.inventory.scrolls.find(s => s.spellName === name);
+                if (existing) {
+                    existing.quantity++;
+                } else {
+                    character.inventory.scrolls.push({
+                        spellName: name,
+                        quantity: 1
+                    });
+                }
+            } else if (type === 'general') {
+                character.inventory.generalItems.push(name);
+            }
+
+            saveToLocalStorage();
+            syncToServer();
+            closeAddItemToInventory();
+            renderInventory();
         }
 
         let parsedItemData = null;
@@ -6067,8 +6369,8 @@
             // Rest Buttons
             html += `
                 <div class="rest-buttons">
-                    <button class="rest-btn btn-warning" onclick="shortRest()">🌙 Short Rest</button>
-                    <button class="rest-btn btn-success" onclick="longRest()">☀️ Long Rest</button>
+                    <button class="rest-btn btn-warning" onclick="shortRest()">🌙 Short Rest ${character.name}</button>
+                    <button class="rest-btn btn-success" onclick="longRest()">☀️ Long Rest ${character.name}</button>
                 </div>
             `;
 
@@ -6104,8 +6406,8 @@
 
         // Toggle spell slot
         function toggleSpellSlot(level, slotIndex) {
-            saveState();
             const character = characters.find(c => c.id === currentSpellCharacterId);
+            saveState(`${character?.name || 'Postava'}: spell slot level ${level}`);
             if (!character || !character.spellSlots[level]) return;
 
             const slots = character.spellSlots[level];
@@ -6125,8 +6427,8 @@
 
         // Toggle hit die
         function toggleHitDie(dieIndex) {
-            saveState();
             const character = characters.find(c => c.id === currentSpellCharacterId);
+            saveState(`${character?.name || 'Postava'}: kostka životů`);
             if (!character) return;
 
             const usedCount = character.hitDice.max - character.hitDice.current;
@@ -6147,8 +6449,8 @@
 
         // Toggle custom feature use
         function toggleCustomFeature(featureIndex, useIndex) {
-            saveState();
             const character = characters.find(c => c.id === currentSpellCharacterId);
+            saveState(`${character?.name || 'Postava'}: změna vlastnosti`);
             if (!character || !character.customFeatures[featureIndex]) return;
 
             const feature = character.customFeatures[featureIndex];
@@ -6191,8 +6493,8 @@
 
         // Change feature uses (for health bar +/- buttons)
         function changeFeatureUses(featureIndex, change) {
-            saveState();
             const character = characters.find(c => c.id === currentSpellCharacterId);
+            saveState(`${character?.name || 'Postava'}: změna počtu použití`);
             if (!character || !character.customFeatures[featureIndex]) return;
 
             const feature = character.customFeatures[featureIndex];
@@ -6229,8 +6531,8 @@
 
         // Set feature uses directly (for custom input)
         function setFeatureUses(featureIndex, value) {
-            saveState();
             const character = characters.find(c => c.id === currentSpellCharacterId);
+            saveState(`${character?.name || 'Postava'}: nastavení počtu použití`);
             if (!character || !character.customFeatures[featureIndex]) return;
 
             const feature = character.customFeatures[featureIndex];
@@ -6268,8 +6570,8 @@
 
         // Short Rest
         function shortRest() {
-            saveState();
             const character = characters.find(c => c.id === currentSpellCharacterId);
+            saveState(`Short Rest ${character?.name || ''}`);
             if (!character) return;
 
             if (!confirm(`Provést Short Rest pro ${character.name}?\n\nObnoví: Short Rest features`)) {
@@ -6305,8 +6607,8 @@
 
         // Long Rest
         function longRest() {
-            saveState();
             const character = characters.find(c => c.id === currentSpellCharacterId);
+            saveState(`Long Rest ${character?.name || ''}`);
             if (!character) return;
 
             if (!confirm(`Provést Long Rest pro ${character.name}?\n\nObnoví: HP, spell sloty, long rest features a hit dice`)) {
@@ -6352,6 +6654,96 @@
             syncToServer();
             saveToLocalStorage();
             alert('Long Rest dokončen!');
+        }
+
+        // Short Rest All (all player characters)
+        function shortRestAll() {
+            const playerChars = characters.filter(c => c.type === 'player');
+            if (playerChars.length === 0) return;
+            if (!confirm('Provést Short Rest pro všechny hráče?')) return;
+
+            saveState('Short Rest All');
+
+            playerChars.forEach(character => {
+                if (character.customFeatures) {
+                    character.customFeatures.forEach(feature => {
+                        const regainType = feature.shortRestRegainType || (feature.restType === 'short' ? feature.regainType : 'none');
+                        if (regainType && regainType !== 'none') {
+                            if (regainType === 'all') {
+                                feature.used = 0;
+                            } else if (regainType === 'fixed') {
+                                const amount = feature.shortRestRegainAmount || feature.regainAmount || 0;
+                                feature.used = Math.max(0, feature.used - amount);
+                            } else if (regainType === 'input') {
+                                const amount = feature.shortRestRegainAmount || feature.regainAmount || 1;
+                                const regained = parseInt(prompt(`${character.name} - Kolik ${feature.name} se obnoví? (aktuálně použito: ${feature.used})`, amount));
+                                if (!isNaN(regained)) {
+                                    feature.used = Math.max(0, feature.used - regained);
+                                }
+                            }
+                        }
+                    });
+                }
+            });
+
+            renderCharacters();
+            syncToServer();
+            saveToLocalStorage();
+            alert('Short Rest All dokončen!');
+        }
+
+        // Long Rest All (all player characters)
+        function longRestAll() {
+            const playerChars = characters.filter(c => c.type === 'player');
+            if (playerChars.length === 0) return;
+            if (!confirm('Provést Long Rest pro všechny hráče?\n\nObnoví: HP, spell sloty, long rest features a hit dice')) return;
+
+            saveState('Long Rest All');
+
+            playerChars.forEach(character => {
+                // Restore HP
+                character.currentHp = character.maxHp;
+                character.tempHp = 0;
+
+                // Restore all spell slots
+                if (character.spellSlots) {
+                    Object.keys(character.spellSlots).forEach(level => {
+                        character.spellSlots[level].used = 0;
+                    });
+                }
+
+                // Restore long rest features
+                if (character.customFeatures) {
+                    character.customFeatures.forEach(feature => {
+                        const regainType = feature.longRestRegainType || (feature.restType === 'long' ? feature.regainType : 'none');
+                        if (regainType && regainType !== 'none') {
+                            if (regainType === 'all') {
+                                feature.used = 0;
+                            } else if (regainType === 'fixed') {
+                                const amount = feature.longRestRegainAmount || feature.regainAmount || 0;
+                                feature.used = Math.max(0, feature.used - amount);
+                            } else if (regainType === 'input') {
+                                const amount = feature.longRestRegainAmount || feature.regainAmount || 1;
+                                const regained = parseInt(prompt(`${character.name} - Kolik ${feature.name} se obnoví? (aktuálně použito: ${feature.used})`, amount));
+                                if (!isNaN(regained)) {
+                                    feature.used = Math.max(0, feature.used - regained);
+                                }
+                            }
+                        }
+                    });
+                }
+
+                // Restore hit dice (restore half of max, aditivně)
+                if (character.hitDice) {
+                    const regainAmount = Math.max(1, Math.floor(character.hitDice.max / 2));
+                    character.hitDice.current = Math.min(character.hitDice.max, character.hitDice.current + regainAmount);
+                }
+            });
+
+            renderCharacters();
+            syncToServer();
+            saveToLocalStorage();
+            alert('Long Rest All dokončen!');
         }
 
         // Open edit modal
@@ -6529,8 +6921,8 @@
         }
 
         function saveSpellCharacter() {
-            saveState();
             const character = characters.find(c => c.id === currentSpellCharacterId);
+            saveState(`${character?.name || 'Postava'}: uložení nastavení kouzelníka`);
             if (!character) return;
 
             // Save spellcaster level
