@@ -103,6 +103,62 @@ let gameState = {
 
 const MAX_HISTORY = 20;
 
+// Define which character fields each page owns
+const PAGE_CHAR_FIELDS = {
+    combat: ['hp', 'maxHp', 'tempHp', 'initiative', 'conditions', 'deathSaves', 'concentrationActive', 'powerPoints', 'maxPowerPoints'],
+    spells: ['spellSlots', 'abilities', 'hitDice', 'maxHitDice', 'wizardSettings', 'hp', 'maxHp'],
+    monsters: ['abilities'],
+    inventory: ['inventory']
+};
+
+// Merge only page-relevant fields from snapshot into current state
+function applyPageScopedRestore(page, snapshotChars, snapshotCombatState) {
+    const fields = PAGE_CHAR_FIELDS[page];
+    if (!fields) return;
+
+    // For combat page, also restore combatState
+    if (page === 'combat') {
+        gameState.combatState = JSON.parse(JSON.stringify(snapshotCombatState));
+    }
+
+    // Merge character fields from snapshot into current characters
+    const snapshotMap = new Map();
+    snapshotChars.forEach(c => snapshotMap.set(c.id, c));
+
+    gameState.characters.forEach(currentChar => {
+        const snapshotChar = snapshotMap.get(currentChar.id);
+        if (!snapshotChar) return;
+
+        // For monsters page, only restore monster characters
+        if (page === 'monsters' && currentChar.type !== 'monster') return;
+
+        fields.forEach(field => {
+            if (snapshotChar[field] !== undefined) {
+                currentChar[field] = JSON.parse(JSON.stringify(snapshotChar[field]));
+            }
+        });
+    });
+
+    // Handle characters that existed in snapshot but not in current state (were removed)
+    // and characters in current state not in snapshot (were added after snapshot)
+    // For combat page: also handle character additions/removals
+    if (page === 'combat') {
+        // Restore the full character list from snapshot for combat (handles add/remove)
+        const currentMap = new Map();
+        gameState.characters.forEach(c => currentMap.set(c.id, c));
+
+        // Characters in snapshot but not current → add them back
+        snapshotChars.forEach(sc => {
+            if (!currentMap.has(sc.id)) {
+                gameState.characters.push(JSON.parse(JSON.stringify(sc)));
+            }
+        });
+
+        // Characters in current but not snapshot → remove them
+        gameState.characters = gameState.characters.filter(c => snapshotMap.has(c.id));
+    }
+}
+
 // Track client modes (DM vs Player)
 const clientModes = new Map(); // socketId -> 'dm' or 'player'
 
@@ -279,7 +335,7 @@ io.on('connection', (socket) => {
             return;
         }
 
-        // Save current state to redo stack
+        // Save current state to redo stack (snapshot before undo)
         gameState.redo[page].push({
             characters: JSON.parse(JSON.stringify(gameState.characters)),
             combatState: JSON.parse(JSON.stringify(gameState.combatState)),
@@ -290,10 +346,9 @@ io.on('connection', (socket) => {
             gameState.redo[page].shift();
         }
 
-        // Pop from history and restore
+        // Pop from history and apply page-scoped restore
         const previousState = gameState.history[page].pop();
-        gameState.characters = JSON.parse(JSON.stringify(previousState.characters));
-        gameState.combatState = JSON.parse(JSON.stringify(previousState.combatState));
+        applyPageScopedRestore(page, previousState.characters, previousState.combatState);
 
         // Broadcast restored state to ALL clients (including sender)
         io.sockets.sockets.forEach((clientSocket) => {
@@ -328,7 +383,7 @@ io.on('connection', (socket) => {
             return;
         }
 
-        // Save current state to history stack
+        // Save current state to history stack (snapshot before redo)
         gameState.history[page].push({
             characters: JSON.parse(JSON.stringify(gameState.characters)),
             combatState: JSON.parse(JSON.stringify(gameState.combatState)),
@@ -339,10 +394,9 @@ io.on('connection', (socket) => {
             gameState.history[page].shift();
         }
 
-        // Pop from redo and restore
+        // Pop from redo and apply page-scoped restore
         const nextState = gameState.redo[page].pop();
-        gameState.characters = JSON.parse(JSON.stringify(nextState.characters));
-        gameState.combatState = JSON.parse(JSON.stringify(nextState.combatState));
+        applyPageScopedRestore(page, nextState.characters, nextState.combatState);
 
         // Broadcast restored state to ALL clients (including sender)
         io.sockets.sockets.forEach((clientSocket) => {
