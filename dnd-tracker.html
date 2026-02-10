@@ -5377,6 +5377,7 @@
 
             const character = characters.find(c => c.id === currentInventoryCharacterId);
             if (!character) return;
+            saveState(`${character.name}: přidání komponenty ${name}`);
 
             const component = {
                 name: name,
@@ -5402,6 +5403,7 @@
         function removeSpellComponent(index) {
             const character = characters.find(c => c.id === currentInventoryCharacterId);
             if (!character) return;
+            saveState(`${character.name}: odebrání komponenty`);
             character.inventory.spellComponents.splice(index, 1);
             saveToLocalStorage();
             syncToServer();
@@ -5438,6 +5440,7 @@
 
             const character = characters.find(c => c.id === currentInventoryCharacterId);
             if (!character) return;
+            saveState(`${character.name}: přidání ${potion.name}`);
 
             const existing = character.inventory.potions.find(p => p.name === potion.name);
             if (existing) {
@@ -5473,6 +5476,7 @@
         function removePotion(index) {
             const character = characters.find(c => c.id === currentInventoryCharacterId);
             if (!character) return;
+            saveState(`${character.name}: odebrání potionu`);
             character.inventory.potions.splice(index, 1);
             saveToLocalStorage();
             syncToServer();
@@ -5486,6 +5490,7 @@
 
             const character = characters.find(c => c.id === currentInventoryCharacterId);
             if (!character) return;
+            saveState(`${character.name}: přidání scrollu ${spellName}`);
 
             const existing = character.inventory.scrolls.find(s => s.spellName === spellName);
             if (existing) {
@@ -5519,6 +5524,7 @@
         function removeScroll(index) {
             const character = characters.find(c => c.id === currentInventoryCharacterId);
             if (!character) return;
+            saveState(`${character.name}: odebrání scrollu`);
             character.inventory.scrolls.splice(index, 1);
             saveToLocalStorage();
             syncToServer();
@@ -5532,6 +5538,7 @@
 
             const character = characters.find(c => c.id === currentInventoryCharacterId);
             if (!character) return;
+            saveState(`${character.name}: přidání itemu`);
 
             character.inventory.generalItems.push(itemDesc);
             saveToLocalStorage();
@@ -5542,6 +5549,7 @@
         function removeGeneralItem(index) {
             const character = characters.find(c => c.id === currentInventoryCharacterId);
             if (!character) return;
+            saveState(`${character.name}: odebrání itemu`);
             character.inventory.generalItems.splice(index, 1);
             saveToLocalStorage();
             syncToServer();
@@ -5558,6 +5566,7 @@
 
             const character = characters.find(c => c.id === currentInventoryCharacterId);
             if (!character) return;
+            saveState(`${character.name}: přidání ${name}`);
 
             character.inventory.magicItems.push({
                 name: name,
@@ -5601,6 +5610,7 @@
 
             const character = characters.find(c => c.id === currentInventoryCharacterId);
             if (!character) return;
+            saveState(`${character.name}: přidání ${item.name}`);
 
             character.inventory.magicItems.push({
                 name: item.name,
@@ -5636,6 +5646,7 @@
         function removeMagicItem(index) {
             const character = characters.find(c => c.id === currentInventoryCharacterId);
             if (!character) return;
+            saveState(`${character.name}: odebrání magického itemu`);
             character.inventory.magicItems.splice(index, 1);
             saveToLocalStorage();
             syncToServer();
@@ -5703,6 +5714,7 @@
             const targetChar = characters.find(c => c.id === targetCharId);
 
             if (!sourceChar || !targetChar) return;
+            saveState(`Transfer: ${sourceChar.name} → ${targetChar.name}`);
 
             // Initialize target inventory if needed
             if (!targetChar.inventory) {
@@ -6023,6 +6035,7 @@
 
             const character = characters.find(c => c.id === currentInventoryCharacterId);
             if (!character) return;
+            saveState(`${character.name}: přidání ${name}`);
 
             const description = document.getElementById('invItemDesc').value.trim();
             const saveToDb = document.getElementById('invSaveToDb').checked;
