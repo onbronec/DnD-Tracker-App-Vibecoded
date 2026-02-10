@@ -106,10 +106,30 @@ const MAX_HISTORY = 20;
 // Define which character fields each page owns
 const PAGE_CHAR_FIELDS = {
     combat: ['currentHp', 'maxHp', 'tempHp', 'initiative', 'effects', 'deathSaves', 'concentrationActive', 'currentPower', 'maxPower'],
-    spells: ['spellSlots', 'abilities', 'hitDice', 'maxHitDice', 'wizardSettings', 'currentHp', 'maxHp'],
+    spells: ['spellSlots', 'abilities', 'hitDice', 'maxHitDice', 'wizardSettings'],
     monsters: ['abilities'],
     inventory: ['inventory']
 };
+
+// Extract only page-relevant fields from characters for a scoped snapshot
+function extractPageSnapshot(page) {
+    const fields = PAGE_CHAR_FIELDS[page];
+    if (!fields) return [];
+
+    return gameState.characters.map(c => {
+        // For monsters page, only snapshot monster characters' fields
+        if (page === 'monsters' && c.type !== 'monster') {
+            return { id: c.id, type: c.type };
+        }
+        const partial = { id: c.id, type: c.type };
+        fields.forEach(field => {
+            if (c[field] !== undefined) {
+                partial[field] = JSON.parse(JSON.stringify(c[field]));
+            }
+        });
+        return partial;
+    });
+}
 
 // Merge only page-relevant fields from snapshot into current state
 function applyPageScopedRestore(page, snapshotChars, snapshotCombatState) {
@@ -298,16 +318,18 @@ io.on('connection', (socket) => {
 
     // Save history entry (called before state-changing operations)
     socket.on('save-history-entry', (data) => {
-        const { page, description, characters, combatState: cs } = data;
+        const { page, description } = data;
         if (!page || !gameState.history[page]) return;
 
         // Block players from saving monster abilities history
         const clientMode = clientModes.get(socket.id) || 'player';
         if (page === 'monsters' && clientMode !== 'dm') return;
 
+        // Snapshot only page-relevant fields from CURRENT server state
+        // This ensures cross-page changes are never captured in the wrong page's history
         gameState.history[page].push({
-            characters: characters,
-            combatState: cs,
+            characters: extractPageSnapshot(page),
+            combatState: page === 'combat' ? JSON.parse(JSON.stringify(gameState.combatState)) : null,
             description: description || '',
             timestamp: Date.now()
         });
@@ -335,10 +357,10 @@ io.on('connection', (socket) => {
             return;
         }
 
-        // Save current state to redo stack (snapshot before undo)
+        // Save current state to redo stack (page-scoped snapshot before undo)
         gameState.redo[page].push({
-            characters: JSON.parse(JSON.stringify(gameState.characters)),
-            combatState: JSON.parse(JSON.stringify(gameState.combatState)),
+            characters: extractPageSnapshot(page),
+            combatState: page === 'combat' ? JSON.parse(JSON.stringify(gameState.combatState)) : null,
             description: 'Aktuální stav',
             timestamp: Date.now()
         });
@@ -383,10 +405,10 @@ io.on('connection', (socket) => {
             return;
         }
 
-        // Save current state to history stack (snapshot before redo)
+        // Save current state to history stack (page-scoped snapshot before redo)
         gameState.history[page].push({
-            characters: JSON.parse(JSON.stringify(gameState.characters)),
-            combatState: JSON.parse(JSON.stringify(gameState.combatState)),
+            characters: extractPageSnapshot(page),
+            combatState: page === 'combat' ? JSON.parse(JSON.stringify(gameState.combatState)) : null,
             description: 'Stav před redo',
             timestamp: Date.now()
         });
