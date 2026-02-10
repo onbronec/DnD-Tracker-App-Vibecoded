@@ -3931,13 +3931,12 @@
         }
 
         // History/Undo systém - server-side shared history
+        // Server snapshots its own current state (page-scoped fields only)
         function saveState(description = '') {
             if (socket && isConnected) {
                 socket.emit('save-history-entry', {
                     page: currentPage,
-                    description: description,
-                    characters: JSON.parse(JSON.stringify(characters)),
-                    combatState: JSON.parse(JSON.stringify(combatState))
+                    description: description
                 });
             }
         }
