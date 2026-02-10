@@ -105,8 +105,8 @@ const MAX_HISTORY = 20;
 
 // Define which character fields each page owns
 const PAGE_CHAR_FIELDS = {
-    combat: ['hp', 'maxHp', 'tempHp', 'initiative', 'conditions', 'deathSaves', 'concentrationActive', 'powerPoints', 'maxPowerPoints'],
-    spells: ['spellSlots', 'abilities', 'hitDice', 'maxHitDice', 'wizardSettings', 'hp', 'maxHp'],
+    combat: ['currentHp', 'maxHp', 'tempHp', 'initiative', 'effects', 'deathSaves', 'concentrationActive', 'currentPower', 'maxPower'],
+    spells: ['spellSlots', 'abilities', 'hitDice', 'maxHitDice', 'wizardSettings', 'currentHp', 'maxHp'],
     monsters: ['abilities'],
     inventory: ['inventory']
 };
