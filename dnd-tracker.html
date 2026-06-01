@@ -1335,6 +1335,7 @@
                             <option value="Poisoned">Poisoned</option>
                             <option value="Prone">Prone</option>
                             <option value="Restrained">Restrained</option>
+                            <option value="Sickened">Sickened</option>
                             <option value="Stunned">Stunned</option>
                             <option value="Unconscious">Unconscious</option>
                             <option value="Defenseless">Defenseless</option>
@@ -1343,8 +1344,10 @@
                             <option value="Hexblade_Curse">Hexblade's Curse</option>
                             <option value="Moonlit">Moonlit</option>
                             <option value="Confused">Confused</option>
+                            <option value="Insanity">Insanity</option>
                             <option value="Divine_Ire">Divine Ire</option>
                             <option value="Divine_Ire_Cyric">Divine Ire (Cyric)</option>
+                            <option value="Penance">Penance</option>
                         </optgroup>
                         <optgroup label="🟢 Buffs">
                             <option value="Hasted">Hasted</option>
@@ -1364,6 +1367,7 @@
                             <option value="Protective_Spirit">Protective Spirit</option>
                             <option value="Emissary_of_Redemtion">Emissary of Redemtion</option>
                             <option value="Rythm_of_War">Rythm of War</option>
+                            <option value="Divine_Spark">Divine Spark</option>
                         </optgroup>
                         <optgroup label="🔵 Neutrální">
                             <option value="Concentrating">Concentrating</option>
@@ -2999,6 +3003,7 @@
             'Poisoned': { type: 'debuff', description: 'Postava má nevýhodu na útoky a ability checks.' },
             'Prone': { type: 'debuff', description: 'Pohyb pouze plazením. Nevýhoda na útoky. Útoky zblízka mají výhodu, na dálku nevýhodu.' },
             'Restrained': { type: 'debuff', description: 'Rychlost 0, nevýhoda na útoky a Dex záchranné hody. Útoky proti postavě mají výhodu.' },
+            'Sickened': { type: 'debuff', description: 'Postava má nevýhodu na cons saves. Removed by same effects as poison.' },
             'Stunned': { type: 'debuff', description: 'Postava je neschopná, nemůže se hýbat a mluví jen nejasně. Automaticky neuspěje u Str a Dex záchran.' },
             'Unconscious': { type: 'debuff', description: 'Postava je neschopná, nemůže se hýbat ani mluvit, neuvědomělá. Automaticky neuspěje u Str a Dex záchran.' },
             'Defenseless': { type: 'debuff', description: 'Attack rolls against you have advantage.' },
@@ -3013,6 +3018,12 @@
                 maxLevel: 6,
                 description: 'Level 1: Disadvantage on ability checks. Level 2: Speed halved. Level 3: Disadvantage on attack rolls and enemies adv. on saving throws against your effects. Level 4: Disadvantage on saving throws. Level 5: Speed reduced to 0. Level 6: Death.'
             },
+            'Insanity': {
+                type: 'debuff',
+                hasLevels: true,
+                maxLevel: 6,
+                description: 'Level 1: Creatures hears the whispers in the rain. Not fully explored so far. Level 2: The affected creature loses all resistance and immunity to psychic damage and cannot reduce psychic damage it takes by any means. Level 3: The affected creature’s sight and other senses are reduced to 15 ft. and the creature is blind beyond that radius. Level 4: The affected creature deals half damage. Level 5: The affected creature must spend its bonus action each turn scribbling on a readily available surface or medium. Level 6: The affected creature must spend its action(s) on its turn attempting to kill itself.'
+            },
             'Divine_Ire': {
                 type: 'debuff',
                 hasLevels: true,
@@ -3024,6 +3035,12 @@
                 hasLevels: true,
                 maxLevel: 6,
                 description: 'Level 1: Disadvantage on Charisma ability checks and you can hear the voice of the deity that you angered. Level 2: Dark light coalesces around you marking you for the hunt. You are Defenseless and cannot be Invisible. Level 3: You cannot be resistant to damage done by servants of this god. Immunity to their damage is reduced to resistance instead. Level 4: At the start of your turn Save: DC 24 Wisdom saving throw, Failure: You are Confused this turn. Level 5: Hit point maximum halved. Level 6: You stricken down by divine wrath. You die and your body disintegrates in a flash of divine light.'
+            },
+            'Penance': {
+                type: 'debuff',
+                hasLevels: true,
+                maxLevel: 20,
+                description: 'This creature is being judged by the angels. Any of them can reduce a creatures penance and gain that many d6 added to its damage roll as additional righteous damage.'
             },
 
             // Buffs
@@ -3042,6 +3059,7 @@
             'Protective_Spirit': { type: 'buff', description: 'Heals 16 HP if bloodied at end of round.' },
             'Emissary_of_Redemtion': { type: 'buff', description: 'Half damage from creatures you did not attack yet and they take half damage back as radiant.' },
             'Rythm_of_War': { type: 'buff', description: 'Advantage on all saves AOE based on spell level.' },
+            'Divine_Spark': { type: 'buff', description: 'If you would roll a 9 or lower on an attack roll, saving throw, or ability check with a skill in which you are proficient, you instead roll a 10.' },
             
             // Neutrální/Situační
             'Irredeemable': { type: 'neutral', description: 'Attacked by Crow. Is not affected by emissary of redemption.' },
@@ -6850,6 +6868,7 @@
                                         <option value="Poisoned" ${feature.statusName === 'Poisoned' ? 'selected' : ''}>Poisoned</option>
                                         <option value="Prone" ${feature.statusName === 'Prone' ? 'selected' : ''}>Prone</option>
                                         <option value="Restrained" ${feature.statusName === 'Restrained' ? 'selected' : ''}>Restrained</option>
+                                        <option value="Sickened" ${feature.statusName === 'Sickened' ? 'selected' : ''}>Sickened</option>
                                         <option value="Stunned" ${feature.statusName === 'Stunned' ? 'selected' : ''}>Stunned</option>
                                         <option value="Unconscious" ${feature.statusName === 'Unconscious' ? 'selected' : ''}>Unconscious</option>
                                         <option value="Defenseless" ${feature.statusName === 'Defenseless' ? 'selected' : ''}>Defenseless</option>
@@ -6858,8 +6877,10 @@
                                         <option value="Hexblade_Curse" ${feature.statusName === 'Hexblade_Curse' ? 'selected' : ''}>Hexblade's Curse</option>
                                         <option value="Moonlit" ${feature.statusName === 'Moonlit' ? 'selected' : ''}>Moonlit</option>
                                         <option value="Confused" ${feature.statusName === 'Confused' ? 'selected' : ''}>Confused</option>
+                                        <option value="Insanity" ${feature.statusName === 'Insanity' ? 'selected' : ''}>Insanity</option>
                                         <option value="Divine_Ire" ${feature.statusName === 'Divine_Ire' ? 'selected' : ''}>Divine Ire</option>
                                         <option value="Divine_Ire_Cyric" ${feature.statusName === 'Divine_Ire_Cyric' ? 'selected' : ''}>Divine Ire (Cyric)</option>
+                                        <option value="Penance" ${feature.statusName === 'Penance' ? 'selected' : ''}>Penance</option>
                                     </optgroup>
                                     <optgroup label="🟢 Buffs">
                                         <option value="Hasted" ${feature.statusName === 'Hasted' ? 'selected' : ''}>Hasted</option>
@@ -6879,6 +6900,7 @@
                                         <option value="Protective_Spirit" ${feature.statusName === 'Protective_Spirit' ? 'selected' : ''}>Protective Spirit</option>
                                         <option value="Emissary_of_Redemtion" ${feature.statusName === 'Emissary_of_Redemtion' ? 'selected' : ''}>Emissary of Redemtion</option>
                                         <option value="Rythm_of_War" ${feature.statusName === 'Rythm_of_War' ? 'selected' : ''}>Rythm of War</option>
+                                        <option value="Divine_Spark" ${feature.statusName === 'Divine_Spark' ? 'selected' : ''}>Divine Spark</option>
                                     </optgroup>
                                     <optgroup label="🔵 Neutrální">
                                         <option value="Concentrating" ${feature.statusName === 'Concentrating' ? 'selected' : ''}>Concentrating</option>
