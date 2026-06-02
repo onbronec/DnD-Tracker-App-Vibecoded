@@ -18,3 +18,10 @@ npm-debug.log*
 
 # Autosave files
 dnd-tracker-autosave.json
+dm-token.local
+
+# Build output
+dist/
+coverage/
+test-results/
+playwright-report/

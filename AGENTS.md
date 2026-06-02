@@ -1,0 +1,113 @@
+# AGENTS.md
+
+Pokyny pro dalsi praci v teto slozce. Aplikace je osobni DnD tracker pro
+domaci lokalni Wi-Fi, ne verejna webova sluzba. Optimalizuj proto pro rychlost
+u stolu, citelnost pri session a spolehlivost dat pred "enterprise" slozitosti.
+
+## Co je projekt
+
+- `src/` je React + TypeScript frontend. Hlavni moduly jsou pages,
+  components, client socket helpery a shared typy.
+- `server/` obsahuje serverovou domenu: migrace/autosave, permissions,
+  visibility filtering, action reducer a Socket.io handlery.
+- `server.js` je Node/Express + Socket.io entrypoint. Serviruje React build z
+  `dist/`, nebo Vite dev frontend bezi vedle nej.
+- `dnd-tracker.html` je legacy reference ze stare single-file verze. Neni uz
+  podporovany runtime entrypoint.
+- `dnd-tracker-autosave.json` je lokalni serverovy autosave se skutecnymi daty
+  kampane. Je v `.gitignore`; nevypisuj jeho obsah do odpovedi, pokud to neni
+  nutne.
+- `README_MULTIPLAYER.md` popisuje soucasny zpusob provozu pres server.
+  `README.md` ma casti ze starsi single-file verze a muze byt zastarale.
+- `.claude/settings.local.json` jsou lokalni nastaveni asistenta; nesahej na ne,
+  pokud o to uzivatel vyslovne nepozada.
+
+## Spousteni a overeni
+
+- Install/build vyzaduje nove frontend dependency: `npm.cmd install`.
+- Dev mode: `npm.cmd run dev`.
+- Build: `npm.cmd run build`.
+- Start serveru: `npm.cmd start` nebo `node server.js`.
+- DM view: `http://localhost:3000?mode=dm&token=<token>`.
+- Player view: `http://<lokalni-ip>:3000?mode=player`.
+- V PowerShellu pouzivej `npm.cmd`, protoze `npm` muze selhat na execution
+  policy.
+- Rychle kontroly:
+  - `node --check server.js`
+  - syntax inline skriptu v HTML pres `new Function(...)`, kdyz menis JS
+  - validita autosave JSON bez vypisovani dat
+- Git muze hlasit `unsafe repository`. Nemen globalni git config bez souhlasu
+  uzivatele.
+
+## Architektura a stav
+
+- Zdroj pravdy za behu je `stateRef.current` v serveru. DM localStorage uz
+  neni autoritativni.
+- Frontend neposila cely snapshot. Posila serverem validovane `action:submit`
+  akce a server vraci filtrovany stav pres `state:init`/`state:patch`.
+- Hlavni frontend promenne jsou `characters`, `combatState`, `monsterDatabase`,
+  `itemDatabase` a aktualni vybery pro spells/monsters/inventory.
+- `monsterDatabase` i `itemDatabase` jsou server state a ukladaji se do
+  autosave.
+- Historie je chronologicky `actionLog`, ale undo/redo je scoped podle page.
+  Kazda reverzibilni akce ma page snapshot `before`/`after`.
+
+## DM a player mode
+
+- `?mode=dm&token=<token>` ma plnou kontrolu; bez spravneho tokenu server
+  degradne klienta na player.
+- Nespolehej jen na skryti tlacitek v UI. Server musi vynucovat, co smi player
+  menit.
+- Player muze menit HP/effects/spells/inventory hracskych postav. Nema ridit
+  tok boje, mazat/pridavat entity, menit monstra ani videt skryta data.
+- `filterStateForPlayers()` musi pri zmenach opravdu odstranit DM-only data,
+  nejen je schovat ve view.
+
+## Design a UX
+
+- UI je prakticky utilitarni battle dashboard. Zachovej hustotu informaci,
+  rychle akce a velke hit-targety.
+- Soucasna paleta: modra stranka, bile/svetle sekce, zelena pro pozitivni
+  akce, cervena pro destruktivni, zluta/oranzova pro tah/iniciativu, fialova
+  pro specialni moduly.
+- Karty postav/monster jsou primarni pracovni jednotka. Pri zmenach hlidej:
+  HP/current/max, temp HP, AC, iniciativa, effects, power, a tlacitka pro rychle
+  damage/heal.
+- Player view ma byt citelny na tabletu/telefonu. Testuj uzke viewporty, aby
+  se tlacitka a inputy nelamaly pres sebe.
+- Vyhni se marketingovemu "landing page" stylu. Prvni obrazovka ma zustat
+  pouzitelny tracker.
+
+## Kodovy styl
+
+- Preferuj male, lokalni zmeny. Velky rewrite na framework nedelej bez
+  vyslovneho zadani.
+- Pokud pridavas nove pole postavy, uprav vsechny relevantni cesty:
+  vytvoreni postavy, import/export, autosave, localStorage migraci, sync,
+  undo/redo a render.
+- Ukladani/import musi byt zpetne kompatibilni se starsimi JSON soubory.
+- Pri renderovani user/import textu do `innerHTML` nejdriv mysli na escapovani.
+  Statblocky, itemy a jmena mohou pochazet z ciziho textu.
+- React komponenty maji drzet rozepsane inputy lokalne a posilat akci az pri
+  explicitnim potvrzeni nebo blur/submit. Prichozi server patch nesmi mazat
+  drafty.
+- Komentare pis stridme, hlavne u komplikovane synchronizace, migraci a
+  pravidel DnD/domacich mechanik.
+
+## Data a bezpecnost
+
+- Aplikace je urcena pro duveryhodnou domaci sit. Neber `?mode=dm` jako
+  autentizaci.
+- Pred riskantni upravou datoveho modelu doporuc uzivateli zalohu
+  `dnd-tracker-autosave.json` nebo export z UI.
+- Necommituj autosave, node_modules ani osobni exporty kampane.
+- Pro verejny internet by bylo nutne pridat autentizaci, HTTPS, opravdova
+  opravneni a lepsi filtraci DM dat.
+
+## Prioritni veci ke zlepseni
+
+- Dodelat parity funkce ze stareho HTML, ktere nebyly v prvni React migraci
+  kompletne prenesene: statblock parser, JSON import/export UI, detailni
+  monster ability editor a pokrocile effect level controls.
+- Po instalaci dependency udrzovat passing `npm.cmd run build`, `npm.cmd test`
+  a `npm.cmd run test:e2e`.
