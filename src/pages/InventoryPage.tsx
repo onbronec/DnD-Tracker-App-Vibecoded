@@ -1,5 +1,8 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import type { Character, ClientRole, GameAction, GameState } from '../shared/types';
+import { CollapsiblePanelGroup } from '../components/CollapsiblePanel';
+import { MarkdownEditor, MarkdownRenderer } from '../components/Markdown';
+import { Modal } from '../components/Modal';
 
 interface Props {
   state: GameState;
@@ -113,26 +116,40 @@ function InventoryDetail({
 
   return (
     <>
-      <section className="section">
-        <h2>{character.name}</h2>
-        <div className="currency-grid">
-          {(['manaCoins', 'platinum', 'gold', 'silver', 'copper'] as const).map(key => (
-            <label key={key} className="field-card">
-              <span>{key}</span>
-              <input
-                value={currencyValue(key)}
-                type="number"
-                onChange={event => setCurrencyDrafts(current => ({ ...current, [key]: event.target.value }))}
-                onBlur={() => commitCurrency(key)}
-              />
-            </label>
-          ))}
-        </div>
-      </section>
+      <CollapsiblePanelGroup
+        panels={[
+          {
+            id: 'currency',
+            title: `${character.name} currency`,
+            summary: 'Coins and loose resources.',
+            content: (
+              <div className="currency-grid">
+                {(['manaCoins', 'platinum', 'gold', 'silver', 'copper'] as const).map(key => (
+                  <label key={key} className="field-card">
+                    <span>{key}</span>
+                    <input
+                      value={currencyValue(key)}
+                      type="number"
+                      onChange={event => setCurrencyDrafts(current => ({ ...current, [key]: event.target.value }))}
+                      onBlur={() => commitCurrency(key)}
+                    />
+                  </label>
+                ))}
+              </div>
+            )
+          },
+          {
+            id: 'add-item',
+            title: 'Add item',
+            summary: 'Create notes or use databases.',
+            content: <AddItemForm characterId={character.id} magicItemDatabase={magicItemDatabase} potionDatabase={potionDatabase} submitAction={submitAction} />
+          }
+        ]}
+      />
 
       <section className="section">
-        <h2>Add item</h2>
-        <AddItemForm characterId={character.id} magicItemDatabase={magicItemDatabase} potionDatabase={potionDatabase} submitAction={submitAction} />
+        <h2>{character.name}</h2>
+        <p>Click an item to open details, notes and actions.</p>
       </section>
 
       <section className="inventory-grid">
@@ -192,7 +209,9 @@ function AddItemForm({
         </select>
         <input value={name} onChange={event => setName(event.target.value)} placeholder="Item name" data-testid="item-name" />
         <input value={quantity} onChange={event => setQuantity(event.target.value)} type="number" placeholder="Quantity" />
-        <input value={description} onChange={event => setDescription(event.target.value)} placeholder="Description" />
+        <div className="form-wide">
+          <MarkdownEditor value={description} onChange={setDescription} placeholder="Description / notes" label="Item notes" />
+        </div>
         <button className="btn success">Add custom item</button>
       </form>
       {databaseItems.length > 0 && (
@@ -285,47 +304,130 @@ function InventoryRow({
 }) {
   const [quantity, setQuantity] = useState(String(item.quantity ?? 1));
   const [target, setTarget] = useState(players.find(player => player.id !== character.id)?.id || '');
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
   const name = typeof item === 'string' ? item : (item.name || item.spellName || 'Item');
+  const description = itemDescription(item);
+  const [draftName, setDraftName] = useState(String(name));
+  const [draftDescription, setDraftDescription] = useState(description);
+  const [draftQuantity, setDraftQuantity] = useState(String(item.quantity ?? 1));
+  const collectionLabel = collection === 'generalItems' ? 'General note' : collection === 'magicItems' ? 'Magic item' : collection === 'potions' ? 'Potion' : 'Scroll';
+
+  function openModal() {
+    setDraftName(String(name));
+    setDraftDescription(description);
+    setDraftQuantity(String(item.quantity ?? 1));
+    setEditing(false);
+    setOpen(true);
+  }
+
+  async function saveEdit() {
+    const updated = {
+      ...(typeof item === 'string' ? {} : item),
+      name: draftName.trim() || String(name),
+      spellName: draftName.trim() || String(name),
+      quantity: Number(draftQuantity) || 0,
+      description: draftDescription
+    };
+    await submitAction({ type: 'inventory.item.update', payload: { characterId: character.id, collection, index, item: updated } });
+    setQuantity(String(updated.quantity));
+    setEditing(false);
+  }
 
   return (
-    <div className="item-row">
-      <div>
-        <strong>{name}</strong>
-        {item.description && <p>{item.description}</p>}
-      </div>
-      {'quantity' in Object(item) && (
-        <input
-          className="small-input"
-          value={quantity}
-          type="number"
-          onChange={event => setQuantity(event.target.value)}
-          onBlur={() => submitAction({ type: 'inventory.item.quantity', payload: { characterId: character.id, collection, index, quantity: Number(quantity) || 0 } })}
-        />
-      )}
-      {collection === 'magicItems' && (
-        <label className="inline-check">
-          <input
-            type="checkbox"
-            checked={Boolean(item.attuned)}
-            onChange={event => submitAction({ type: 'inventory.magic.attune', payload: { characterId: character.id, index, attuned: event.target.checked } })}
-          />
-          Attuned
-        </label>
-      )}
-      <select value={target} onChange={event => setTarget(event.target.value)}>
-        <option value="">Transfer...</option>
-        {players.filter(player => player.id !== character.id).map(player => <option key={player.id} value={player.id}>{player.name}</option>)}
-      </select>
-      <button
-        className="btn warning small"
-        disabled={!target}
-        onClick={() => submitAction({ type: 'inventory.item.transfer', payload: { sourceCharacterId: character.id, targetCharacterId: target, collection, index } })}
-      >
-        Transfer
+    <>
+      <button className="item-row item-summary-row" type="button" onClick={openModal} data-testid={`inventory-item-${name}`}>
+        <div className="item-summary-main">
+          <strong>{name}</strong>
+          {description && <p>{plainPreview(description)}</p>}
+        </div>
+        {'quantity' in Object(item) && <span className="item-quantity">x{item.quantity ?? 1}</span>}
       </button>
-      <button className="btn danger small" onClick={() => submitAction({ type: 'inventory.item.remove', payload: { characterId: character.id, collection, index } })}>
-        Remove
-      </button>
-    </div>
+      {open && (
+        <Modal className="item-modal-backdrop">
+          <div className="modal-card item-modal-card">
+            <div className="section-title-row">
+              <div>
+                <h2>{name}</h2>
+                <p>{collectionLabel}</p>
+              </div>
+              <div className="button-row">
+                {!editing && <button className="btn" onClick={() => setEditing(true)}>Edit</button>}
+                <button className="btn" onClick={() => setOpen(false)}>Close</button>
+              </div>
+            </div>
+            {editing ? (
+              <div className="item-edit-form">
+                <div className="form-grid">
+                  <input value={draftName} onChange={event => setDraftName(event.target.value)} placeholder="Item name" />
+                  {'quantity' in Object(item) && (
+                    <input value={draftQuantity} onChange={event => setDraftQuantity(event.target.value)} type="number" min={0} placeholder="Quantity" />
+                  )}
+                  <div className="form-wide">
+                    <MarkdownEditor value={draftDescription} onChange={setDraftDescription} placeholder="Description / notes" label={`${name} notes`} />
+                  </div>
+                </div>
+                <div className="button-row rest-row">
+                  <button className="btn success" onClick={saveEdit}>Save edits</button>
+                  <button className="btn" onClick={() => setEditing(false)}>Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <div className="item-detail-body">
+                <MarkdownRenderer text={description} emptyLabel={collection === 'generalItems' ? 'No notes yet.' : 'No item description.'} />
+              </div>
+            )}
+            <div className="form-grid">
+              {'quantity' in Object(item) && (
+                <label className="field-card">
+                  <span>Quantity</span>
+                  <input
+                    value={quantity}
+                    type="number"
+                    onChange={event => setQuantity(event.target.value)}
+                    onBlur={() => submitAction({ type: 'inventory.item.quantity', payload: { characterId: character.id, collection, index, quantity: Number(quantity) || 0 } })}
+                  />
+                </label>
+              )}
+              {collection === 'magicItems' && (
+                <label className="inline-check modal-check">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(item.attuned)}
+                    onChange={event => submitAction({ type: 'inventory.magic.attune', payload: { characterId: character.id, index, attuned: event.target.checked } })}
+                  />
+                  Attuned
+                </label>
+              )}
+              <select value={target} onChange={event => setTarget(event.target.value)}>
+                <option value="">Transfer...</option>
+                {players.filter(player => player.id !== character.id).map(player => <option key={player.id} value={player.id}>{player.name}</option>)}
+              </select>
+            </div>
+            <div className="button-row rest-row">
+              <button
+                className="btn warning"
+                disabled={!target}
+                onClick={() => submitAction({ type: 'inventory.item.transfer', payload: { sourceCharacterId: character.id, targetCharacterId: target, collection, index } }).then(() => setOpen(false))}
+              >
+                Transfer
+              </button>
+              <button className="btn danger" onClick={() => submitAction({ type: 'inventory.item.remove', payload: { characterId: character.id, collection, index } }).then(() => setOpen(false))}>
+                Remove
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </>
   );
+}
+
+function itemDescription(item: any) {
+  if (typeof item === 'string') return '';
+  return String(item.description || item.notes || item.effect || '');
+}
+
+function plainPreview(text: string) {
+  return text.replace(/[#*_`[\]()]/g, '').replace(/\s+/g, ' ').trim().slice(0, 120);
 }

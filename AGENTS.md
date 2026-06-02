@@ -67,12 +67,36 @@ u stolu, citelnost pri session a spolehlivost dat pred "enterprise" slozitosti.
 
 - UI je prakticky utilitarni battle dashboard. Zachovej hustotu informaci,
   rychle akce a velke hit-targety.
-- Soucasna paleta: modra stranka, bile/svetle sekce, zelena pro pozitivni
-  akce, cervena pro destruktivni, zluta/oranzova pro tah/iniciativu, fialova
-  pro specialni moduly.
+- Soucasna paleta je tactical dark: tmave pozadi, tmave panely, jemne bordery,
+  modra/cyan pro navigaci, zelena pro pozitivni akce, cervena pro destruktivni,
+  zluta/oranzova pro tah/iniciativu, fialova pro specialni moduly.
+- Primarni pracovni obsah nech otevreny. Sekundarni setup/import/add/edit
+  ovladani schovavej do expand/collapse UI. Pokud je vic souvisejicich panelu
+  vedle sebe, pouzij horizontalni `CollapsiblePanelGroup` a nech otevreny max
+  jeden panel.
 - Karty postav/monster jsou primarni pracovni jednotka. Pri zmenach hlidej:
   HP/current/max, temp HP, AC, iniciativa, effects, power, a tlacitka pro rychle
   damage/heal.
+- Conditions se vizualne lisi podle `kind`: buff/debuff/neutral. V combat
+  trackeru maji zobrazit ulozeny popis pri hoveru.
+- Inventory radky maji byt kompaktni souhrny bez opakovanych kategorickych
+  labelu typu Potion/Scroll/General note; sekce uz kategorii ukazuje.
+  Remove/transfer/attune ovladani patri do item detail modalu, ne stale na
+  radek.
+- Item detail modal se renderuje pres portal do `document.body`, aby byl vzdy
+  centrovany v cele obrazovce a prekryl i history panel.
+- Inventory itemy musi jit editovat pres serverovou akci `inventory.item.update`;
+  editace textu nesmi byt jen lokalni stav.
+- General inventory items jsou volne poznamky pro nalezy, knihy, deniky a stopy;
+  nepremenuj je na prilis striktni item schema.
+- Dlouhe texty itemu, potions, conditions, monster statblocku, ability notes a
+  dalsich popisnych poli ber standardne jako Markdown. Editor ma mit citelne
+  popisky tlacitek (Bold, Italic, Header...) a oddelene Preview/Pop out akce.
+  Renderuj pres React node renderer, ne pres raw `innerHTML`, pokud k tomu neni
+  silny duvod.
+- Klavesove zkratky zachovej: Space/PageUp dalsi tah, PageDown predchozi tah,
+  Backspace undo aktualni stranky, Shift+Backspace redo. Ignoruj je v inputech,
+  selectech, textareach a otevrenych modalech.
 - Player view ma byt citelny na tabletu/telefonu. Testuj uzke viewporty, aby
   se tlacitka a inputy nelamaly pres sebe.
 - Vyhni se marketingovemu "landing page" stylu. Prvni obrazovka ma zustat

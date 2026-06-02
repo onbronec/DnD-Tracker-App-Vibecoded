@@ -1,5 +1,7 @@
 import { ChangeEvent, FormEvent, useMemo, useRef, useState } from 'react';
 import type { Character, ClientRole, GameAction, GameState } from '../shared/types';
+import { CollapsiblePanel } from '../components/CollapsiblePanel';
+import { MarkdownEditor, MarkdownRenderer } from '../components/Markdown';
 
 interface Props {
   state: GameState;
@@ -38,7 +40,6 @@ export function DatabasesPage({ state, role, submitAction, onBackToCombat }: Pro
   }, [items, query]);
 
   const canEditCurrent = isDM || active !== 'monster';
-  const canImportCurrent = isDM;
   const canRemoveCurrent = isDM && active !== 'characters';
 
   function openCreate() {
@@ -93,20 +94,7 @@ export function DatabasesPage({ state, role, submitAction, onBackToCombat }: Pro
             <p>Shared lookup data for sheets, inventory, conditions and combat prep.</p>
           </div>
           <div className="button-row">
-            <button className="btn" onClick={exportAll}>Export visible backup</button>
-            {isDM && (
-              <button
-                className="btn warning"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={active === 'characters'}
-              >
-                Import current DB
-              </button>
-            )}
-            {isDM && <button className="btn warning" onClick={() => allFileInputRef.current?.click()}>Import all DBs</button>}
             <button className="btn" onClick={onBackToCombat}>Back to Combat</button>
-            <input ref={fileInputRef} className="hidden-input" type="file" accept="application/json,.json" onChange={importDatabase} />
-            <input ref={allFileInputRef} className="hidden-input" type="file" accept="application/json,.json" onChange={importAll} />
           </div>
         </div>
       </section>
@@ -121,10 +109,28 @@ export function DatabasesPage({ state, role, submitAction, onBackToCombat }: Pro
         </div>
         <div className="database-toolbar">
           <input value={query} onChange={event => setQuery(event.target.value)} placeholder={`Search ${DB_LABELS[active]}`} />
-          <button className="btn" onClick={() => exportDatabase(active)}>Export this DB</button>
-          {canEditCurrent && active !== 'characters' && <button className="btn success" onClick={openCreate}>Add {DB_LABELS[active].slice(0, -1)}</button>}
         </div>
       </section>
+
+      <CollapsiblePanel title="Database actions" summary="Add entries, export backups and import DM database files.">
+        <div className="button-row">
+          <button className="btn" onClick={() => exportDatabase(active)}>Export this DB</button>
+          <button className="btn" onClick={exportAll}>Export visible backup</button>
+          {canEditCurrent && active !== 'characters' && <button className="btn success" onClick={openCreate}>Add {DB_LABELS[active].slice(0, -1)}</button>}
+          {isDM && (
+            <button
+              className="btn warning"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={active === 'characters'}
+            >
+              Import current DB
+            </button>
+          )}
+          {isDM && <button className="btn warning" onClick={() => allFileInputRef.current?.click()}>Import all DBs</button>}
+          <input ref={fileInputRef} className="hidden-input" type="file" accept="application/json,.json" onChange={importDatabase} />
+          <input ref={allFileInputRef} className="hidden-input" type="file" accept="application/json,.json" onChange={importAll} />
+        </div>
+      </CollapsiblePanel>
 
       {active === 'characters' ? (
         <CharacterDatabase
@@ -222,7 +228,7 @@ function DatabaseGrid({
             <h3>{String(item.name || 'Unnamed')}</h3>
             <p>{summaryFor(kind, item)}</p>
           </div>
-          {item.description || item.effect ? <p>{String(item.description || item.effect)}</p> : null}
+          {item.description || item.effect ? <MarkdownRenderer text={String(item.description || item.effect)} /> : null}
           <div className="button-row">
             {canEdit && <button className="btn small" onClick={() => onEdit(item)}>Edit</button>}
             {canRemove && <button className="btn danger small" onClick={() => onRemove(String(item.id))}>Remove</button>}
@@ -405,7 +411,14 @@ function DatabaseEditorModal({
           )}
           <input value={String(form.tags)} onChange={event => update('tags', event.target.value)} placeholder="Tags, comma separated" />
           <input value={String(form.source)} onChange={event => update('source', event.target.value)} placeholder="Source" />
-          <textarea value={String(form.description)} onChange={event => update('description', event.target.value)} placeholder="Description / statblock / notes" />
+          <div className="form-wide">
+            <MarkdownEditor
+              value={String(form.description)}
+              onChange={value => update('description', value)}
+              placeholder="Description / statblock / notes"
+              label={`${DB_LABELS[kind]} description`}
+            />
+          </div>
           <button className="btn success">Save</button>
         </form>
       </div>

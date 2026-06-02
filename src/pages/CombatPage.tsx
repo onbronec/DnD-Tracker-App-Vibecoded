@@ -1,6 +1,8 @@
 import { ChangeEvent, FormEvent, useMemo, useRef, useState } from 'react';
 import type { Character, ClientRole, GameAction, GameState } from '../shared/types';
 import { effectToString, hpClass, monsterHealthLabel } from '../shared/defaults';
+import { CollapsiblePanelGroup } from '../components/CollapsiblePanel';
+import { MarkdownRenderer } from '../components/Markdown';
 
 interface Props {
   state: GameState;
@@ -57,8 +59,24 @@ export function CombatPage({ state, role, submitAction, onOpenSpells, onOpenInve
 
   return (
     <div className="stack">
-      {isDM && <AddCharacterForm submitAction={submitAction} />}
-      {isDM && <AddMonsterFromDatabase monsters={state.monsterDatabase} submitAction={submitAction} />}
+      {isDM && (
+        <CollapsiblePanelGroup
+          panels={[
+            {
+              id: 'add-character',
+              title: 'Add character / monster',
+              summary: 'Create quick combatants.',
+              content: <AddCharacterForm submitAction={submitAction} />
+            },
+            ...(state.monsterDatabase.length > 0 ? [{
+              id: 'add-monster-db',
+              title: 'Add monster from database',
+              summary: 'Search saved monsters.',
+              content: <AddMonsterFromDatabase monsters={state.monsterDatabase} submitAction={submitAction} />
+            }] : [])
+          ]}
+        />
+      )}
 
       <section className="section">
         <div className="section-title-row">
@@ -99,6 +117,7 @@ export function CombatPage({ state, role, submitAction, onOpenSpells, onOpenInve
               character={character}
               index={index}
               role={role}
+              conditions={state.conditionDatabase || []}
               active={state.combatState.active && index === state.combatState.currentTurn}
               played={state.combatState.active && state.combatState.playedThisRound.includes(index)}
               submitAction={submitAction}
@@ -158,22 +177,19 @@ function AddCharacterForm({ submitAction }: { submitAction: Props['submitAction'
   }
 
   return (
-    <section className="section">
-      <h2>Add character / monster</h2>
-      <form className="form-grid" onSubmit={submit} data-testid="add-character-form">
-        <input value={form.name} onChange={event => update('name', event.target.value)} placeholder="Name" />
-        <select value={form.type} onChange={event => update('type', event.target.value)}>
-          <option value="player">Player</option>
-          <option value="monster">Monster</option>
-        </select>
-        <input value={form.maxHp} onChange={event => update('maxHp', event.target.value)} type="number" placeholder="Max HP" />
-        <input value={form.currentHp} onChange={event => update('currentHp', event.target.value)} type="number" placeholder="Current HP" />
-        <input value={form.ac} onChange={event => update('ac', event.target.value)} type="number" placeholder="AC" />
-        <input value={form.initBonus} onChange={event => update('initBonus', event.target.value)} type="number" placeholder="Initiative bonus" />
-        <input value={form.maxPower} onChange={event => update('maxPower', event.target.value)} type="number" placeholder="Max Power" />
-        <button className="btn success">Add</button>
-      </form>
-    </section>
+    <form className="form-grid" onSubmit={submit} data-testid="add-character-form">
+      <input value={form.name} onChange={event => update('name', event.target.value)} placeholder="Name" />
+      <select value={form.type} onChange={event => update('type', event.target.value)}>
+        <option value="player">Player</option>
+        <option value="monster">Monster</option>
+      </select>
+      <input value={form.maxHp} onChange={event => update('maxHp', event.target.value)} type="number" placeholder="Max HP" />
+      <input value={form.currentHp} onChange={event => update('currentHp', event.target.value)} type="number" placeholder="Current HP" />
+      <input value={form.ac} onChange={event => update('ac', event.target.value)} type="number" placeholder="AC" />
+      <input value={form.initBonus} onChange={event => update('initBonus', event.target.value)} type="number" placeholder="Initiative bonus" />
+      <input value={form.maxPower} onChange={event => update('maxPower', event.target.value)} type="number" placeholder="Max Power" />
+      <button className="btn success">Add</button>
+    </form>
   );
 }
 
@@ -182,10 +198,6 @@ function AddMonsterFromDatabase({ monsters, submitAction }: { monsters: Array<Re
   const [count, setCount] = useState('1');
   const [search, setSearch] = useState('');
   const filtered = monsters.filter(monster => Object.values(monster).join(' ').toLowerCase().includes(search.toLowerCase()));
-
-  if (monsters.length === 0) {
-    return null;
-  }
 
   async function addMonster() {
     const monster = filtered.find(item => String(item.id) === monsterId) || filtered[0] || monsters[0];
@@ -212,22 +224,14 @@ function AddMonsterFromDatabase({ monsters, submitAction }: { monsters: Array<Re
   }
 
   return (
-    <section className="section">
-      <div className="section-title-row">
-        <div>
-          <h2>Add monster from database</h2>
-          <p>Add saved monsters into the current combat roster.</p>
-        </div>
-        <div className="button-row">
-          <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search monsters" />
-          <select value={monsterId || String(filtered[0]?.id || monsters[0]?.id || '')} onChange={event => setMonsterId(event.target.value)}>
-            {filtered.map(monster => <option key={String(monster.id)} value={String(monster.id)}>{String(monster.name || 'Monster')}</option>)}
-          </select>
-          <input className="small-input" type="number" min={1} value={count} onChange={event => setCount(event.target.value)} />
-          <button className="btn success" onClick={addMonster}>Add to combat</button>
-        </div>
-      </div>
-    </section>
+    <div className="button-row">
+      <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search monsters" />
+      <select value={monsterId || String(filtered[0]?.id || monsters[0]?.id || '')} onChange={event => setMonsterId(event.target.value)}>
+        {filtered.map(monster => <option key={String(monster.id)} value={String(monster.id)}>{String(monster.name || 'Monster')}</option>)}
+      </select>
+      <input className="small-input" type="number" min={1} value={count} onChange={event => setCount(event.target.value)} />
+      <button className="btn success" onClick={addMonster}>Add to combat</button>
+    </div>
   );
 }
 
@@ -247,6 +251,7 @@ function CharacterCard({
   character,
   index,
   role,
+  conditions,
   active,
   played,
   submitAction,
@@ -258,6 +263,7 @@ function CharacterCard({
   character: Character;
   index: number;
   role: ClientRole;
+  conditions: Array<Record<string, unknown>>;
   active: boolean;
   played: boolean;
   submitAction: Props['submitAction'];
@@ -340,15 +346,21 @@ function CharacterCard({
       )}
 
       <div className="effect-row">
-        {character.effects.map((effect, effectIndex) => (
-          <button
-            className="effect-tag"
-            key={`${effectToString(effect)}-${effectIndex}`}
-            onClick={onOpenEffects}
-          >
-            {effectToString(effect)}
-          </button>
-        ))}
+        {character.effects.map((effect, effectIndex) => {
+          const condition = conditionForEffect(conditions, effect);
+          const tooltip = conditionTooltip(condition);
+          return (
+            <button
+              className={`effect-tag ${conditionKindClass(condition)}`}
+              key={`${effectToString(effect)}-${effectIndex}`}
+              onClick={onOpenEffects}
+              title={tooltip}
+              data-tooltip={tooltip}
+            >
+              {effectToString(effect)}
+            </button>
+          );
+        })}
       </div>
 
       {canEdit && (
@@ -504,7 +516,12 @@ function ActiveEffectRow({
 
   return (
     <div className="active-effect-row">
-      <span className="effect-tag">{effectToString(effect)}</span>
+      <span className={`effect-tag ${conditionKindClass(condition)}`} title={conditionTooltip(condition)}>{effectToString(effect)}</span>
+      {condition && (
+        <div className="effect-description">
+          <MarkdownRenderer text={String(condition.description || condition.effect || '')} emptyLabel="No condition details." />
+        </div>
+      )}
       {canEdit && hasLevels && (
         <>
           <button
@@ -537,6 +554,23 @@ function ActiveEffectRow({
 
 function effectName(effect: Character['effects'][number]) {
   return typeof effect === 'string' ? effect : effect.name;
+}
+
+function conditionForEffect(conditions: Array<Record<string, unknown>>, effect: Character['effects'][number]) {
+  const name = effectName(effect).toLowerCase();
+  return conditions.find(condition => String(condition.name || '').toLowerCase() === name);
+}
+
+function conditionKindClass(condition?: Record<string, unknown>) {
+  const kind = String(condition?.kind || 'neutral').toLowerCase();
+  if (kind === 'buff') return 'effect-buff';
+  if (kind === 'debuff') return 'effect-debuff';
+  return 'effect-neutral';
+}
+
+function conditionTooltip(condition?: Record<string, unknown>) {
+  if (!condition) return 'Custom effect';
+  return String(condition.description || condition.effect || condition.name || 'Condition');
 }
 
 function Stat({ label, value }: { label: string; value: string }) {

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Character, GameAction, GameState, MonsterAbilities } from '../shared/types';
+import { CollapsiblePanel } from '../components/CollapsiblePanel';
 
 interface Props {
   state: GameState;
@@ -80,25 +81,29 @@ function MonsterDetail({ monster, submitAction }: { monster: Character; submitAc
   const legendary = abilities.legendaryActions;
 
   return (
-    <section className="section">
-      <h2>{monster.name}</h2>
-      <div className="stats-grid">
-        <div className="stat"><span>Power</span><strong>{monster.currentPower || 0}/{monster.maxPower || 0}</strong></div>
-        <div className="stat"><span>Spellcasting</span><strong>{abilities.spellcastingType || 'none'}</strong></div>
-        <div className="stat"><span>Legendary</span><strong>{legendary?.enabled ? `${legendary.used || 0}/${legendary.max || 0}` : '-'}</strong></div>
-      </div>
-      <div className="button-row">
-        <button className="btn danger" onClick={() => submitAction({ type: 'character.updatePower', payload: { characterId: monster.id, value: (monster.currentPower || 0) - 1 } })}>Power -1</button>
-        <button className="btn success" onClick={() => submitAction({ type: 'character.updatePower', payload: { characterId: monster.id, value: (monster.currentPower || 0) + 1 } })}>Power +1</button>
-      </div>
-      <div className="item-list">
-        {(abilities.customFeatures || []).map((feature, index) => (
-          <div className="item-row" key={`${feature.name}-${index}`}>
-            <strong>{feature.name}</strong>
-            <span>{feature.used}/{feature.maxUses}</span>
-          </div>
-        ))}
-      </div>
-    </section>
+    <>
+      <section className="section">
+        <h2>{monster.name}</h2>
+        <div className="stats-grid">
+          <div className="stat"><span>Power</span><strong>{monster.currentPower || 0}/{monster.maxPower || 0}</strong></div>
+          <div className="stat"><span>Spellcasting</span><strong>{abilities.spellcastingType || 'none'}</strong></div>
+          <div className="stat"><span>Legendary</span><strong>{legendary?.enabled ? `${legendary.used || 0}/${legendary.max || 0}` : '-'}</strong></div>
+        </div>
+        <div className="item-list">
+          {(abilities.customFeatures || []).map((feature, index) => (
+            <div className="item-row" key={`${feature.name}-${index}`}>
+              <strong>{feature.name}</strong>
+              <span>{feature.used}/{feature.maxUses}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+      <CollapsiblePanel title="Monster controls" summary="Adjust power and other moment-to-moment resources.">
+        <div className="button-row">
+          <button className="btn danger" onClick={() => submitAction({ type: 'character.updatePower', payload: { characterId: monster.id, value: (monster.currentPower || 0) - 1 } })}>Power -1</button>
+          <button className="btn success" onClick={() => submitAction({ type: 'character.updatePower', payload: { characterId: monster.id, value: (monster.currentPower || 0) + 1 } })}>Power +1</button>
+        </div>
+      </CollapsiblePanel>
+    </>
   );
 }

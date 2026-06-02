@@ -17,6 +17,7 @@ test('DM and player can work without destroying local drafts', async ({ browser 
   await expect(dm.getByText('DM View')).toBeVisible();
   await dm.getByRole('button', { name: 'Autosave' }).click();
   await expect(dm.getByText('Autosave ulozen.')).toBeVisible();
+  await dm.getByRole('button', { name: /Add character \/ monster/i }).click();
   const addCharacterForm = dm.getByTestId('add-character-form');
   await addCharacterForm.getByPlaceholder('Name').fill('Ayla');
   await addCharacterForm.getByPlaceholder('Max HP').fill('50');
@@ -27,6 +28,18 @@ test('DM and player can work without destroying local drafts', async ({ browser 
 
   await expect(player.getByTestId('character-Borin')).toBeVisible();
 
+  await dm.getByRole('button', { name: 'Start combat' }).click();
+  await expect(dm.getByRole('button', { name: 'Next turn' })).toBeVisible();
+  await dm.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  });
+  await dm.keyboard.press('PageUp');
+  await expect(dm.locator('.history-label').filter({ hasText: 'Dalsi tah' })).toHaveCount(2);
+  await dm.keyboard.press('Backspace');
+  await expect(dm.locator('.history-label').filter({ hasText: 'Undo: Dalsi tah' })).toHaveCount(2);
+  await dm.keyboard.press('Shift+Backspace');
+  await expect(dm.locator('.history-label').filter({ hasText: 'Redo: Dalsi tah' })).toHaveCount(2);
+
   await player.getByTestId('heal-Ayla').fill('42');
   await dm.getByTestId('character-Ayla').getByRole('button', { name: 'HP -1', exact: true }).click();
   await expect(player.getByTestId('heal-Ayla')).toHaveValue('42');
@@ -34,6 +47,7 @@ test('DM and player can work without destroying local drafts', async ({ browser 
   await player.getByTestId('character-Ayla').getByRole('button', { name: 'Inventory' }).click();
   await player.getByTestId('inventory-character-select').selectOption({ label: 'Borin' });
   await expect(player.getByRole('heading', { name: 'Borin' })).toBeVisible();
+  await player.getByRole('button', { name: /Add item/i }).click();
   await player.getByTestId('item-name').fill('Moon key');
   await dm.getByTestId('character-Ayla').getByRole('button', { name: 'HP +1', exact: true }).click();
   await expect(player.getByRole('heading', { name: 'Borin' })).toBeVisible();
@@ -42,12 +56,13 @@ test('DM and player can work without destroying local drafts', async ({ browser 
   await player.getByRole('button', { name: 'Back to Combat' }).click();
   await player.getByTestId('character-Ayla').getByRole('button', { name: 'Spells' }).click();
   await player.getByTestId('spell-character-select').selectOption({ label: 'Borin' });
-  await expect(player.getByRole('heading', { name: 'Borin setup' })).toBeVisible();
+  await expect(player.getByRole('button', { name: /Borin setup/i })).toBeVisible();
   await dm.getByTestId('character-Ayla').getByRole('button', { name: 'HP -1', exact: true }).click();
-  await expect(player.getByRole('heading', { name: 'Borin setup' })).toBeVisible();
+  await expect(player.getByRole('button', { name: /Borin setup/i })).toBeVisible();
 
   await player.getByRole('button', { name: 'Databases' }).click();
   await player.getByRole('button', { name: 'Conditions' }).click();
+  await player.getByRole('button', { name: /Database actions/i }).click();
   await player.getByRole('button', { name: 'Add Condition' }).click();
   await player.getByPlaceholder('Name').fill('Dazed');
   await player.getByRole('combobox').selectOption('debuff');

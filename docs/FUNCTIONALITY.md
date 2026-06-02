@@ -6,9 +6,11 @@ than mutating client state directly.
 
 ## Combat Page
 
+- Add character / monster and Add monster from database share one horizontal
+  expandable menu. Only one setup menu is open at a time.
 - Add character / monster: DM-only form submits `character.add`.
-- Add monster from database: DM-only database picker submits `character.add` for
-  one or more monster copies using saved monster stats.
+- Add monster from database: DM-only database picker submits `character.add`
+  for one or more monster copies using saved monster stats.
 - Start / Previous / Next / End / Close combat: DM-only combat actions.
 - Close combat removes monsters and resets initiative. This replaces the old
   destructive "remove everything" workflow.
@@ -30,6 +32,8 @@ than mutating client state directly.
 
 - Conditions are edited from the modal opened by clicking a character name.
 - Predefined DnD conditions plus custom effects are supported.
+- Combat effect tags are colored by condition kind: buff, debuff or neutral.
+- Hovering a known condition tag shows the saved condition details.
 - Exhaustion and Insanity-style effects can carry a level.
 - Clicking an effect tag opens the condition modal. Levelled effects can be
   increased, decreased or removed; level changes submit `effect.level.set`.
@@ -39,8 +43,9 @@ than mutating client state directly.
 
 - Character selection is controlled by `selectedCharacterId` from app state and
   falls back only when the selected character no longer exists.
-- Setup saves spellcaster level and hit dice with `spell.character.update`.
-- Add custom feature submits `spell.feature.add`.
+- Setup is collapsed by default and saves spellcaster level and hit dice with
+  `spell.character.update`.
+- Add custom feature is collapsed by default and submits `spell.feature.add`.
 - Edit custom feature submits `spell.feature.update`.
 - Remove custom feature submits `spell.feature.remove`.
 - Use counters submit `spell.feature.uses`.
@@ -57,24 +62,39 @@ than mutating client state directly.
 - Character selection uses the same selected-character state as spells.
 - Manual dropdown changes update the app-level selected character, so incoming
   state patches do not snap the page back to the last combat-card shortcut.
-- Add custom item supports general, potion, scroll and magic item shapes through
-  `inventory.item.add`.
+- Currency editing and Add item/database picker share one horizontal expandable
+  menu. Only one is open at a time.
+- Add custom item supports general note records, potion, scroll and magic item
+  shapes through `inventory.item.add`.
 - Add from item database uses saved item metadata and infers potion/scroll/magic
   type for the server action.
 - Currency fields keep local drafts and commit on blur through
   `inventory.currency.set`.
-- Quantity, transfer, remove and attunement are server actions and appear in
-  inventory history.
+- Inventory rows are compact summaries. Clicking a row opens a detail modal.
+- Inventory rows do not repeat category labels; the section heading already
+  provides the category.
+- Item detail modals are large centered overlays intended for long notes and
+  descriptions.
+- Item detail modals include Edit. Saving submits `inventory.item.update`, so
+  item text changes sync through the server and remain undoable.
+- Quantity, transfer, remove and attunement live in the item detail modal; they
+  are server actions and appear in inventory history.
+- General items are intentionally free-form note records for clues, books,
+  diaries and other campaign notes.
 
 ## Databases
 
 - Databases are server state and autosave state in schema v3.
+- Migration populates Magic Items and Potions databases from saved player
+  inventories when matching entries are not already present.
 - Databases page has Magic Items, Potions, Conditions, Player Characters and
   DM-only Monsters.
 - Players can view/search/add/edit Magic Items, Potions and Conditions. Monster
   database and destructive imports/removals are DM-only.
 - Magic Items, Potions, Conditions and Monsters have searchable cards, modal
   editors, per-database export and DM-only import.
+- Database search and tabs stay visible. Add/import/export controls are grouped
+  inside a collapsed Database actions panel.
 - DM can export visible databases together and import all databases from one
   backup.
 - Conditions are seeded with official 5e conditions plus legacy homebrew
@@ -90,3 +110,20 @@ than mutating client state directly.
 - Undo/redo stays page-scoped. Combat undo does not undo inventory work.
 - Client drafts are local. Incoming server patches should not clear an
   unfinished damage, heal, item or feature form.
+- Keyboard shortcuts are restored outside inputs and modals:
+  Space/PageUp for next turn, PageDown for previous turn, Backspace for
+  page-scoped undo and Shift+Backspace for page-scoped redo.
+
+## Visual And Markdown
+
+- The React UI uses a tactical dark dashboard style: dark panels, subtle
+  borders, dense information and semantic action colors.
+- Secondary tools are collapsed by default. Related tools should use horizontal
+  expandable menus, with only one open at a time.
+- Long descriptive text fields should use Markdown by default: inventory items,
+  potions, conditions, monsters, statblocks, ability notes and future sheet
+  notes.
+- Markdown text is stored as plain Markdown-compatible strings and rendered
+  through React nodes, not `innerHTML`.
+- Markdown editors use a lightweight textarea toolbar with readable labels,
+  preview and visually separated pop-out editing for longer notes.

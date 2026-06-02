@@ -332,6 +332,17 @@ function applyActionMutation(state, action) {
             addInventoryItem(inv, itemType, payload.item || {});
             return `${character.name}: pridan item ${payload.item?.name || payload.item?.spellName || payload.item || itemType}`;
         }
+        case 'inventory.item.update': {
+            const character = findCharacter(state, payload.characterId);
+            if (!character) throw new Error('Postava neexistuje.');
+            const collection = getInventoryCollection(character, payload.collection);
+            const index = Number(payload.index);
+            const current = collection[index];
+            if (!current) throw new Error('Item neexistuje.');
+            collection[index] = normalizeInventoryItemForCollection(payload.collection, payload.item || {}, current);
+            const next = collection[index];
+            return `${character.name}: upraven item ${next.name || next.spellName || payload.collection}`;
+        }
         case 'inventory.item.quantity': {
             const character = findCharacter(state, payload.characterId);
             if (!character) throw new Error('Postava neexistuje.');
@@ -643,14 +654,56 @@ function getInventoryItem(character, collection, index) {
 
 function addInventoryItem(inv, itemType, item) {
     if (itemType === 'potion') {
-        inv.potions.push({ id: makeId('potion'), name: item.name || 'Potion', quantity: toNumber(item.quantity, 1), description: item.description || '' });
+        inv.potions.push(normalizeInventoryItemForCollection('potions', item));
     } else if (itemType === 'scroll') {
-        inv.scrolls.push({ id: makeId('scroll'), spellName: item.spellName || item.name || 'Scroll', quantity: toNumber(item.quantity, 1) });
+        inv.scrolls.push(normalizeInventoryItemForCollection('scrolls', item));
     } else if (itemType === 'magic') {
-        inv.magicItems.push({ id: makeId('magic'), name: item.name || 'Magic Item', itemType: item.itemType || 'Wondrous item', rarity: item.rarity || '', description: item.description || '', attuned: Boolean(item.attuned) });
+        inv.magicItems.push(normalizeInventoryItemForCollection('magicItems', item));
     } else {
-        inv.generalItems.push(typeof item === 'string' ? item : (item.name || 'Item'));
+        inv.generalItems.push(normalizeInventoryItemForCollection('generalItems', item));
     }
+}
+
+function normalizeInventoryItemForCollection(collection, item, current = {}) {
+    const source = typeof item === 'string' ? { name: item } : item;
+    const previous = typeof current === 'string' ? { name: current } : current;
+    const base = { ...clone(previous), ...clone(source) };
+    if (collection === 'potions') {
+        return {
+            ...base,
+            id: String(base.id || makeId('potion')),
+            name: String(base.name || 'Potion'),
+            quantity: Math.max(0, toNumber(base.quantity, 1)),
+            description: String(base.description || base.effect || '')
+        };
+    }
+    if (collection === 'scrolls') {
+        return {
+            ...base,
+            id: String(base.id || makeId('scroll')),
+            spellName: String(base.spellName || base.name || 'Scroll'),
+            quantity: Math.max(0, toNumber(base.quantity, 1)),
+            description: String(base.description || '')
+        };
+    }
+    if (collection === 'magicItems') {
+        return {
+            ...base,
+            id: String(base.id || makeId('magic')),
+            name: String(base.name || 'Magic Item'),
+            itemType: base.itemType || 'Wondrous item',
+            rarity: base.rarity || '',
+            description: String(base.description || ''),
+            attuned: Boolean(base.attuned)
+        };
+    }
+    return {
+        ...base,
+        id: String(base.id || makeId('general')),
+        name: String(base.name || base.spellName || 'Item'),
+        quantity: Math.max(0, toNumber(base.quantity, 1)),
+        description: String(base.description || base.notes || '')
+    };
 }
 
 function normalizeFeaturePayload(payload, fallback) {

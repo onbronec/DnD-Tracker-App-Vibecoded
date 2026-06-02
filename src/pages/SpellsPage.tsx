@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import type { Character, ClientRole, CustomFeature, GameAction, GameState } from '../shared/types';
+import { CollapsiblePanelGroup } from '../components/CollapsiblePanel';
 
 interface Props {
   state: GameState;
@@ -73,8 +74,22 @@ export function SpellsPage({ state, submitAction, selectedCharacterId, onSelectC
           </div>
         </div>
       </section>
-      <SpellEditor character={selected} submitAction={submitAction} />
-      <FeatureSetup character={selected} submitAction={submitAction} />
+      <CollapsiblePanelGroup
+        panels={[
+          {
+            id: 'spell-setup',
+            title: `${selected.name} setup`,
+            summary: 'Spell level, hit dice and rests.',
+            content: <SpellEditor character={selected} submitAction={submitAction} />
+          },
+          {
+            id: 'add-feature',
+            title: 'Add custom feature',
+            summary: 'Create abilities and recovery rules.',
+            content: <FeatureSetup character={selected} submitAction={submitAction} />
+          }
+        ]}
+      />
       <SpellSlots character={selected} submitAction={submitAction} />
       <HitDice character={selected} submitAction={submitAction} />
       <Features character={selected} submitAction={submitAction} />
@@ -106,8 +121,7 @@ function SpellEditor({ character, submitAction }: { character: Character; submit
   }
 
   return (
-    <section className="section">
-      <h2>{character.name} setup</h2>
+    <>
       <form className="form-grid" onSubmit={submit}>
         <input value={level} onChange={event => setLevel(event.target.value)} type="number" placeholder="Spellcaster level" />
         <input value={hitDiceMax} onChange={event => setHitDiceMax(event.target.value)} type="number" placeholder="Hit dice max" />
@@ -117,19 +131,16 @@ function SpellEditor({ character, submitAction }: { character: Character; submit
         <button className="btn warning" onClick={() => submitAction({ type: 'spell.rest.character', payload: { characterId: character.id, restType: 'short' } })}>Short Rest</button>
         <button className="btn success" onClick={() => submitAction({ type: 'spell.rest.character', payload: { characterId: character.id, restType: 'long' } })}>Long Rest</button>
       </div>
-    </section>
+    </>
   );
 }
 
 function FeatureSetup({ character, submitAction }: { character: Character; submitAction: Props['submitAction'] }) {
   return (
-    <section className="section">
-      <h2>Feature setup</h2>
-      <FeatureForm
-        submitLabel="Add feature"
-        onSubmit={feature => submitAction({ type: 'spell.feature.add', payload: { characterId: character.id, ...feature } })}
-      />
-    </section>
+    <FeatureForm
+      submitLabel="Add feature"
+      onSubmit={feature => submitAction({ type: 'spell.feature.add', payload: { characterId: character.id, ...feature } })}
+    />
   );
 }
 

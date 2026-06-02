@@ -106,6 +106,21 @@ describe('actions and history', () => {
         expect(state.characters[0].currentHp).toBe(30);
     });
 
+    it('updates inventory item notes as an undoable action', () => {
+        const state = createInitialState();
+        state.characters.push(player());
+        applyGameAction(state, { type: 'inventory.item.add', payload: { characterId: 'nif', itemType: 'general', item: { name: 'Old diary', description: 'First note' } } }, { id: 'player', role: 'player' });
+        applyGameAction(state, { type: 'inventory.item.update', payload: { characterId: 'nif', collection: 'generalItems', index: 0, item: { name: 'Wizard diary', description: '**Important** clue', quantity: 1 } } }, { id: 'player', role: 'player' });
+
+        expect(state.characters[0].inventory.generalItems[0]).toEqual(expect.objectContaining({
+            name: 'Wizard diary',
+            description: '**Important** clue'
+        }));
+
+        undoPage(state, 'inventory', { id: 'dm', role: 'dm' });
+        expect(state.characters[0].inventory.generalItems[0]).toEqual(expect.objectContaining({ name: 'Old diary' }));
+    });
+
     it('adds and removes custom spell features', () => {
         const state = createInitialState();
         state.characters.push(player());
@@ -212,6 +227,21 @@ describe('migrations', () => {
         expect(state.monsterDatabase[0].id).toBe('456');
         expect(state.potionDatabase[0].id).toBe('789');
         expect(state.conditionDatabase.some(condition => condition.name === 'Blinded')).toBe(true);
+    });
+
+    it('populates magic and potion databases from existing character inventories', () => {
+        const hero = player('Ayla');
+        hero.inventory.magicItems = [{ id: 'moon', name: 'Moonblade', rarity: 'Rare', description: 'Silver sword' }];
+        hero.inventory.potions = [{ id: 'heal', name: 'Potion of Healing', quantity: 2, description: '2d4+2 healing' }];
+
+        const state = migrateAutosave({ characters: [hero] });
+
+        expect(state.magicItemDatabase).toEqual([
+            expect.objectContaining({ name: 'Moonblade', rarity: 'Rare', source: 'Inventory: Ayla' })
+        ]);
+        expect(state.potionDatabase).toEqual([
+            expect.objectContaining({ name: 'Potion of Healing', description: '2d4+2 healing', source: 'Inventory: Ayla' })
+        ]);
     });
 });
 

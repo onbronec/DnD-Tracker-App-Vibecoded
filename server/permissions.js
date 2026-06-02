@@ -5,6 +5,7 @@ const PLAYER_ALLOWED_TYPES = new Set([
     'effect.level.set',
     'inventory.currency.set',
     'inventory.item.add',
+    'inventory.item.update',
     'inventory.item.quantity',
     'inventory.item.remove',
     'inventory.item.transfer',

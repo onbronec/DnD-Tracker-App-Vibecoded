@@ -156,6 +156,42 @@ function splitLegacyItems(items) {
     return { magic, potions };
 }
 
+function mergeByName(existing, discovered) {
+    const byName = new Map();
+    const result = [];
+    (existing || []).forEach(item => {
+        const key = String(item.name || '').trim().toLowerCase();
+        if (key) byName.set(key, true);
+        result.push(item);
+    });
+    (discovered || []).forEach(item => {
+        const key = String(item.name || '').trim().toLowerCase();
+        if (!key || byName.has(key)) return;
+        byName.set(key, true);
+        result.push(item);
+    });
+    return result;
+}
+
+function inventoryDatabaseEntries(characters) {
+    const magic = [];
+    const potions = [];
+    (characters || []).forEach(character => {
+        const inventory = normalizeInventory(character.inventory);
+        inventory.magicItems.forEach(item => {
+            if (!item) return;
+            const source = typeof item === 'string' ? { name: item } : item;
+            if (source.name) magic.push(normalizeMagicItem({ ...source, source: source.source || `Inventory: ${character.name}` }));
+        });
+        inventory.potions.forEach(item => {
+            if (!item) return;
+            const source = typeof item === 'string' ? { name: item } : item;
+            if (source.name) potions.push(normalizePotion({ ...source, source: source.source || `Inventory: ${character.name}` }));
+        });
+    });
+    return { magic, potions };
+}
+
 function normalizeRedoStacks(redoStacks) {
     const result = {};
     PAGE_SCOPES.forEach(page => {
@@ -194,6 +230,9 @@ function migrateAutosave(rawData) {
     state.potionDatabase = Array.isArray(data.potionDatabase)
         ? data.potionDatabase.map(normalizePotion)
         : splitItems.potions;
+    const inventoryEntries = inventoryDatabaseEntries(state.characters);
+    state.magicItemDatabase = mergeByName(state.magicItemDatabase, inventoryEntries.magic);
+    state.potionDatabase = mergeByName(state.potionDatabase, inventoryEntries.potions);
     state.conditionDatabase = seedConditions(data.conditionDatabase);
     state.itemDatabase = legacyItems;
 

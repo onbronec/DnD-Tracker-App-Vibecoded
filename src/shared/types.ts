@@ -16,8 +16,8 @@ export interface Inventory {
   };
   spellComponents: Array<Record<string, unknown>>;
   potions: Array<{ id?: string; name: string; quantity: number; description?: string }>;
-  scrolls: Array<{ id?: string; spellName: string; quantity: number }>;
-  generalItems: string[];
+  scrolls: Array<{ id?: string; spellName: string; quantity: number; description?: string }>;
+  generalItems: Array<string | { id?: string; name: string; quantity?: number; description?: string; notes?: string }>;
   magicItems: Array<{ id?: string; name: string; itemType?: string; rarity?: string; description?: string; attuned?: boolean }>;
 }
 

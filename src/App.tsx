@@ -36,6 +36,31 @@ export function App() {
     return () => window.clearTimeout(timer);
   }, [socket.toast, socket.setToast]);
 
+  useEffect(() => {
+    function handleShortcut(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName;
+      const editingText = tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT' || target?.isContentEditable;
+      const modalOpen = Boolean(document.querySelector('[role="dialog"]'));
+      if (editingText || modalOpen) return;
+
+      if ((event.key === ' ' || event.key === 'PageUp') && page === 'combat' && socket.role === 'dm' && state?.combatState.active) {
+        event.preventDefault();
+        socket.submitAction({ type: 'combat.nextTurn' });
+      } else if (event.key === 'PageDown' && page === 'combat' && socket.role === 'dm' && state?.combatState.active) {
+        event.preventDefault();
+        socket.submitAction({ type: 'combat.previousTurn' });
+      } else if (event.key === 'Backspace') {
+        event.preventDefault();
+        if (event.shiftKey) socket.redo(page);
+        else socket.undo(page);
+      }
+    }
+
+    document.addEventListener('keydown', handleShortcut);
+    return () => document.removeEventListener('keydown', handleShortcut);
+  }, [page, socket, state?.combatState.active]);
+
   if (!state) {
     return (
       <main className="app-shell">
