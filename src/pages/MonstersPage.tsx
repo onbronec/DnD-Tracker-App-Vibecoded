@@ -43,7 +43,7 @@ export function MonstersPage({ state, submitAction, selectedCharacterId, onSelec
 
   if (!selected) {
     return (
-      <section className="section">
+      <section className="section page-sticky-section">
         <div className="section-title-row">
           <div>
             <h2>Monster Abilities</h2>

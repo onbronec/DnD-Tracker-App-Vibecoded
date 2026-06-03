@@ -48,7 +48,7 @@ export function InventoryPage({ state, submitAction, selectedCharacterId, onSele
 
   if (!selected) {
     return (
-      <section className="section">
+      <section className="section page-sticky-section">
         <div className="section-title-row">
           <div>
             <h2>Inventory</h2>
@@ -62,7 +62,7 @@ export function InventoryPage({ state, submitAction, selectedCharacterId, onSele
 
   return (
     <div className="stack">
-      <section className="section">
+      <section className="section page-sticky-section">
         <div className="section-title-row">
           <div>
             <h2>Inventory</h2>

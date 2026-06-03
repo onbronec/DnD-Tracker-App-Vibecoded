@@ -41,7 +41,10 @@ const DEFAULT_CONDITIONS = [
     { name: 'Raging', kind: 'buff', description: 'Barbarian rage or similar resistance/damage mode.', source: 'homebrew' },
     { name: 'Dodging', kind: 'buff', description: 'Taking the Dodge action.', source: 'homebrew' },
     { name: 'Concentrating', kind: 'neutral', description: 'Maintaining concentration on a spell or feature.', source: 'homebrew' },
-    { name: 'Marked', kind: 'neutral', description: 'Marked for tracking or a special effect.', source: 'homebrew' }
+    { name: 'Marked', kind: 'neutral', description: 'Marked for tracking or a special effect.', source: 'homebrew' },
+    { name: 'Ability Score Set', kind: 'neutral', description: 'Temporarily sets one ability score to a chosen value. This affects Character Sheets until removed.', hasLevels: true, maxLevel: 30, statAdjustmentType: 'set', source: 'sheet' },
+    { name: 'Ability Score Increased', kind: 'buff', description: 'Temporarily increases one ability score by a chosen amount. This affects Character Sheets until removed.', hasLevels: true, maxLevel: 30, statAdjustmentType: 'increase', source: 'sheet' },
+    { name: 'Ability Score Reduced', kind: 'debuff', description: 'Temporarily reduces one ability score by a chosen amount. This affects Character Sheets until removed.', hasLevels: true, maxLevel: 30, statAdjustmentType: 'decrease', source: 'sheet' }
 ];
 
 module.exports = {

@@ -1,6 +1,6 @@
-# DnD Combat Tracker
+# DnD Companion
 
-Local Wi-Fi D&D tracker for DM and player devices. The app is now a
+Local Wi-Fi D&D companion for DM and player devices. The app is now a
 server-authoritative React/TypeScript frontend with a Node/Express/Socket.io
 backend.
 

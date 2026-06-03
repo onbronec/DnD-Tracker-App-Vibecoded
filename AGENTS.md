@@ -1,11 +1,12 @@
 # AGENTS.md
 
-Pokyny pro dalsi praci v teto slozce. Aplikace je osobni DnD tracker pro
+Pokyny pro dalsi praci v teto slozce. Aplikace je osobni DnD Companion pro
 domaci lokalni Wi-Fi, ne verejna webova sluzba. Optimalizuj proto pro rychlost
 u stolu, citelnost pri session a spolehlivost dat pred "enterprise" slozitosti.
 
 ## Co je projekt
 
+- Verejny nazev aplikace je `DnD Companion`.
 - `src/` je React + TypeScript frontend. Hlavni moduly jsou pages,
   components, client socket helpery a shared typy.
 - `server/` obsahuje serverovou domenu: migrace/autosave, permissions,
@@ -70,6 +71,12 @@ u stolu, citelnost pri session a spolehlivost dat pred "enterprise" slozitosti.
 - Soucasna paleta je tactical dark: tmave pozadi, tmave panely, jemne bordery,
   modra/cyan pro navigaci, zelena pro pozitivni akce, cervena pro destruktivni,
   zluta/oranzova pro tah/iniciativu, fialova pro specialni moduly.
+- Globalni bottom toolbelt je fixed/disconnected bar dostupny na kazde page.
+  Hrace vidi jen player-safe nastroje, DM-only veci schovej. Dice roller je
+  dostupny DM i playerum.
+- Dice roller umi vyrazy typu `4d4+7d6+10`, lokalni log jednotlivych kostek,
+  advantage/disadvantage a jednorazovy reroll prirozenych 1. Advantage/disadvantage
+  v generic rolleru aplikuj konzistentne na kazdou kostku.
 - Primarni pracovni obsah nech otevreny. Sekundarni setup/import/add/edit
   ovladani schovavej do expand/collapse UI. Pokud je vic souvisejicich panelu
   vedle sebe, pouzij horizontalni `CollapsiblePanelGroup` a nech otevreny max
@@ -77,6 +84,24 @@ u stolu, citelnost pri session a spolehlivost dat pred "enterprise" slozitosti.
 - Karty postav/monster jsou primarni pracovni jednotka. Pri zmenach hlidej:
   HP/current/max, temp HP, AC, iniciativa, effects, power, a tlacitka pro rychle
   damage/heal.
+- Page scope `spells` je v UI pojmenovany Character Sheets. Zustava jako
+  `spells` kvuli socket/history kompatibilite.
+- Character sheet fields: `abilityScores`, `proficiencyBonus`,
+  `savingThrowProficiencies`, `skillProficiencies`, `skillExpertise`. Dodrzuj
+  5e ability/skill seznamy; PC scores mohou byt do 30 a proficiency bonus do
+  10.
+- Character Sheets maji levy dynamicky index obsahovych sekci. Udrzuj `id`
+  anchor sekce a aktivni stav podle scrollu, ale frozen top Character header
+  do indexu nedavej.
+- DM Party Checks patri do globalniho bottom toolbeltu. Ma porovnavat jeden
+  save/check/skill napric vsemi player characters, ne ukazovat jen detail
+  vybrane postavy. DC pole ukazuje sanci na uspech; natural 1 vzdy fail,
+  natural 20 vzdy success.
+- Prvni/header sekce kazde page ma mit `page-sticky-section`, aby zustala
+  dostupna pri scrollovani. Plati i pro normalni Inventory header se selectem
+  postavy.
+- Ability Score Set/Increased/Reduced jsou docasne conditions. Ovlivnuji
+  vypocet sheetu pres effects, ale base hodnoty v editoru se nemeni.
 - Conditions se vizualne lisi podle `kind`: buff/debuff/neutral. V combat
   trackeru maji zobrazit ulozeny popis pri hoveru.
 - Inventory radky maji byt kompaktni souhrny bez opakovanych kategorickych

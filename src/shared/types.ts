@@ -4,7 +4,11 @@ export type PageScope = 'combat' | 'spells' | 'monsters' | 'inventory' | 'databa
 export interface Effect {
   name: string;
   level?: number | null;
+  ability?: AbilityKey | null;
+  value?: number | null;
 }
+
+export type AbilityKey = 'strength' | 'dexterity' | 'constitution' | 'intelligence' | 'wisdom' | 'charisma';
 
 export interface Inventory {
   currency: {
@@ -45,6 +49,11 @@ export interface Character {
   spellSlots: Record<string, { max: number; used: number }>;
   customFeatures: CustomFeature[];
   hitDice: { max: number; current: number };
+  proficiencyBonus: number;
+  abilityScores: Record<AbilityKey, number>;
+  savingThrowProficiencies: AbilityKey[];
+  skillProficiencies: string[];
+  skillExpertise: string[];
   inventory: Inventory;
 }
 

@@ -1,4 +1,4 @@
-# DnD Tracker Functionality Notes
+# DnD Companion Functionality Notes
 
 This file documents restored table workflows in the React/server version. The
 runtime source of truth is server state, so buttons should submit actions rather
@@ -22,7 +22,7 @@ than mutating client state directly.
   current authoritative state.
 - Character name click opens the conditions modal. Player can edit player
   characters; DM can edit everyone.
-- Player cards have Spells and Inventory buttons that navigate to the selected
+- Player cards have Sheet and Inventory buttons that navigate to the selected
   character instead of resetting to the first character.
 - Monster cards have Abilities, Duplicate and Remove buttons for DM.
 - HP, temp HP, initiative, effects and monster power are submitted as scoped
@@ -38,13 +38,33 @@ than mutating client state directly.
 - Clicking an effect tag opens the condition modal. Levelled effects can be
   increased, decreased or removed; level changes submit `effect.level.set`.
 - Removing an effect submits `effect.remove` and is undoable in combat history.
+- Ability Score Set, Ability Score Increased and Ability Score Reduced are
+  seeded conditions. They ask for an ability and score/amount, then temporarily
+  affect Character Sheets until removed.
 
-## Spells And Abilities
+## Character Sheets
 
 - Character selection is controlled by `selectedCharacterId` from app state and
   falls back only when the selected character no longer exists.
+- The navigation label is Character Sheets. The underlying page scope remains
+  `spells` for socket/history compatibility.
+- Character Sheets store 5e ability scores, proficiency bonus, saving throw
+  proficiencies, skill proficiencies and skill expertise.
+- Character Sheets include a Health & Conditions section with the same HP bar,
+  effect tags, quick HP controls and condition modal as the Combat page.
+- Character Sheets include a sticky left index of content sections. The frozen
+  top Character header is excluded so the active marker follows the sheet body.
+- PC ability scores can go up to 30 and proficiency bonus can go up to 10.
+- Edit Sheet opens a modal for base ability scores and proficiencies. Temporary
+  ability-score condition adjustments are intentionally not edited there.
+- Party Checks lives in the global bottom toolbelt, is DM-only, and compares
+  one save, ability check or skill check across all player characters in a
+  concise table. Optional DC input shows success chance with natural 1 always
+  failing and natural 20 always succeeding.
 - Setup is collapsed by default and saves spellcaster level and hit dice with
   `spell.character.update`.
+- Sheet edits submit `spell.sheet.update` and are undoable in page-scoped
+  Character Sheets history.
 - Add custom feature is collapsed by default and submits `spell.feature.add`.
 - Edit custom feature submits `spell.feature.update`.
 - Remove custom feature submits `spell.feature.remove`.
@@ -118,8 +138,17 @@ than mutating client state directly.
 
 - The React UI uses a tactical dark dashboard style: dark panels, subtle
   borders, dense information and semantic action colors.
+- The bottom toolbelt is a fixed, disconnected utility bar available on every
+  page. DM-only tools stay hidden from players; the dice roller is available to
+  both DM and players.
+- The dice roller accepts mixed expressions like `4d4+7d6+10`, keeps a local
+  log with individual die results, and supports advantage, disadvantage and
+  one-time reroll of natural 1s.
 - Secondary tools are collapsed by default. Related tools should use horizontal
   expandable menus, with only one open at a time.
+- Page header sections are sticky so character/page selection and primary
+  controls remain reachable while scrolling, including the normal Inventory
+  character selector header.
 - Long descriptive text fields should use Markdown by default: inventory items,
   potions, conditions, monsters, statblocks, ability notes and future sheet
   notes.

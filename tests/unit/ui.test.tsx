@@ -6,9 +6,12 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { CollapsiblePanel, CollapsiblePanelGroup } from '../../src/components/CollapsiblePanel';
 import { MarkdownEditor, MarkdownRenderer } from '../../src/components/Markdown';
+import { Toolbelt } from '../../src/components/Toolbelt';
 import { CombatPage } from '../../src/pages/CombatPage';
 import { InventoryPage } from '../../src/pages/InventoryPage';
+import { SpellsPage } from '../../src/pages/SpellsPage';
 import type { Character, GameAction, GameState } from '../../src/shared/types';
+import { adjustedAbilityScores, saveBonus, skillBonus } from '../../src/shared/characterSheet';
 
 describe('visual UX helpers', () => {
   it('keeps collapsible panels closed by default and opens on demand', () => {
@@ -88,6 +91,97 @@ describe('page visual behavior', () => {
     expect(effect).toHaveAttribute('data-tooltip', 'Add **1d4** to attacks.');
   });
 
+  it('shows combat-style health and conditions on Character Sheets', () => {
+    const submitAction = vi.fn(async (_action: GameAction) => undefined);
+    render(
+      <SpellsPage
+        state={gameState({
+          characters: [character({ effects: [{ name: 'Bless' }], currentHp: 22, maxHp: 30 })],
+          conditionDatabase: [{ id: 'bless', name: 'Bless', kind: 'buff', description: 'Add 1d4.' }]
+        })}
+        role="player"
+        submitAction={submitAction}
+        selectedCharacterId="ayla"
+        onSelectCharacter={vi.fn()}
+        onBackToCombat={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole('heading', { name: 'Health & Conditions' })).toBeInTheDocument();
+    expect(screen.getByText('22/30')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Bless' })).toHaveClass('effect-buff');
+    fireEvent.change(screen.getByTestId('sheet-heal-Ayla'), { target: { value: '5' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Apply' })[1]);
+    expect(submitAction).toHaveBeenCalledWith({
+      type: 'character.adjustHp',
+      payload: { characterId: 'ayla', amount: 5 }
+    });
+  });
+
+  it('shows sheet navigation and party-wide DM checks from the global toolbelt', () => {
+    const state = gameState({
+      characters: [
+        character({
+          abilityScores: { strength: 18, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: 10 },
+          savingThrowProficiencies: ['strength'],
+          proficiencyBonus: 4
+        }),
+        character({
+          id: 'borin',
+          name: 'Borin',
+          abilityScores: { strength: 12, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: 10 },
+          proficiencyBonus: 2
+        })
+      ]
+    });
+
+    render(
+      <>
+        <SpellsPage
+          state={state}
+          role="dm"
+          submitAction={vi.fn(async (_action: GameAction) => undefined)}
+          selectedCharacterId="ayla"
+          onSelectCharacter={vi.fn()}
+          onBackToCombat={vi.fn()}
+        />
+        <Toolbelt role="dm" state={state} />
+      </>
+    );
+
+    expect(screen.getByRole('heading', { name: 'Character Sheets' }).closest('section')).toHaveClass('page-sticky-section');
+    const sheetIndex = screen.getByLabelText('Character sheet sections');
+    expect(within(sheetIndex).queryByRole('button', { name: 'Character' })).not.toBeInTheDocument();
+    expect(within(sheetIndex).getByRole('button', { name: 'Health & Conditions' })).toHaveClass('active');
+    expect(within(screen.getByLabelText('Table toolbelt')).getByRole('button', { name: 'Party Checks' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Party Checks' }));
+    expect(screen.getByRole('heading', { name: 'Party Checks' })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Difficulty class'), { target: { value: '15' } });
+    const table = document.querySelector('.party-check-table') as HTMLElement;
+    expect(within(table).getByText('STR Save')).toBeInTheDocument();
+    expect(within(table).getByText('Chance')).toBeInTheDocument();
+    expect(within(table).getByText('Ayla')).toBeInTheDocument();
+    expect(within(table).getByText('Borin')).toBeInTheDocument();
+    expect(within(table).getByText('+8')).toBeInTheDocument();
+    expect(within(table).getByText('+1')).toBeInTheDocument();
+    expect(within(table).getByText('70%')).toBeInTheDocument();
+    expect(within(table).getByText('35%')).toBeInTheDocument();
+  });
+
+  it('lets players use the dice roller but not DM-only party checks', () => {
+    render(<Toolbelt role="player" state={gameState()} />);
+
+    const toolbelt = screen.getByLabelText('Table toolbelt');
+    expect(within(toolbelt).queryByRole('button', { name: 'Party Checks' })).not.toBeInTheDocument();
+    fireEvent.click(within(toolbelt).getByRole('button', { name: 'Dice Roller' }));
+    expect(screen.getByRole('heading', { name: 'Dice Roller' })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Dice expression'), { target: { value: '4d4+7d6+10' } });
+    fireEvent.change(screen.getByLabelText('Roll mode'), { target: { value: 'advantage' } });
+    fireEvent.click(screen.getByLabelText('Reroll 1s'));
+    fireEvent.click(screen.getByRole('button', { name: 'Roll' }));
+    expect(within(screen.getByLabelText('Dice log')).getByText('4d4+7d6+10')).toBeInTheDocument();
+  });
+
   it('keeps inventory item actions inside the item modal', () => {
     const submitAction = vi.fn(async (_action: GameAction) => undefined);
     render(
@@ -111,6 +205,7 @@ describe('page visual behavior', () => {
       />
     );
 
+    expect(screen.getByRole('heading', { name: 'Inventory' }).closest('section')).toHaveClass('page-sticky-section');
     expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId('inventory-item-Moonblade'));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
@@ -133,6 +228,25 @@ describe('page visual behavior', () => {
         item: expect.objectContaining({ name: 'Edited Moonblade' })
       })
     }));
+  });
+});
+
+describe('character sheet math', () => {
+  it('computes saves and skills with proficiency, expertise and temporary ability score effects', () => {
+    const hero = character({
+      proficiencyBonus: 4,
+      abilityScores: { strength: 18, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 12, charisma: 10 },
+      savingThrowProficiencies: ['strength'],
+      skillProficiencies: ['athletics'],
+      skillExpertise: ['perception'],
+      effects: [{ name: 'Ability Score Increased', ability: 'wisdom', value: 4, level: 4 }]
+    });
+
+    const adjusted = adjustedAbilityScores(hero);
+    expect(adjusted.scores.wisdom).toBe(16);
+    expect(saveBonus(hero, 'strength', adjusted.scores)).toBe(8);
+    expect(skillBonus(hero, 'athletics', adjusted.scores)).toBe(8);
+    expect(skillBonus(hero, 'perception', adjusted.scores)).toBe(11);
   });
 });
 
@@ -171,6 +285,11 @@ function character(overrides: Partial<Character> = {}): Character {
     spellSlots: {},
     customFeatures: [],
     hitDice: { max: 1, current: 1 },
+    proficiencyBonus: 2,
+    abilityScores: { strength: 10, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: 10 },
+    savingThrowProficiencies: [],
+    skillProficiencies: [],
+    skillExpertise: [],
     inventory: emptyInventory(),
     ...overrides
   };

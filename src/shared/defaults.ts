@@ -1,4 +1,5 @@
-import type { Inventory } from './types';
+import type { AbilityKey, Inventory } from './types';
+import { ABILITIES } from './characterSheet';
 
 export function createEmptyInventory(): Inventory {
   return {
@@ -11,8 +12,10 @@ export function createEmptyInventory(): Inventory {
   };
 }
 
-export function effectToString(effect: string | { name: string; level?: number | null }): string {
+export function effectToString(effect: string | { name: string; level?: number | null; ability?: AbilityKey | null; value?: number | null }): string {
   if (typeof effect === 'string') return effect;
+  const ability = ABILITIES.find(item => item.key === effect.ability)?.short;
+  if (ability && effect.value) return `${effect.name} ${ability} ${effect.value}`;
   return effect.level ? `${effect.name} ${effect.level}` : effect.name;
 }
 

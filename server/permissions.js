@@ -18,6 +18,7 @@ const PLAYER_ALLOWED_TYPES = new Set([
     'spell.feature.remove',
     'spell.rest.character',
     'spell.character.update',
+    'spell.sheet.update',
     'database.magic.upsert',
     'database.potion.upsert',
     'database.condition.upsert',

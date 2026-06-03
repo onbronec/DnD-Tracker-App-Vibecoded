@@ -3,6 +3,7 @@ import type { Character, ClientRole, GameAction, GameState } from '../shared/typ
 import { effectToString, hpClass, monsterHealthLabel } from '../shared/defaults';
 import { CollapsiblePanelGroup } from '../components/CollapsiblePanel';
 import { MarkdownRenderer } from '../components/Markdown';
+import { ABILITIES } from '../shared/characterSheet';
 
 interface Props {
   state: GameState;
@@ -78,7 +79,7 @@ export function CombatPage({ state, role, submitAction, onOpenSpells, onOpenInve
         />
       )}
 
-      <section className="section">
+      <section className="section page-sticky-section">
         <div className="section-title-row">
           <div>
             <h2>Combat</h2>
@@ -323,7 +324,7 @@ function CharacterCard({
         </div>
         <div className="button-row compact">
           {isDM && character.type === 'monster' && <span className="type-pill">#{index + 1}</span>}
-          {character.type === 'player' && <button className="btn purple small" onClick={onOpenSpells}>Spells</button>}
+          {character.type === 'player' && <button className="btn purple small" onClick={onOpenSpells}>Sheet</button>}
           {character.type === 'player' && <button className="btn purple small" onClick={onOpenInventory}>Inventory</button>}
           {isDM && character.type === 'monster' && <button className="btn purple small" onClick={onOpenMonsters}>Abilities</button>}
           {isDM && character.type === 'monster' && <button className="btn success small" onClick={duplicateMonster}>Duplicate</button>}
@@ -407,7 +408,7 @@ function CharacterCard({
   );
 }
 
-function EffectModal({
+export function EffectModal({
   character,
   canEdit,
   conditions,
@@ -425,6 +426,9 @@ function EffectModal({
   const [selected, setSelected] = useState(String(filteredConditions[0]?.id || conditions[0]?.id || ''));
   const [custom, setCustom] = useState('');
   const [level, setLevel] = useState('1');
+  const [ability, setAbility] = useState('strength');
+  const selectedCondition = filteredConditions.find(item => String(item.id) === selected) || filteredConditions[0];
+  const isAbilityAdjustment = Boolean(selectedCondition?.statAdjustmentType);
 
   async function addEffect(name: string, condition?: Record<string, unknown>) {
     const trimmed = name.trim();
@@ -434,7 +438,9 @@ function EffectModal({
       payload: {
         characterId: character.id,
         name: trimmed,
-        level: condition?.hasLevels ? Number(level) || 1 : null
+        level: condition?.hasLevels ? Number(level) || 1 : null,
+        ability: condition?.statAdjustmentType ? ability : null,
+        value: condition?.statAdjustmentType ? Number(level) || 1 : null
       }
     });
     setCustom('');
@@ -473,12 +479,24 @@ function EffectModal({
               <select value={selected || String(filteredConditions[0]?.id || '')} onChange={event => setSelected(event.target.value)}>
                 {filteredConditions.map(condition => <option key={String(condition.id)} value={String(condition.id)}>{String(condition.name || 'Condition')}</option>)}
               </select>
-              <input data-testid="condition-level-input" value={level} onChange={event => setLevel(event.target.value)} type="number" min={1} max={20} placeholder="Level" />
+              {isAbilityAdjustment && (
+                <select value={ability} onChange={event => setAbility(event.target.value)}>
+                  {ABILITIES.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}
+                </select>
+              )}
+              <input
+                data-testid="condition-level-input"
+                value={level}
+                onChange={event => setLevel(event.target.value)}
+                type="number"
+                min={1}
+                max={isAbilityAdjustment ? 30 : 20}
+                placeholder={isAbilityAdjustment ? 'Score / amount' : 'Level'}
+              />
               <button
                 className="btn success"
                 onClick={() => {
-                  const condition = filteredConditions.find(item => String(item.id) === selected) || filteredConditions[0];
-                  if (condition) addEffect(String(condition.name || ''), condition);
+                  if (selectedCondition) addEffect(String(selectedCondition.name || ''), selectedCondition);
                 }}
               >
                 Add selected

@@ -87,7 +87,7 @@ export function DatabasesPage({ state, role, submitAction, onBackToCombat }: Pro
 
   return (
     <div className="stack">
-      <section className="section">
+      <section className="section page-sticky-section">
         <div className="section-title-row">
           <div>
             <h2>Databases</h2>

@@ -33,6 +33,13 @@ const SPELL_SLOTS_TABLE = {
     20: [4, 3, 3, 3, 3, 2, 2, 1, 1]
 };
 
+const ABILITY_KEYS = ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'];
+const SKILL_KEYS = [
+    'acrobatics', 'animalHandling', 'arcana', 'athletics', 'deception', 'history',
+    'insight', 'intimidation', 'investigation', 'medicine', 'nature', 'perception',
+    'performance', 'persuasion', 'religion', 'sleightOfHand', 'stealth', 'survival'
+];
+
 function findCharacter(state, id) {
     return state.characters.find(character => character.id === id);
 }
@@ -71,7 +78,12 @@ function snapshotPage(state, page) {
                 spellSlots: clone(c.spellSlots),
                 customFeatures: clone(c.customFeatures),
                 hitDice: clone(c.hitDice),
-                effects: clone(c.effects)
+                effects: clone(c.effects),
+                proficiencyBonus: c.proficiencyBonus,
+                abilityScores: clone(c.abilityScores),
+                savingThrowProficiencies: clone(c.savingThrowProficiencies),
+                skillProficiencies: clone(c.skillProficiencies),
+                skillExpertise: clone(c.skillExpertise)
             }))
         };
     }
@@ -128,6 +140,11 @@ function restorePage(state, page, snapshot) {
             character.customFeatures = clone(saved.customFeatures || []);
             character.hitDice = clone(saved.hitDice || { max: 0, current: 0 });
             character.effects = clone(saved.effects || []);
+            character.proficiencyBonus = saved.proficiencyBonus || 2;
+            character.abilityScores = clone(saved.abilityScores || character.abilityScores || {});
+            character.savingThrowProficiencies = clone(saved.savingThrowProficiencies || []);
+            character.skillProficiencies = clone(saved.skillProficiencies || []);
+            character.skillExpertise = clone(saved.skillExpertise || []);
         }
         if (page === 'monsters') {
             character.monsterAbilities = clone(saved.monsterAbilities);
@@ -177,6 +194,13 @@ function ensureSpellShape(character) {
     if (!character.spellSlots || typeof character.spellSlots !== 'object') character.spellSlots = {};
     if (!Array.isArray(character.customFeatures)) character.customFeatures = [];
     if (!character.hitDice || typeof character.hitDice !== 'object') character.hitDice = { max: 0, current: 0 };
+    if (!character.abilityScores || typeof character.abilityScores !== 'object') {
+        character.abilityScores = { strength: 10, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: 10 };
+    }
+    if (!Array.isArray(character.savingThrowProficiencies)) character.savingThrowProficiencies = [];
+    if (!Array.isArray(character.skillProficiencies)) character.skillProficiencies = [];
+    if (!Array.isArray(character.skillExpertise)) character.skillExpertise = [];
+    character.proficiencyBonus = clamp(toNumber(character.proficiencyBonus, 2), 0, 10);
 }
 
 function applyActionMutation(state, action) {
@@ -262,7 +286,10 @@ function applyActionMutation(state, action) {
             const name = String(payload.name || '').trim();
             if (!name) throw new Error('Efekt nema nazev.');
             if (!Array.isArray(character.effects)) character.effects = [];
-            character.effects.push({ name, level: payload.level ?? null });
+            const effect = { name, level: payload.level ?? null };
+            if (payload.ability) effect.ability = payload.ability;
+            if (payload.value !== undefined && payload.value !== null) effect.value = toNumber(payload.value, 0);
+            character.effects.push(effect);
             return `${character.name}: efekt ${name}`;
         }
         case 'effect.remove': {
@@ -416,6 +443,17 @@ function applyActionMutation(state, action) {
             updateSpellSlotsForLevel(character);
             character.customFeatures = Array.isArray(payload.customFeatures) ? clone(payload.customFeatures) : character.customFeatures;
             return `${character.name}: kouzla/abilities`;
+        }
+        case 'spell.sheet.update': {
+            const character = findCharacter(state, payload.characterId);
+            if (!character || character.type !== 'player') throw new Error('Hrac neexistuje.');
+            ensureSpellShape(character);
+            character.proficiencyBonus = clamp(toNumber(payload.proficiencyBonus, character.proficiencyBonus || 2), 0, 10);
+            character.abilityScores = normalizeSheetAbilityScores(payload.abilityScores || character.abilityScores);
+            character.savingThrowProficiencies = normalizeAllowedList(payload.savingThrowProficiencies, ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma']);
+            character.skillProficiencies = normalizeAllowedList(payload.skillProficiencies, SKILL_KEYS);
+            character.skillExpertise = normalizeAllowedList(payload.skillExpertise, SKILL_KEYS);
+            return `${character.name}: character sheet`;
         }
         case 'spell.feature.add': {
             const character = findCharacter(state, payload.characterId);
@@ -721,6 +759,19 @@ function normalizeFeaturePayload(payload, fallback) {
         statusName: payload.statusName || '',
         statusEffect: Boolean(payload.statusName)
     };
+}
+
+function normalizeAllowedList(values, allowed) {
+    if (!Array.isArray(values)) return [];
+    return [...new Set(values.map(value => String(value)).filter(value => allowed.includes(value)))];
+}
+
+function normalizeSheetAbilityScores(scores) {
+    const source = scores || {};
+    return ABILITY_KEYS.reduce((result, key) => {
+        result[key] = clamp(toNumber(source[key], 10), 1, 30);
+        return result;
+    }, {});
 }
 
 function regainFeatureUses(feature, restType) {

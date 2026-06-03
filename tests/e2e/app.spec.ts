@@ -54,7 +54,7 @@ test('DM and player can work without destroying local drafts', async ({ browser 
   await expect(player.getByTestId('item-name')).toHaveValue('Moon key');
 
   await player.getByRole('button', { name: 'Back to Combat' }).click();
-  await player.getByTestId('character-Ayla').getByRole('button', { name: 'Spells' }).click();
+  await player.getByTestId('character-Ayla').getByRole('button', { name: 'Sheet' }).click();
   await player.getByTestId('spell-character-select').selectOption({ label: 'Borin' });
   await expect(player.getByRole('button', { name: /Borin setup/i })).toBeVisible();
   await dm.getByTestId('character-Ayla').getByRole('button', { name: 'HP -1', exact: true }).click();

@@ -7,10 +7,11 @@ import { SpellsPage } from './pages/SpellsPage';
 import { MonstersPage } from './pages/MonstersPage';
 import { DatabasesPage } from './pages/DatabasesPage';
 import { HistoryPanel } from './components/HistoryPanel';
+import { Toolbelt } from './components/Toolbelt';
 
 const PAGES: Array<{ id: PageScope; label: string; dmOnly?: boolean }> = [
   { id: 'combat', label: 'Combat' },
-  { id: 'spells', label: 'Spells & Abilities' },
+  { id: 'spells', label: 'Character Sheets' },
   { id: 'monsters', label: 'Monster Abilities', dmOnly: true },
   { id: 'inventory', label: 'Inventory' },
   { id: 'databases', label: 'Databases' }
@@ -64,7 +65,7 @@ export function App() {
   if (!state) {
     return (
       <main className="app-shell">
-        <div className="loading-card">Pripojuji tracker...</div>
+        <div className="loading-card">Pripojuji DnD Companion...</div>
       </main>
     );
   }
@@ -73,8 +74,8 @@ export function App() {
     <main className="app-shell">
       <header className="topbar">
         <div>
-          <h1>DnD Combat Tracker</h1>
-          <p>Server-authoritative local Wi-Fi session tracker</p>
+          <h1>DnD Companion</h1>
+          <p>Server-authoritative local Wi-Fi session companion</p>
         </div>
         <div className="status-stack">
           <span className={`pill ${isDM ? 'dm' : 'player'}`}>{isDM ? 'DM View' : 'Player View'}</span>
@@ -166,6 +167,7 @@ export function App() {
           />
         )}
       </div>
+      <Toolbelt role={socket.role} state={state} />
     </main>
   );
 }

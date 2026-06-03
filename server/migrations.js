@@ -5,10 +5,39 @@ const { clone, makeId } = require('./utils');
 function normalizeEffect(effect) {
     if (!effect) return null;
     if (typeof effect === 'string') return { name: effect, level: null };
-    return {
+    const normalized = {
         name: String(effect.name || ''),
         level: effect.level ?? null
     };
+    const ability = normalizeAbilityKey(effect.ability);
+    if (ability) normalized.ability = ability;
+    if (effect.value !== undefined && effect.value !== null) normalized.value = Number(effect.value) || 0;
+    return normalized;
+}
+
+const ABILITY_KEYS = ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'];
+const SKILL_KEYS = [
+    'acrobatics', 'animalHandling', 'arcana', 'athletics', 'deception', 'history',
+    'insight', 'intimidation', 'investigation', 'medicine', 'nature', 'perception',
+    'performance', 'persuasion', 'religion', 'sleightOfHand', 'stealth', 'survival'
+];
+
+function normalizeAbilityKey(value) {
+    const raw = String(value || '').trim();
+    return ABILITY_KEYS.includes(raw) ? raw : null;
+}
+
+function normalizeAbilityScores(scores) {
+    const source = scores || {};
+    return ABILITY_KEYS.reduce((result, key) => {
+        result[key] = Math.max(1, Math.min(30, Math.round(Number(source[key]) || 10)));
+        return result;
+    }, {});
+}
+
+function normalizeKeyList(values, allowed) {
+    if (!Array.isArray(values)) return [];
+    return [...new Set(values.map(value => String(value)).filter(value => allowed.includes(value)))];
 }
 
 function normalizeInventory(inventory) {
@@ -62,6 +91,11 @@ function normalizeCharacter(char) {
         hitDice: char.hitDice && typeof char.hitDice === 'object'
             ? { max: Number(char.hitDice.max) || 0, current: Number(char.hitDice.current) || 0 }
             : { max: 0, current: 0 },
+        proficiencyBonus: Math.max(0, Math.min(10, Math.round(Number(char.proficiencyBonus) || 2))),
+        abilityScores: normalizeAbilityScores(char.abilityScores),
+        savingThrowProficiencies: normalizeKeyList(char.savingThrowProficiencies, ABILITY_KEYS),
+        skillProficiencies: normalizeKeyList(char.skillProficiencies, SKILL_KEYS),
+        skillExpertise: normalizeKeyList(char.skillExpertise, SKILL_KEYS),
         inventory: normalizeInventory(char.inventory)
     };
 }

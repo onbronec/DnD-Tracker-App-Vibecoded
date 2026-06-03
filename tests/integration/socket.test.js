@@ -22,6 +22,11 @@ function player() {
         spellSlots: {},
         customFeatures: [],
         hitDice: { max: 0, current: 0 },
+        proficiencyBonus: 2,
+        abilityScores: { strength: 10, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: 10 },
+        savingThrowProficiencies: [],
+        skillProficiencies: [],
+        skillExpertise: [],
         inventory: {
             currency: { manaCoins: 0, platinum: 0, gold: 0, silver: 0, copper: 0 },
             spellComponents: [],

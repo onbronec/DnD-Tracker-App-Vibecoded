@@ -22,6 +22,11 @@ function player(name = 'Nif') {
         spellSlots: {},
         customFeatures: [],
         hitDice: { max: 0, current: 0 },
+        proficiencyBonus: 2,
+        abilityScores: { strength: 10, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: 10 },
+        savingThrowProficiencies: [],
+        skillProficiencies: [],
+        skillExpertise: [],
         inventory: {
             currency: { manaCoins: 0, platinum: 0, gold: 0, silver: 0, copper: 0 },
             spellComponents: [],
@@ -204,6 +209,32 @@ describe('actions and history', () => {
         expect(state.characters[0].customFeatures[1].used).toBe(0);
         expect(state.characters[0].hitDice.current).toBe(3);
     });
+
+    it('updates character sheet fields and restores them with spells undo', () => {
+        const state = createInitialState();
+        state.characters.push(player());
+        applyGameAction(state, {
+            type: 'spell.sheet.update',
+            payload: {
+                characterId: 'nif',
+                proficiencyBonus: 5,
+                abilityScores: { strength: 18, dexterity: 14, constitution: 16, intelligence: 10, wisdom: 12, charisma: 8 },
+                savingThrowProficiencies: ['strength', 'constitution'],
+                skillProficiencies: ['athletics'],
+                skillExpertise: ['perception']
+            }
+        }, { id: 'player', role: 'player' });
+
+        expect(state.characters[0].proficiencyBonus).toBe(5);
+        expect(state.characters[0].abilityScores.strength).toBe(18);
+        expect(state.characters[0].savingThrowProficiencies).toEqual(['strength', 'constitution']);
+        expect(state.characters[0].skillExpertise).toEqual(['perception']);
+
+        undoPage(state, 'spells', { id: 'dm', role: 'dm' });
+        expect(state.characters[0].proficiencyBonus).toBe(2);
+        expect(state.characters[0].abilityScores.strength).toBe(10);
+    });
+
 
     it('changes leveled condition effects and supports undo', () => {
         const state = createInitialState();
