@@ -12,11 +12,17 @@ export function createEmptyInventory(): Inventory {
   };
 }
 
-export function effectToString(effect: string | { name: string; level?: number | null; ability?: AbilityKey | null; value?: number | null }): string {
+export function effectToString(effect: string | { name: string; level?: number | null; ability?: AbilityKey | null; value?: number | null; diceCount?: number | null; diceSides?: number | null; damageType?: string | null }): string {
   if (typeof effect === 'string') return effect;
   const ability = ABILITIES.find(item => item.key === effect.ability)?.short;
   if (ability && effect.value) return `${effect.name} ${ability} ${effect.value}`;
-  return effect.level ? `${effect.name} ${effect.level}` : effect.name;
+  const parts = [effect.name];
+  if (effect.level) parts.push(String(effect.level));
+  if (effect.diceCount && effect.diceSides) {
+    parts.push(`${effect.diceCount}d${effect.diceSides}`);
+    if (effect.damageType) parts.push(String(effect.damageType));
+  }
+  return parts.join(' ');
 }
 
 export function hpClass(currentHp: number, maxHp: number): string {

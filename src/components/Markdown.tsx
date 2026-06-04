@@ -82,7 +82,7 @@ export function MarkdownEditor({ value, onChange, placeholder, label = 'Markdown
           <MarkdownRenderer text={value} />
         </div>
       ) : (
-        <textarea ref={textareaRef} value={value} onChange={event => onChange(event.target.value)} placeholder={placeholder} />
+        <textarea ref={textareaRef} value={value} onChange={event => onChange(event.target.value)} placeholder={placeholder} aria-label={label} />
       )}
       {expanded && (
         <div className="modal-backdrop" role="dialog" aria-modal="true">
@@ -101,6 +101,7 @@ export function MarkdownEditor({ value, onChange, placeholder, label = 'Markdown
               value={value}
               onChange={event => onChange(event.target.value)}
               placeholder={placeholder}
+              aria-label={label}
             />
             <div className="markdown-preview">
               <MarkdownRenderer text={value} />

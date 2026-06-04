@@ -12,6 +12,9 @@ function normalizeEffect(effect) {
     const ability = normalizeAbilityKey(effect.ability);
     if (ability) normalized.ability = ability;
     if (effect.value !== undefined && effect.value !== null) normalized.value = Number(effect.value) || 0;
+    if (effect.diceCount !== undefined && effect.diceCount !== null) normalized.diceCount = Math.max(0, Number(effect.diceCount) || 0);
+    if (effect.diceSides !== undefined && effect.diceSides !== null) normalized.diceSides = Math.max(0, Number(effect.diceSides) || 0);
+    if (effect.damageType !== undefined && effect.damageType !== null) normalized.damageType = String(effect.damageType);
     return normalized;
 }
 
@@ -51,6 +54,22 @@ function normalizeInventory(inventory) {
         generalItems: Array.isArray(source.generalItems) ? source.generalItems : [],
         magicItems: Array.isArray(source.magicItems) ? source.magicItems : []
     };
+}
+
+function normalizeSpellbook(spellbook) {
+    const source = spellbook || {};
+    return {
+        knownSpellIds: normalizeStringList(Array.isArray(source.knownSpellIds) ? source.knownSpellIds : source.knownSpells),
+        preparedSpellIds: normalizeStringList(Array.isArray(source.preparedSpellIds) ? source.preparedSpellIds : source.preparedSpells),
+        preparesSpells: Boolean(source.preparesSpells),
+        preparedNonEpicMax: Math.max(0, Number(source.preparedNonEpicMax) || 0),
+        preparedEpicMax: Math.max(0, Number(source.preparedEpicMax) || 0)
+    };
+}
+
+function normalizeStringList(values) {
+    if (!Array.isArray(values)) return [];
+    return [...new Set(values.map(value => String(value)).filter(Boolean))];
 }
 
 function normalizeTags(tags) {
@@ -96,8 +115,52 @@ function normalizeCharacter(char) {
         savingThrowProficiencies: normalizeKeyList(char.savingThrowProficiencies, ABILITY_KEYS),
         skillProficiencies: normalizeKeyList(char.skillProficiencies, SKILL_KEYS),
         skillExpertise: normalizeKeyList(char.skillExpertise, SKILL_KEYS),
-        inventory: normalizeInventory(char.inventory)
+        inventory: normalizeInventory(char.inventory),
+        spellbook: normalizeSpellbook(char.spellbook)
     };
+}
+
+function normalizeSpell(spell) {
+    const source = spell || {};
+    const level = normalizeSpellLevel(source.levelKey || source.levelLabel || source.level || source.Level);
+    const name = String(source.name || source.Name || 'Spell').trim() || 'Spell';
+    return {
+        ...clone(source),
+        id: String(source.id || makeId('spell_db')),
+        name,
+        levelKey: level.key,
+        levelLabel: level.label,
+        classes: normalizeTags(source.classes || source.Classes),
+        school: String(source.school || source.School || ''),
+        castingTime: String(source.castingTime || source['Casting Time'] || ''),
+        range: String(source.range || source.Range || ''),
+        components: String(source.components || source.Components || ''),
+        duration: String(source.duration || source.Duration || ''),
+        ritual: Boolean(source.ritual || source.asRitual || source['As a Ritual']),
+        source: String(source.source || source.Source || ''),
+        page: String(source.page || source.Page || ''),
+        description: String(source.description || source.text || source.Text || ''),
+        atHigherLevels: String(source.atHigherLevels || source['At Higher Levels'] || ''),
+        tags: normalizeTags(source.tags),
+        importKey: source.importKey ? String(source.importKey) : ''
+    };
+}
+
+function normalizeSpellLevel(value) {
+    const raw = String(value || '').trim();
+    const lower = raw.toLowerCase();
+    if (!raw) return { key: 'special-unknown', label: 'Special' };
+    if (lower === 'cantrip') return { key: 'cantrip', label: 'Cantrip' };
+    const ordinal = lower.match(/^(\d+)(st|nd|rd|th)$/);
+    if (ordinal) return { key: ordinal[1], label: `Level ${ordinal[1]}` };
+    const epic = lower.match(/^tier\s+(\d+)\s+epic$/);
+    if (epic) return { key: `epic${epic[1]}`, label: `Epic ${epic[1]}` };
+    if (/^\d+$/.test(lower)) return { key: lower, label: `Level ${lower}` };
+    return { key: `special-${slugify(raw)}`, label: raw };
+}
+
+function slugify(value) {
+    return String(value || 'special').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'special';
 }
 
 function normalizeMonsterDbItem(monster) {
@@ -158,6 +221,10 @@ function normalizeCondition(condition) {
         description: source.description || '',
         hasLevels: Boolean(source.hasLevels),
         maxLevel: Number(source.maxLevel) || (source.hasLevels ? 6 : 0),
+        hasDice: Boolean(source.hasDice || source.defaultDiceCount || source.defaultDiceSides || source.diceCount || source.diceSides || source.defaultDamageType || source.damageType),
+        defaultDiceCount: Number(source.defaultDiceCount || source.diceCount) || 0,
+        defaultDiceSides: Number(source.defaultDiceSides || source.diceSides) || 0,
+        defaultDamageType: String(source.defaultDamageType || source.damageType || ''),
         tags: normalizeTags(source.tags),
         source: source.source || ''
     };
@@ -234,6 +301,32 @@ function normalizeRedoStacks(redoStacks) {
     return result;
 }
 
+function normalizeToolbelt(toolbelt) {
+    const source = toolbelt || {};
+    const calendar = source.calendar || {};
+    const calendarYear = Number(calendar.year) || 502;
+    return {
+        diceRolls: normalizeDiceRolls(source.diceRolls),
+        improvNames: Array.isArray(source.improvNames) ? source.improvNames.slice(0, 5) : [],
+        calendar: {
+            weekday: String(calendar.weekday || 'Tuesday'),
+            day: Number(calendar.day) || 23,
+            month: String(calendar.month || 'December'),
+            year: calendarYear === 500 ? 502 : calendarYear,
+            records: Array.isArray(calendar.records) ? calendar.records : []
+        },
+        notes: Array.isArray(source.notes) ? source.notes : []
+    };
+}
+
+function normalizeDiceRolls(diceRolls) {
+    if (!diceRolls || typeof diceRolls !== 'object') return {};
+    return Object.fromEntries(Object.entries(diceRolls).map(([key, rolls]) => [
+        key,
+        Array.isArray(rolls) ? rolls.slice(0, 5) : []
+    ]));
+}
+
 function migrateAutosave(rawData) {
     const state = createInitialState();
     const data = rawData || {};
@@ -268,11 +361,15 @@ function migrateAutosave(rawData) {
     state.magicItemDatabase = mergeByName(state.magicItemDatabase, inventoryEntries.magic);
     state.potionDatabase = mergeByName(state.potionDatabase, inventoryEntries.potions);
     state.conditionDatabase = seedConditions(data.conditionDatabase);
+    state.spellDatabase = Array.isArray(data.spellDatabase)
+        ? data.spellDatabase.map(normalizeSpell)
+        : [];
     state.itemDatabase = legacyItems;
 
     state.actionLog = Array.isArray(data.actionLog) ? data.actionLog : [];
     state.redoStacks = normalizeRedoStacks(data.redoStacks);
     state.nextSequence = Number(data.nextSequence) || (state.actionLog.length + 1);
+    state.toolbelt = normalizeToolbelt(data.toolbelt);
 
     return state;
 }
@@ -284,6 +381,8 @@ module.exports = {
     normalizeMagicItem,
     normalizePotion,
     normalizeCondition,
+    normalizeSpell,
+    normalizeSpellbook,
     seedConditions,
     migrateAutosave
 };

@@ -10,12 +10,13 @@ interface Props {
   onBackToCombat: () => void;
 }
 
-type DatabaseKind = 'magic' | 'potion' | 'condition' | 'characters' | 'monster';
+type DatabaseKind = 'magic' | 'potion' | 'condition' | 'spell' | 'characters' | 'monster';
 
 const DB_LABELS: Record<DatabaseKind, string> = {
   magic: 'Magic Items',
   potion: 'Potions',
   condition: 'Conditions',
+  spell: 'Spells',
   characters: 'Player Characters',
   monster: 'Monsters'
 };
@@ -23,8 +24,8 @@ const DB_LABELS: Record<DatabaseKind, string> = {
 export function DatabasesPage({ state, role, submitAction, onBackToCombat }: Props) {
   const isDM = role === 'dm';
   const visibleTabs: DatabaseKind[] = isDM
-    ? ['magic', 'potion', 'condition', 'characters', 'monster']
-    : ['magic', 'potion', 'condition', 'characters'];
+    ? ['magic', 'potion', 'condition', 'spell', 'characters', 'monster']
+    : ['magic', 'potion', 'condition', 'spell', 'characters'];
   const [active, setActive] = useState<DatabaseKind>(visibleTabs[0]);
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState<Record<string, unknown> | null>(null);
@@ -39,7 +40,7 @@ export function DatabasesPage({ state, role, submitAction, onBackToCombat }: Pro
     return items.filter(item => searchableText(item).includes(needle));
   }, [items, query]);
 
-  const canEditCurrent = isDM || active !== 'monster';
+  const canEditCurrent = active === 'spell' ? isDM : isDM || active !== 'monster';
   const canRemoveCurrent = isDM && active !== 'characters';
 
   function openCreate() {
@@ -63,6 +64,7 @@ export function DatabasesPage({ state, role, submitAction, onBackToCombat }: Pro
       magicItemDatabase: state.magicItemDatabase || [],
       potionDatabase: state.potionDatabase || [],
       conditionDatabase: state.conditionDatabase || [],
+      spellDatabase: state.spellDatabase || [],
       playerCharacters: state.characters.filter(character => character.type === 'player')
     };
     downloadJson('dnd-all-databases.json', payload);
@@ -127,6 +129,11 @@ export function DatabasesPage({ state, role, submitAction, onBackToCombat }: Pro
             </button>
           )}
           {isDM && <button className="btn warning" onClick={() => allFileInputRef.current?.click()}>Import all DBs</button>}
+          {isDM && active === 'spell' && (
+            <button className="btn purple" onClick={() => submitAction({ type: 'database.spell.importFromDataFolder' })}>
+              Import from data/Spells
+            </button>
+          )}
           <input ref={fileInputRef} className="hidden-input" type="file" accept="application/json,.json" onChange={importDatabase} />
           <input ref={allFileInputRef} className="hidden-input" type="file" accept="application/json,.json" onChange={importAll} />
         </div>
@@ -168,6 +175,7 @@ function itemsForKind(state: GameState, kind: DatabaseKind): Array<Record<string
   if (kind === 'magic') return state.magicItemDatabase || [];
   if (kind === 'potion') return state.potionDatabase || [];
   if (kind === 'condition') return state.conditionDatabase || [];
+  if (kind === 'spell') return state.spellDatabase || [];
   if (kind === 'monster') return state.monsterDatabase || [];
   return state.characters.filter(character => character.type === 'player') as unknown as Array<Record<string, unknown>>;
 }
@@ -180,6 +188,7 @@ function databaseStateKey(kind: DatabaseKind) {
   if (kind === 'magic') return 'magicItemDatabase';
   if (kind === 'potion') return 'potionDatabase';
   if (kind === 'condition') return 'conditionDatabase';
+  if (kind === 'spell') return 'spellDatabase';
   return 'monsterDatabase';
 }
 
@@ -187,6 +196,7 @@ function upsertActionFor(kind: DatabaseKind, item: Record<string, unknown>): Gam
   if (kind === 'magic') return { type: 'database.magic.upsert', payload: { item } };
   if (kind === 'potion') return { type: 'database.potion.upsert', payload: { item } };
   if (kind === 'condition') return { type: 'database.condition.upsert', payload: { condition: item } };
+  if (kind === 'spell') return { type: 'database.spell.upsert', payload: { spell: item } };
   return { type: 'database.monster.upsert', payload: { monster: item } };
 }
 
@@ -194,6 +204,7 @@ function removeActionFor(kind: DatabaseKind, id: string): GameAction {
   if (kind === 'magic') return { type: 'database.magic.remove', payload: { id } };
   if (kind === 'potion') return { type: 'database.potion.remove', payload: { id } };
   if (kind === 'condition') return { type: 'database.condition.remove', payload: { id } };
+  if (kind === 'spell') return { type: 'database.spell.remove', payload: { id } };
   return { type: 'database.monster.remove', payload: { id } };
 }
 
@@ -201,6 +212,7 @@ function importActionFor(kind: DatabaseKind, items: unknown): GameAction {
   if (kind === 'magic') return { type: 'database.magic.import', payload: { items } };
   if (kind === 'potion') return { type: 'database.potion.import', payload: { items } };
   if (kind === 'condition') return { type: 'database.condition.import', payload: { items } };
+  if (kind === 'spell') return { type: 'database.spell.import', payload: { items } };
   return { type: 'database.monster.import', payload: { items } };
 }
 
@@ -317,6 +329,22 @@ function DatabaseEditorModal({
     kind: String(initial?.kind || 'neutral'),
     hasLevels: Boolean(initial?.hasLevels),
     maxLevel: String(initial?.maxLevel || '0'),
+    hasDice: Boolean(initial?.hasDice),
+    defaultDiceCount: String(initial?.defaultDiceCount || '0'),
+    defaultDiceSides: String(initial?.defaultDiceSides || '0'),
+    defaultDamageType: String(initial?.defaultDamageType || ''),
+    levelKey: String(initial?.levelKey || ''),
+    levelLabel: String(initial?.levelLabel || 'Cantrip'),
+    classes: Array.isArray(initial?.classes) ? (initial?.classes as string[]).join(', ') : String(initial?.classes || ''),
+    school: String(initial?.school || ''),
+    castingTime: String(initial?.castingTime || ''),
+    range: String(initial?.range || ''),
+    components: String(initial?.components || ''),
+    duration: String(initial?.duration || ''),
+    ritual: Boolean(initial?.ritual),
+    page: String(initial?.page || ''),
+    atHigherLevels: String(initial?.atHigherLevels || ''),
+    importKey: String(initial?.importKey || ''),
     hp: String(initial?.hp || '10'),
     ac: String(initial?.ac || '10'),
     initBonus: String(initial?.initBonus || '0'),
@@ -343,7 +371,32 @@ function DatabaseEditorModal({
     } else if (kind === 'potion') {
       onSave({ ...base, rarity: form.rarity, effect: form.effect, type: 'potion' });
     } else if (kind === 'condition') {
-      onSave({ ...base, kind: form.kind, hasLevels: Boolean(form.hasLevels), maxLevel: Number(form.maxLevel) || 0 });
+      onSave({
+        ...base,
+        kind: form.kind,
+        hasLevels: Boolean(form.hasLevels),
+        maxLevel: Number(form.maxLevel) || 0,
+        hasDice: Boolean(form.hasDice),
+        defaultDiceCount: Number(form.defaultDiceCount) || 0,
+        defaultDiceSides: Number(form.defaultDiceSides) || 0,
+        defaultDamageType: String(form.defaultDamageType || '')
+      });
+    } else if (kind === 'spell') {
+      onSave({
+        ...base,
+        levelKey: '',
+        levelLabel: form.levelLabel,
+        classes: String(form.classes).split(',').map(item => item.trim()).filter(Boolean),
+        school: form.school,
+        castingTime: form.castingTime,
+        range: form.range,
+        components: form.components,
+        duration: form.duration,
+        ritual: Boolean(form.ritual),
+        page: form.page,
+        atHigherLevels: form.atHigherLevels,
+        importKey: form.importKey
+      });
     } else {
       onSave({
         ...base,
@@ -398,6 +451,36 @@ function DatabaseEditorModal({
                 Has levels
               </label>
               <input value={String(form.maxLevel)} onChange={event => update('maxLevel', event.target.value)} type="number" min={0} placeholder="Max level" />
+              <label className="inline-check">
+                <input type="checkbox" checked={Boolean(form.hasDice)} onChange={event => update('hasDice', event.target.checked)} />
+                Has dice damage
+              </label>
+              {Boolean(form.hasDice) && (
+                <>
+                  <input value={String(form.defaultDiceCount)} onChange={event => update('defaultDiceCount', event.target.value)} type="number" min={0} placeholder="Default dice count" />
+                  <input value={String(form.defaultDiceSides)} onChange={event => update('defaultDiceSides', event.target.value)} type="number" min={0} placeholder="Default die sides" />
+                  <input value={String(form.defaultDamageType)} onChange={event => update('defaultDamageType', event.target.value)} placeholder="Default damage type" />
+                </>
+              )}
+            </>
+          )}
+          {kind === 'spell' && (
+            <>
+              <select value={String(form.levelLabel)} onChange={event => update('levelLabel', event.target.value)}>
+                {['Cantrip', '1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th', '9th', 'Tier 1 Epic', 'Tier 2 Epic', 'Tier 3 Epic', 'Hellfire Atrocity', 'Voidsong'].map(value => <option key={value} value={value}>{value}</option>)}
+              </select>
+              <input value={String(form.classes)} onChange={event => update('classes', event.target.value)} placeholder="Classes, comma separated" />
+              <input value={String(form.school)} onChange={event => update('school', event.target.value)} placeholder="School" />
+              <input value={String(form.castingTime)} onChange={event => update('castingTime', event.target.value)} placeholder="Casting time" />
+              <input value={String(form.range)} onChange={event => update('range', event.target.value)} placeholder="Range" />
+              <input value={String(form.components)} onChange={event => update('components', event.target.value)} placeholder="Components" />
+              <input value={String(form.duration)} onChange={event => update('duration', event.target.value)} placeholder="Duration" />
+              <input value={String(form.page)} onChange={event => update('page', event.target.value)} placeholder="Page" />
+              <input value={String(form.atHigherLevels)} onChange={event => update('atHigherLevels', event.target.value)} placeholder="At higher levels" />
+              <label className="inline-check">
+                <input type="checkbox" checked={Boolean(form.ritual)} onChange={event => update('ritual', event.target.checked)} />
+                Ritual
+              </label>
             </>
           )}
           {kind === 'monster' && (
@@ -437,7 +520,11 @@ function RaritySelect({ value, onChange }: { value: string; onChange: (value: st
 function summaryFor(kind: DatabaseKind, item: Record<string, unknown>) {
   if (kind === 'magic') return `${item.itemType || 'Magic item'} · ${item.rarity || 'Unknown rarity'}${item.requiresAttunement ? ' · Attunement' : ''}`;
   if (kind === 'potion') return `${item.rarity || 'Unknown rarity'} · ${item.effect || 'Potion'}`;
-  if (kind === 'condition') return `${item.kind || 'neutral'}${item.hasLevels ? ` · levels 1-${item.maxLevel || 6}` : ''}`;
+  if (kind === 'condition') {
+    const dice = item.hasDice ? ` · ${item.defaultDiceCount || 1}d${item.defaultDiceSides || 4}${item.defaultDamageType ? ` ${item.defaultDamageType}` : ''}` : '';
+    return `${item.kind || 'neutral'}${item.hasLevels ? ` · levels 1-${item.maxLevel || 6}` : ''}${dice}`;
+  }
+  if (kind === 'spell') return `${item.levelLabel || 'Spell'} · ${item.school || 'Unknown school'} · ${Array.isArray(item.classes) ? item.classes.join(', ') : item.classes || 'No classes'}`;
   return `HP ${item.hp || item.maxHp || '-'} · AC ${item.ac || '-'} · Init ${item.initBonus || 0}`;
 }
 

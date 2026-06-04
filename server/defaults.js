@@ -1,6 +1,6 @@
 const { DEFAULT_CONDITIONS } = require('./conditionPresets');
 
-const PAGE_SCOPES = ['combat', 'spells', 'monsters', 'inventory', 'databases'];
+const PAGE_SCOPES = ['combat', 'spells', 'monsters', 'inventory', 'databases', 'toolbelt'];
 
 function createEmptyInventory() {
     return {
@@ -15,7 +15,7 @@ function createEmptyInventory() {
 
 function createInitialState() {
     return {
-        schemaVersion: 3,
+        schemaVersion: 4,
         characters: [],
         combatState: {
             active: false,
@@ -31,7 +31,20 @@ function createInitialState() {
             id: `condition_${index + 1}`,
             tags: Array.isArray(condition.tags) ? condition.tags : []
         })),
+        spellDatabase: [],
         itemDatabase: [],
+        toolbelt: {
+            diceRolls: {},
+            improvNames: [],
+            calendar: {
+                weekday: 'Tuesday',
+                day: 23,
+                month: 'December',
+                year: 502,
+                records: []
+            },
+            notes: []
+        },
         actionLog: [],
         redoStacks: PAGE_SCOPES.reduce((acc, page) => {
             acc[page] = [];

@@ -3,6 +3,7 @@ const PLAYER_ALLOWED_TYPES = new Set([
     'effect.add',
     'effect.remove',
     'effect.level.set',
+    'effect.dice.set',
     'inventory.currency.set',
     'inventory.item.add',
     'inventory.item.update',
@@ -19,11 +20,16 @@ const PLAYER_ALLOWED_TYPES = new Set([
     'spell.rest.character',
     'spell.character.update',
     'spell.sheet.update',
+    'spellbook.known.add',
+    'spellbook.known.remove',
+    'spellbook.settings.update',
+    'spellbook.prepared.set',
     'database.magic.upsert',
     'database.potion.upsert',
     'database.condition.upsert',
     'character.activateInCombat',
-    'character.deactivateFromCombat'
+    'character.deactivateFromCombat',
+    'toolbelt.dice.add'
 ]);
 
 function findCharacter(state, characterId) {
@@ -45,6 +51,10 @@ function canPlayerChangeAction(state, action) {
     }
 
     if (action.type.startsWith('database.')) {
+        return { ok: true };
+    }
+
+    if (action.type === 'toolbelt.dice.add') {
         return { ok: true };
     }
 

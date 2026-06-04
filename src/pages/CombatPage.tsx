@@ -3,6 +3,8 @@ import type { Character, ClientRole, GameAction, GameState } from '../shared/typ
 import { effectToString, hpClass, monsterHealthLabel } from '../shared/defaults';
 import { CollapsiblePanelGroup } from '../components/CollapsiblePanel';
 import { MarkdownRenderer } from '../components/Markdown';
+import { Modal } from '../components/Modal';
+import { SearchPicker } from '../components/SearchPicker';
 import { ABILITIES } from '../shared/characterSheet';
 
 interface Props {
@@ -195,13 +197,13 @@ function AddCharacterForm({ submitAction }: { submitAction: Props['submitAction'
 }
 
 function AddMonsterFromDatabase({ monsters, submitAction }: { monsters: Array<Record<string, unknown>>; submitAction: Props['submitAction'] }) {
-  const [monsterId, setMonsterId] = useState('');
+  const [selectedMonster, setSelectedMonster] = useState<Record<string, unknown> | null>(null);
   const [count, setCount] = useState('1');
   const [search, setSearch] = useState('');
-  const filtered = monsters.filter(monster => Object.values(monster).join(' ').toLowerCase().includes(search.toLowerCase()));
+  const matchingMonsters = matchingItems(monsters, search);
 
   async function addMonster() {
-    const monster = filtered.find(item => String(item.id) === monsterId) || filtered[0] || monsters[0];
+    const monster = selectedMonster && matchingMonsters.includes(selectedMonster) ? selectedMonster : matchingMonsters[0] || monsters[0];
     if (!monster) return;
     const copies = Math.max(1, Number(count) || 1);
     for (let index = 0; index < copies; index += 1) {
@@ -225,13 +227,23 @@ function AddMonsterFromDatabase({ monsters, submitAction }: { monsters: Array<Re
   }
 
   return (
-    <div className="button-row">
-      <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search monsters" />
-      <select value={monsterId || String(filtered[0]?.id || monsters[0]?.id || '')} onChange={event => setMonsterId(event.target.value)}>
-        {filtered.map(monster => <option key={String(monster.id)} value={String(monster.id)}>{String(monster.name || 'Monster')}</option>)}
-      </select>
+    <div className="stack compact-stack">
+      <SearchPicker
+        items={monsters}
+        query={search}
+        onQueryChange={setSearch}
+        selectedId={String((selectedMonster || monsters[0])?.id || '')}
+        onSelect={setSelectedMonster}
+        placeholder="Search monsters"
+        getId={monster => String(monster.id)}
+        getLabel={monster => String(monster.name || 'Monster')}
+        getMeta={monster => `HP ${monster.hp || monster.maxHp || '-'} · AC ${monster.ac || '-'}`}
+        getDescription={monster => String(monster.description || monster.statblock || '').slice(0, 120)}
+      />
+      <div className="button-row">
       <input className="small-input" type="number" min={1} value={count} onChange={event => setCount(event.target.value)} />
       <button className="btn success" onClick={addMonster}>Add to combat</button>
+      </div>
     </div>
   );
 }
@@ -350,11 +362,18 @@ function CharacterCard({
         {character.effects.map((effect, effectIndex) => {
           const condition = conditionForEffect(conditions, effect);
           const tooltip = conditionTooltip(condition);
+          const opensMenu = effectRequiresManagement(effect, condition);
           return (
             <button
               className={`effect-tag ${conditionKindClass(condition)}`}
               key={`${effectToString(effect)}-${effectIndex}`}
-              onClick={onOpenEffects}
+              onClick={() => {
+                if (opensMenu) {
+                  onOpenEffects();
+                  return;
+                }
+                if (canEdit) submitAction({ type: 'effect.remove', payload: { characterId: character.id, index: effectIndex } });
+              }}
               title={tooltip}
               data-tooltip={tooltip}
             >
@@ -422,16 +441,29 @@ export function EffectModal({
   onClose: () => void;
 }) {
   const [search, setSearch] = useState('');
-  const filteredConditions = conditions.filter(condition => Object.values(condition).join(' ').toLowerCase().includes(search.toLowerCase()));
-  const [selected, setSelected] = useState(String(filteredConditions[0]?.id || conditions[0]?.id || ''));
+  const [selectedCondition, setSelectedCondition] = useState<Record<string, unknown> | null>(conditions[0] || null);
   const [custom, setCustom] = useState('');
   const [level, setLevel] = useState('1');
   const [ability, setAbility] = useState('strength');
-  const selectedCondition = filteredConditions.find(item => String(item.id) === selected) || filteredConditions[0];
-  const isAbilityAdjustment = Boolean(selectedCondition?.statAdjustmentType);
+  const [diceCount, setDiceCount] = useState('2');
+  const [diceSides, setDiceSides] = useState('4');
+  const [damageType, setDamageType] = useState('fire');
+  const matchingConditions = matchingItems(conditions, search);
+  const conditionForAdd = selectedCondition && matchingConditions.includes(selectedCondition) ? selectedCondition : matchingConditions[0] || selectedCondition;
+  const isAbilityAdjustment = Boolean(conditionForAdd?.statAdjustmentType);
+  const hasDice = conditionHasDice(conditionForAdd);
+
+  function selectCondition(condition: Record<string, unknown>) {
+    setSelectedCondition(condition);
+    setLevel('1');
+    setDiceCount(String(condition.defaultDiceCount || 2));
+    setDiceSides(String(condition.defaultDiceSides || 4));
+    setDamageType(String(condition.defaultDamageType || ''));
+  }
 
   async function addEffect(name: string, condition?: Record<string, unknown>) {
     const trimmed = name.trim();
+    const diceEnabled = conditionHasDice(condition);
     if (!trimmed) return;
     await submitAction({
       type: 'effect.add',
@@ -440,14 +472,17 @@ export function EffectModal({
         name: trimmed,
         level: condition?.hasLevels ? Number(level) || 1 : null,
         ability: condition?.statAdjustmentType ? ability : null,
-        value: condition?.statAdjustmentType ? Number(level) || 1 : null
+        value: condition?.statAdjustmentType ? Number(level) || 1 : null,
+        diceCount: diceEnabled ? Number(diceCount) || Number(condition?.defaultDiceCount) || 1 : null,
+        diceSides: diceEnabled ? Number(diceSides) || Number(condition?.defaultDiceSides) || 4 : null,
+        damageType: diceEnabled ? damageType || String(condition?.defaultDamageType || '') : null
       }
     });
     setCustom('');
   }
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true">
+    <Modal>
       <div className="modal-card">
         <div className="section-title-row">
           <div>
@@ -475,28 +510,47 @@ export function EffectModal({
         {canEdit && (
           <div className="stack compact-stack">
             <div className="form-grid">
-              <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search conditions" />
-              <select value={selected || String(filteredConditions[0]?.id || '')} onChange={event => setSelected(event.target.value)}>
-                {filteredConditions.map(condition => <option key={String(condition.id)} value={String(condition.id)}>{String(condition.name || 'Condition')}</option>)}
-              </select>
+              <div className="form-wide">
+                <SearchPicker
+                  items={conditions}
+                  query={search}
+                  onQueryChange={setSearch}
+                  selectedId={String(conditionForAdd?.id || '')}
+                  onSelect={selectCondition}
+                  placeholder="Search conditions"
+                  getId={condition => String(condition.id)}
+                  getLabel={condition => String(condition.name || 'Condition')}
+                  getMeta={condition => summaryForCondition(condition)}
+                  getDescription={condition => String(condition.description || condition.effect || '').slice(0, 140)}
+                />
+              </div>
               {isAbilityAdjustment && (
                 <select value={ability} onChange={event => setAbility(event.target.value)}>
                   {ABILITIES.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}
                 </select>
               )}
-              <input
-                data-testid="condition-level-input"
-                value={level}
-                onChange={event => setLevel(event.target.value)}
-                type="number"
-                min={1}
-                max={isAbilityAdjustment ? 30 : 20}
-                placeholder={isAbilityAdjustment ? 'Score / amount' : 'Level'}
-              />
+              {(conditionForAdd?.hasLevels || isAbilityAdjustment) && (
+                <input
+                  data-testid="condition-level-input"
+                  value={level}
+                  onChange={event => setLevel(event.target.value)}
+                  type="number"
+                  min={1}
+                  max={isAbilityAdjustment ? 30 : Number(conditionForAdd?.maxLevel || 20)}
+                  placeholder={isAbilityAdjustment ? 'Score / amount' : 'Level'}
+                />
+              )}
+              {hasDice && (
+                <>
+                  <input value={diceCount} onChange={event => setDiceCount(event.target.value)} type="number" min={1} placeholder="Dice count" />
+                  <input value={diceSides} onChange={event => setDiceSides(event.target.value)} type="number" min={2} placeholder="Die sides" />
+                  <input value={damageType} onChange={event => setDamageType(event.target.value)} placeholder="Damage type" />
+                </>
+              )}
               <button
                 className="btn success"
                 onClick={() => {
-                  if (selectedCondition) addEffect(String(selectedCondition.name || ''), selectedCondition);
+                  if (conditionForAdd) addEffect(String(conditionForAdd.name || ''), conditionForAdd);
                 }}
               >
                 Add selected
@@ -509,7 +563,7 @@ export function EffectModal({
           </div>
         )}
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -529,8 +583,12 @@ function ActiveEffectRow({
   submitAction: Props['submitAction'];
 }) {
   const hasLevels = Boolean(condition?.hasLevels || (typeof effect !== 'string' && effect.level));
+  const hasDice = conditionHasDice(condition) || (typeof effect !== 'string' && Boolean(effect.diceCount && effect.diceSides));
   const level = typeof effect === 'string' ? 1 : Number(effect.level || 1);
   const maxLevel = Number(condition?.maxLevel || 20);
+  const [diceCount, setDiceCount] = useState(typeof effect === 'string' ? '' : String(effect.diceCount || condition?.defaultDiceCount || ''));
+  const [diceSides, setDiceSides] = useState(typeof effect === 'string' ? '' : String(effect.diceSides || condition?.defaultDiceSides || ''));
+  const [damageType, setDamageType] = useState(typeof effect === 'string' ? '' : String(effect.damageType || condition?.defaultDamageType || ''));
 
   return (
     <div className="active-effect-row">
@@ -561,6 +619,20 @@ function ActiveEffectRow({
           </button>
         </>
       )}
+      {canEdit && hasDice && (
+        <div className="dice-effect-controls">
+          <input className="tiny-input" value={diceCount} onChange={event => setDiceCount(event.target.value)} type="number" min={1} aria-label={`${effectToString(effect)} dice count`} />
+          <span>d</span>
+          <input className="tiny-input" value={diceSides} onChange={event => setDiceSides(event.target.value)} type="number" min={2} aria-label={`${effectToString(effect)} die sides`} />
+          <input className="small-input" value={damageType} onChange={event => setDamageType(event.target.value)} placeholder="type" aria-label={`${effectToString(effect)} damage type`} />
+          <button
+            className="btn small"
+            onClick={() => submitAction({ type: 'effect.dice.set', payload: { characterId, index, diceCount: Number(diceCount) || 0, diceSides: Number(diceSides) || 0, damageType } })}
+          >
+            Save dice
+          </button>
+        </div>
+      )}
       {canEdit && (
         <button className="btn danger small" onClick={() => submitAction({ type: 'effect.remove', payload: { characterId, index } })}>
           Remove
@@ -579,6 +651,21 @@ function conditionForEffect(conditions: Array<Record<string, unknown>>, effect: 
   return conditions.find(condition => String(condition.name || '').toLowerCase() === name);
 }
 
+export function effectRequiresManagement(effect: Character['effects'][number], condition?: Record<string, unknown>) {
+  return Boolean(condition?.hasLevels || conditionHasDice(condition) || (typeof effect !== 'string' && (effect.level || (effect.diceCount && effect.diceSides))));
+}
+
+function conditionHasDice(condition?: Record<string, unknown> | null) {
+  return Boolean(condition?.hasDice || condition?.defaultDiceCount || condition?.defaultDiceSides || condition?.defaultDamageType || condition?.damageType);
+}
+
+function summaryForCondition(condition: Record<string, unknown>) {
+  const parts = [String(condition.kind || 'neutral')];
+  if (condition.hasLevels) parts.push(`levels 1-${condition.maxLevel || 6}`);
+  if (conditionHasDice(condition)) parts.push(`${condition.defaultDiceCount || 1}d${condition.defaultDiceSides || 4}${condition.defaultDamageType ? ` ${condition.defaultDamageType}` : ''}`);
+  return parts.join(' · ');
+}
+
 function conditionKindClass(condition?: Record<string, unknown>) {
   const kind = String(condition?.kind || 'neutral').toLowerCase();
   if (kind === 'buff') return 'effect-buff';
@@ -589,6 +676,12 @@ function conditionKindClass(condition?: Record<string, unknown>) {
 function conditionTooltip(condition?: Record<string, unknown>) {
   if (!condition) return 'Custom effect';
   return String(condition.description || condition.effect || condition.name || 'Condition');
+}
+
+function matchingItems<T extends Record<string, unknown>>(items: T[], query: string) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return items;
+  return items.filter(item => Object.values(item).join(' ').toLowerCase().includes(needle));
 }
 
 function Stat({ label, value }: { label: string; value: string }) {

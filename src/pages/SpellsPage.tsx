@@ -1,9 +1,12 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import type { AbilityKey, Character, ClientRole, CustomFeature, GameAction, GameState } from '../shared/types';
+import type { AbilityKey, Character, CharacterSpellbook, ClientRole, CustomFeature, GameAction, GameState, SpellDatabaseEntry } from '../shared/types';
 import { CollapsiblePanelGroup } from '../components/CollapsiblePanel';
 import { Modal } from '../components/Modal';
-import { EffectModal } from './CombatPage';
+import { MarkdownRenderer } from '../components/Markdown';
+import { SearchPicker } from '../components/SearchPicker';
+import { EffectModal, effectRequiresManagement } from './CombatPage';
 import { effectToString, hpClass } from '../shared/defaults';
+import { groupedSpells, isCantrip, isEpicSpell, isNormalPreparedSpell, spellIsActive } from '../shared/spells';
 import {
   ABILITIES,
   SKILLS,
@@ -141,6 +144,7 @@ export function SpellsPage({ state, role, submitAction, selectedCharacterId, onS
           />
         </section>
         <SpellSlots character={selected} submitAction={submitAction} />
+        <SpellbookSection character={selected} spellDatabase={state.spellDatabase || []} submitAction={submitAction} />
         <HitDice character={selected} submitAction={submitAction} />
         <Features character={selected} submitAction={submitAction} />
       </div>
@@ -154,6 +158,7 @@ const SHEET_SECTION_LINKS = [
   { id: 'sheet-core', label: 'Scores, Saves & Skills' },
   { id: 'sheet-tools', label: 'Setup & Features' },
   { id: 'sheet-spell-slots', label: 'Spell Slots' },
+  { id: 'sheet-spells-known', label: 'Spells Known' },
   { id: 'sheet-hit-dice', label: 'Hit Dice' },
   { id: 'sheet-features', label: 'Custom Features' }
 ];
@@ -212,13 +217,20 @@ function HealthConditionsPanel({
         {character.effects.map((effect, index) => {
           const condition = conditionForEffect(conditions, effect);
           const tooltip = String(condition?.description || condition?.effect || condition?.name || 'Custom effect');
+          const opensMenu = effectRequiresManagement(effect, condition);
           return (
             <button
               key={`${effectToString(effect)}-${index}`}
               className={`effect-tag ${conditionKindClass(condition)}`}
               title={tooltip}
               data-tooltip={tooltip}
-              onClick={() => setModalOpen(true)}
+              onClick={() => {
+                if (opensMenu) {
+                  setModalOpen(true);
+                  return;
+                }
+                submitAction({ type: 'effect.remove', payload: { characterId: character.id, index } });
+              }}
             >
               {effectToString(effect)}
             </button>
@@ -584,14 +596,14 @@ function SpellSlots({ character, submitAction }: { character: Character; submitA
       <div className="spell-slot-grid">
         {levels.map(([level, slots]) => (
           <div key={level} className="spell-level">
-            <strong>Level {level}: {slots.max - slots.used}/{slots.max}</strong>
+            <strong>{spellSlotLabel(level)}: {slots.max - slots.used}/{slots.max}</strong>
             <div className="dot-row">
               {Array.from({ length: slots.max }, (_, index) => (
                 <button
                   key={index}
                   className={`dot ${index < slots.used ? 'used' : ''}`}
                   onClick={() => submitAction({ type: 'spell.slot.toggle', payload: { characterId: character.id, level, index } })}
-                  aria-label={`Toggle level ${level} slot ${index + 1}`}
+                  aria-label={`Toggle ${spellSlotLabel(level)} slot ${index + 1}`}
                 />
               ))}
             </div>
@@ -600,6 +612,302 @@ function SpellSlots({ character, submitAction }: { character: Character; submitA
       </div>
     </section>
   );
+}
+
+function spellSlotLabel(level: string) {
+  const numeric = Number(level);
+  if (numeric >= 10 && numeric <= 12) return `Epic ${numeric - 9}`;
+  return `Level ${level}`;
+}
+
+function SpellbookSection({
+  character,
+  spellDatabase,
+  submitAction
+}: {
+  character: Character;
+  spellDatabase: SpellDatabaseEntry[];
+  submitAction: Props['submitAction'];
+}) {
+  const spellbook = normalizedSpellbook(character.spellbook);
+  const knownSpells = spellbook.knownSpellIds
+    .map(id => spellDatabase.find(spell => spell.id === id))
+    .filter(Boolean) as SpellDatabaseEntry[];
+  const [detailSpell, setDetailSpell] = useState<SpellDatabaseEntry | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [preparing, setPreparing] = useState(false);
+
+  return (
+    <section id="sheet-spells-known" className="section sheet-section-anchor">
+      <div className="section-title-row">
+        <div>
+          <h2>Spells Known</h2>
+          <p>{knownSpells.length} known spell{knownSpells.length === 1 ? '' : 's'}{spellbook.preparesSpells ? ` · Prepared ${preparedSummary(knownSpells, spellbook)}` : ''}</p>
+        </div>
+        <div className="button-row">
+          <button className="btn" onClick={() => setEditing(true)}>Edit spell list</button>
+          {spellbook.preparesSpells && <button className="btn purple" onClick={() => setPreparing(true)}>Change prepared spells</button>}
+        </div>
+      </div>
+
+      {knownSpells.length === 0 && <p className="empty">No known spells yet.</p>}
+      <div className="spellbook-groups">
+        {groupedSpells(knownSpells).map(group => (
+          <div className="spellbook-group" key={group.key}>
+            <h3>{group.label}</h3>
+            <div className="spellbook-list">
+              {group.spells.map(spell => {
+                const active = spellIsActive(spell, spellbook);
+                return (
+                  <button
+                    key={spell.id}
+                    className={`spell-card ${active ? '' : 'unprepared'}`}
+                    onClick={() => setDetailSpell(spell)}
+                    data-testid={`spell-${spell.name}`}
+                  >
+                    <strong>{spell.name}</strong>
+                    <span>{spell.school || 'Unknown school'} · {spell.castingTime || 'Casting time unknown'}</span>
+                    {!active && <small>Known, not prepared</small>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {detailSpell && <SpellDetailModal spell={detailSpell} onClose={() => setDetailSpell(null)} />}
+      {editing && (
+        <SpellbookEditorModal
+          character={character}
+          spellDatabase={spellDatabase}
+          spellbook={spellbook}
+          submitAction={submitAction}
+          onClose={() => setEditing(false)}
+        />
+      )}
+      {preparing && (
+        <PreparedSpellsModal
+          character={character}
+          spells={knownSpells}
+          spellbook={spellbook}
+          submitAction={submitAction}
+          onClose={() => setPreparing(false)}
+        />
+      )}
+    </section>
+  );
+}
+
+function SpellbookEditorModal({
+  character,
+  spellDatabase,
+  spellbook,
+  submitAction,
+  onClose
+}: {
+  character: Character;
+  spellDatabase: SpellDatabaseEntry[];
+  spellbook: CharacterSpellbook;
+  submitAction: Props['submitAction'];
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [selected, setSelected] = useState<SpellDatabaseEntry | null>(null);
+  const [preparesSpells, setPreparesSpells] = useState(spellbook.preparesSpells);
+  const [preparedNonEpicMax, setPreparedNonEpicMax] = useState(String(spellbook.preparedNonEpicMax || 0));
+  const [preparedEpicMax, setPreparedEpicMax] = useState(String(spellbook.preparedEpicMax || 0));
+  const knownSet = new Set(spellbook.knownSpellIds);
+  const available = spellDatabase.filter(spell => !knownSet.has(spell.id));
+  const firstMatch = matchingSpells(available, query)[0] || available[0] || null;
+  const spellToAdd = selected && available.includes(selected) ? selected : firstMatch;
+
+  async function saveSettings() {
+    await submitAction({
+      type: 'spellbook.settings.update',
+      payload: {
+        characterId: character.id,
+        preparesSpells,
+        preparedNonEpicMax: Number(preparedNonEpicMax) || 0,
+        preparedEpicMax: Number(preparedEpicMax) || 0
+      }
+    });
+  }
+
+  return (
+    <Modal>
+      <div className="modal-card sheet-editor-modal">
+        <div className="section-title-row">
+          <div>
+            <h2>Edit {character.name} Spell List</h2>
+            <p>Search the spell database and add known spells.</p>
+          </div>
+          <button className="btn" onClick={onClose}>Close</button>
+        </div>
+
+        <div className="stack compact-stack">
+          <SearchPicker
+            items={available}
+            query={query}
+            onQueryChange={setQuery}
+            selectedId={String(spellToAdd?.id || '')}
+            onSelect={setSelected}
+            placeholder="Search spells"
+            getId={spell => spell.id}
+            getLabel={spell => spell.name}
+            getMeta={spell => `${spell.levelLabel} · ${spell.school || 'Unknown school'}`}
+            getDescription={spell => `${spell.classes.join(', ')} · ${spell.source || ''}`.trim()}
+          />
+          <div className="button-row">
+            <button
+              className="btn success"
+              disabled={!spellToAdd}
+              onClick={() => spellToAdd && submitAction({ type: 'spellbook.known.add', payload: { characterId: character.id, spellId: spellToAdd.id } })}
+            >
+              Add selected spell
+            </button>
+          </div>
+
+          <div className="form-grid">
+            <label className="inline-check">
+              <input type="checkbox" checked={preparesSpells} onChange={event => setPreparesSpells(event.target.checked)} />
+              Prepares spells
+            </label>
+            <input value={preparedNonEpicMax} onChange={event => setPreparedNonEpicMax(event.target.value)} type="number" min={0} placeholder="Prepared non-epic max" />
+            <input value={preparedEpicMax} onChange={event => setPreparedEpicMax(event.target.value)} type="number" min={0} placeholder="Prepared epic max" />
+            <button className="btn success" onClick={saveSettings}>Save spellcasting settings</button>
+          </div>
+
+          <div className="spellbook-known-list">
+            {spellbook.knownSpellIds.length === 0 && <p className="empty">No known spells.</p>}
+            {spellbook.knownSpellIds.map(id => spellDatabase.find(spell => spell.id === id)).filter(Boolean).map(spell => (
+              <div className="spellbook-known-row" key={spell!.id}>
+                <div>
+                  <strong>{spell!.name}</strong>
+                  <span>{spell!.levelLabel} · {spell!.school || 'Unknown school'}</span>
+                </div>
+                <button className="btn danger small" onClick={() => submitAction({ type: 'spellbook.known.remove', payload: { characterId: character.id, spellId: spell!.id } })}>Remove</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function PreparedSpellsModal({
+  character,
+  spells,
+  spellbook,
+  submitAction,
+  onClose
+}: {
+  character: Character;
+  spells: SpellDatabaseEntry[];
+  spellbook: CharacterSpellbook;
+  submitAction: Props['submitAction'];
+  onClose: () => void;
+}) {
+  const [prepared, setPrepared] = useState<string[]>(spellbook.preparedSpellIds);
+
+  function toggle(spell: SpellDatabaseEntry, checked: boolean) {
+    setPrepared(current => checked ? [...new Set([...current, spell.id])] : current.filter(id => id !== spell.id));
+  }
+
+  const normalCount = prepared.filter(id => spells.find(spell => spell.id === id && isNormalPreparedSpell(spell))).length;
+  const epicCount = prepared.filter(id => spells.find(spell => spell.id === id && isEpicSpell(spell))).length;
+
+  return (
+    <Modal>
+      <div className="modal-card sheet-editor-modal">
+        <div className="section-title-row">
+          <div>
+            <h2>Prepared Spells</h2>
+            <p>Non-epic {normalCount}/{spellbook.preparedNonEpicMax} · Epic {epicCount}/{spellbook.preparedEpicMax}</p>
+          </div>
+          <button className="btn" onClick={onClose}>Close</button>
+        </div>
+
+        <div className="spellbook-groups">
+          {groupedSpells(spells.filter(spell => !isCantrip(spell))).map(group => (
+            <div className="spellbook-group" key={group.key}>
+              <h3>{group.label}</h3>
+              <div className="spellbook-prepare-list">
+                {group.spells.map(spell => {
+                  const checked = prepared.includes(spell.id);
+                  const limitedOut = !checked && ((isNormalPreparedSpell(spell) && normalCount >= spellbook.preparedNonEpicMax) || (isEpicSpell(spell) && epicCount >= spellbook.preparedEpicMax));
+                  return (
+                    <label className="inline-check spell-prepare-row" key={spell.id}>
+                      <input type="checkbox" checked={checked} disabled={limitedOut} onChange={event => toggle(spell, event.target.checked)} />
+                      <span>{spell.name}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="button-row rest-row">
+          <button className="btn success" onClick={() => submitAction({ type: 'spellbook.prepared.set', payload: { characterId: character.id, preparedSpellIds: prepared } }).then(onClose)}>Save prepared spells</button>
+          <button className="btn" onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function SpellDetailModal({ spell, onClose }: { spell: SpellDatabaseEntry; onClose: () => void }) {
+  return (
+    <Modal className="item-modal-backdrop">
+      <div className="modal-card item-modal-card">
+        <div className="section-title-row">
+          <div>
+            <h2>{spell.name}</h2>
+            <p>{spell.levelLabel} · {spell.school || 'Unknown school'} · {spell.source || 'Unknown source'}</p>
+          </div>
+          <button className="btn" onClick={onClose}>Close</button>
+        </div>
+        <div className="stats-grid">
+          <div className="stat"><span>Casting</span><strong>{spell.castingTime || '-'}</strong></div>
+          <div className="stat"><span>Range</span><strong>{spell.range || '-'}</strong></div>
+          <div className="stat"><span>Duration</span><strong>{spell.duration || '-'}</strong></div>
+          <div className="stat"><span>Components</span><strong>{spell.components || '-'}</strong></div>
+        </div>
+        <div className="item-detail-body">
+          <MarkdownRenderer text={spell.description} emptyLabel="No spell description." />
+          {spell.atHigherLevels && (
+            <>
+              <h3>At Higher Levels</h3>
+              <MarkdownRenderer text={spell.atHigherLevels} />
+            </>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function normalizedSpellbook(spellbook?: CharacterSpellbook): CharacterSpellbook {
+  return {
+    knownSpellIds: spellbook?.knownSpellIds || [],
+    preparedSpellIds: spellbook?.preparedSpellIds || [],
+    preparesSpells: Boolean(spellbook?.preparesSpells),
+    preparedNonEpicMax: spellbook?.preparedNonEpicMax || 0,
+    preparedEpicMax: spellbook?.preparedEpicMax || 0
+  };
+}
+
+function preparedSummary(spells: SpellDatabaseEntry[], spellbook: CharacterSpellbook) {
+  const normal = spellbook.preparedSpellIds.filter(id => spells.find(spell => spell.id === id && isNormalPreparedSpell(spell))).length;
+  const epic = spellbook.preparedSpellIds.filter(id => spells.find(spell => spell.id === id && isEpicSpell(spell))).length;
+  return `${normal}/${spellbook.preparedNonEpicMax} non-epic, ${epic}/${spellbook.preparedEpicMax} epic`;
+}
+
+function matchingSpells(spells: SpellDatabaseEntry[], query: string) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return spells;
+  return spells.filter(spell => Object.values(spell).join(' ').toLowerCase().includes(needle));
 }
 
 function HitDice({ character, submitAction }: { character: Character; submitAction: Props['submitAction'] }) {

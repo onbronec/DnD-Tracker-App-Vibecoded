@@ -170,17 +170,17 @@ h3 {
 
 .toolbelt {
   position: fixed;
-  left: 50%;
-  bottom: 16px;
+  left: 8px;
+  top: 120px;
   z-index: 30;
-  transform: translateX(-50%);
-  width: min(720px, calc(100vw - 32px));
+  width: 112px;
   pointer-events: none;
 }
 
 .toolbelt-inner {
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  justify-content: flex-start;
   gap: 10px;
   padding: 10px;
   border: 1px solid var(--border-strong);
@@ -195,15 +195,37 @@ h3 {
   border: 1px solid var(--border);
   border-radius: 8px;
   min-height: 42px;
-  padding: 10px 16px;
+  padding: 10px 12px;
   background: var(--primary-strong);
   color: #fff;
   cursor: pointer;
   font-weight: 800;
+  width: 100%;
+  text-align: left;
 }
 
-.toolbelt-btn.purple {
-  background: var(--purple);
+.toolbelt-btn.tool-party {
+  background: linear-gradient(135deg, #7c3aed, #a855f7);
+}
+
+.toolbelt-btn.tool-dice {
+  background: linear-gradient(135deg, #0ea5e9, #38bdf8);
+}
+
+.toolbelt-btn.tool-improv {
+  background: linear-gradient(135deg, #be123c, #f43f5e);
+}
+
+.toolbelt-btn.tool-stealth {
+  background: linear-gradient(135deg, #15803d, #22c55e);
+}
+
+.toolbelt-btn.tool-calendar {
+  background: linear-gradient(135deg, #b45309, #f59e0b);
+}
+
+.toolbelt-btn.tool-notes {
+  background: linear-gradient(135deg, #475569, #64748b);
 }
 
 .btn.success {
@@ -444,6 +466,7 @@ textarea {
 
 .effect-tag {
   position: relative;
+  z-index: 1;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: rgba(56, 189, 248, 0.18);
@@ -452,12 +475,16 @@ textarea {
   cursor: pointer;
 }
 
+.effect-tag:hover {
+  z-index: 140;
+}
+
 .effect-tag[data-tooltip]:hover::after {
   content: attr(data-tooltip);
   position: absolute;
   left: 0;
   bottom: calc(100% + 8px);
-  z-index: 30;
+  z-index: 160;
   width: min(320px, 80vw);
   white-space: normal;
   text-align: left;
@@ -598,6 +625,65 @@ textarea {
   width: 78px;
 }
 
+.tiny-input {
+  width: 58px;
+}
+
+.search-picker {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+}
+
+.search-results {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+  max-height: 280px;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.28);
+}
+
+.search-result {
+  display: grid;
+  gap: 4px;
+  min-height: 74px;
+  padding: 10px 12px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0f172a;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.search-result:hover,
+.search-result.selected {
+  border-color: var(--primary);
+  background: #111c31;
+}
+
+.search-result-meta {
+  color: var(--muted-strong);
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.search-result small {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.dice-effect-controls {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .hidden-input {
   display: none;
 }
@@ -623,6 +709,85 @@ textarea {
   border-radius: 8px;
   border: 1px solid var(--border);
   padding: 12px;
+}
+
+.spellbook-groups {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.spellbook-group {
+  display: grid;
+  gap: 10px;
+}
+
+.spellbook-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+}
+
+.spell-card {
+  display: grid;
+  gap: 5px;
+  min-height: 88px;
+  padding: 12px;
+  text-align: left;
+  color: var(--text);
+  background: #0f172a;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.spell-card:hover {
+  border-color: var(--primary);
+  background: #111c31;
+}
+
+.spell-card span,
+.spell-card small {
+  color: var(--muted);
+}
+
+.spell-card.unprepared {
+  opacity: 0.48;
+  filter: grayscale(0.45);
+}
+
+.spellbook-known-list,
+.spellbook-prepare-list {
+  display: grid;
+  gap: 8px;
+}
+
+.spellbook-known-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0f172a;
+}
+
+.spellbook-known-row div {
+  display: grid;
+  gap: 3px;
+}
+
+.spellbook-known-row span {
+  color: var(--muted);
+}
+
+.spell-prepare-row {
+  justify-content: flex-start;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0f172a;
 }
 
 .dot,
@@ -863,7 +1028,7 @@ textarea {
 .party-check-header,
 .party-check-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 96px 96px;
+  grid-template-columns: minmax(0, 1fr) 86px 150px 96px;
   gap: 12px;
   align-items: center;
   padding: 10px 12px;
@@ -890,6 +1055,20 @@ textarea {
   color: var(--primary);
   font-size: 1.2rem;
   text-align: right;
+}
+
+.inspiration-controls {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.inspiration-controls .inline-check {
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.7);
 }
 
 .dice-modal {
@@ -966,6 +1145,156 @@ textarea {
   color: var(--muted);
 }
 
+.tool-modal {
+  width: min(1040px, calc(100vw - 28px));
+  max-height: min(900px, calc(100vh - 32px));
+  overflow: auto;
+}
+
+.tool-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.tool-list-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(90px, auto) auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0f172a;
+}
+
+.tool-list-row > span,
+.tool-list-row strong span {
+  color: var(--muted);
+}
+
+.tool-list-row.passed {
+  border-color: rgba(34, 197, 94, 0.7);
+}
+
+.tool-list-row.failed {
+  border-color: rgba(239, 68, 68, 0.7);
+}
+
+.tool-note {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0f172a;
+}
+
+.stealth-summary {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(56, 189, 248, 0.12);
+  color: var(--muted-strong);
+  font-weight: 800;
+}
+
+.calendar-modal {
+  width: min(1720px, calc(100vw - 32px));
+  min-height: calc(100vh - 48px);
+}
+
+.calendar-modal.modal-card {
+  max-height: calc(100vh - 32px);
+}
+
+.calendar-layout {
+  display: grid;
+  grid-template-columns: minmax(560px, 1.2fr) minmax(440px, 0.8fr);
+  gap: 16px;
+  margin-top: 16px;
+  min-height: calc(100vh - 210px);
+}
+
+.calendar-board,
+.calendar-details {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0f172a;
+}
+
+.calendar-toolbar,
+.calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.calendar-toolbar strong {
+  text-align: center;
+  font-size: 1.1rem;
+}
+
+.calendar-weekdays {
+  grid-template-columns: repeat(7, 1fr);
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.calendar-weekdays span {
+  text-align: center;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.calendar-day {
+  min-height: clamp(84px, 10vh, 132px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #111827;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.calendar-day.empty {
+  opacity: 0.25;
+  cursor: default;
+}
+
+.calendar-day.current {
+  border-color: var(--warning);
+  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.45);
+}
+
+.calendar-day.selected {
+  border-color: var(--primary);
+  background: #122238;
+}
+
+.calendar-day b {
+  min-width: 22px;
+  border-radius: 999px;
+  padding: 2px 6px;
+  background: var(--purple);
+  color: white;
+  font-size: 0.75rem;
+}
+
 .toast {
   position: fixed;
   right: 20px;
@@ -981,7 +1310,7 @@ textarea {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 20;
+  z-index: 120;
   display: grid;
   place-items: center;
   padding: 20px;
@@ -1139,7 +1468,7 @@ textarea {
 }
 
 .item-modal-backdrop {
-  z-index: 80;
+  z-index: 140;
   padding: 24px;
 }
 
@@ -1300,22 +1629,37 @@ textarea {
 
   .party-check-header,
   .party-check-row {
-    grid-template-columns: minmax(0, 1fr) 76px 76px;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .party-check-row b,
+  .party-check-header span {
+    text-align: left;
   }
 
   .dice-form {
     grid-template-columns: 1fr;
   }
 
+  .calendar-layout {
+    grid-template-columns: 1fr;
+  }
+
   .toolbelt {
+    top: auto;
     bottom: 10px;
+    left: 10px;
+    width: calc(100vw - 20px);
   }
 
   .toolbelt-inner {
+    flex-direction: row;
     justify-content: stretch;
+    overflow-x: auto;
   }
 
   .toolbelt-btn {
+    min-width: 108px;
     flex: 1;
   }
 

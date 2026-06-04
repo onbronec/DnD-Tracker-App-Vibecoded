@@ -57,7 +57,7 @@ than mutating client state directly.
 - PC ability scores can go up to 30 and proficiency bonus can go up to 10.
 - Edit Sheet opens a modal for base ability scores and proficiencies. Temporary
   ability-score condition adjustments are intentionally not edited there.
-- Party Checks lives in the global bottom toolbelt, is DM-only, and compares
+- Party Checks lives in the global left toolbelt, is DM-only, and compares
   one save, ability check or skill check across all player characters in a
   concise table. Optional DC input shows success chance with natural 1 always
   failing and natural 20 always succeeding.
@@ -138,12 +138,28 @@ than mutating client state directly.
 
 - The React UI uses a tactical dark dashboard style: dark panels, subtle
   borders, dense information and semantic action colors.
-- The bottom toolbelt is a fixed, disconnected utility bar available on every
-  page. DM-only tools stay hidden from players; the dice roller is available to
-  both DM and players.
-- The dice roller accepts mixed expressions like `4d4+7d6+10`, keeps a local
-  log with individual die results, and supports advantage, disadvantage and
-  one-time reroll of natural 1s.
+- The toolbelt is a fixed, disconnected utility rail available on every page.
+  Buttons use distinct colors by tool. DM-only tools stay hidden from players;
+  the dice roller is available to both DM and players.
+- The dice roller accepts mixed expressions like `4d4+7d6+10`, stores the last
+  five rolls per connected actor in autosave, logs individual die results, and
+  supports advantage, disadvantage and one-time reroll of natural 1s.
+- DM toolbelt tools include Party Checks, Improv, Stealth Check, World Calendar
+  and Notepad. Calendar records and notepad notes are Markdown and autosaved.
+  The world calendar starts on Tuesday, December 23, year 502 after the event,
+  and maps year 502 to Gregorian 2025 so December 24 is Wednesday.
+- Party Checks use active combat player characters only. DC odds can include
+  Crow/Astria aura bonuses and normal, advantage or disadvantage roll math.
+  Crow aura uses Crow's Wisdom modifier; Astria aura uses Astria's Intelligence
+  modifier. Individual characters can receive d12 or d20 inspiration; ability
+  and skill inspiration rolls with advantage, saving throw inspiration does not.
+  Funyana adds half proficiency, rounded down, to ability and skill checks where
+  she is not proficient or expert.
+- Stealth Check stores the entered/rolled base check and applies Pass without
+  Trace dynamically, so toggling it recalculates success/failure immediately.
+- Notepad lists notes by date descending, latest first.
+- Short Rest All asks whether to advance the in-game calendar by one day. Long
+  Rest All asks for the new in-game date.
 - Secondary tools are collapsed by default. Related tools should use horizontal
   expandable menus, with only one open at a time.
 - Page header sections are sticky so character/page selection and primary

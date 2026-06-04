@@ -86,14 +86,18 @@ export function parseDiceExpression(expression: string): ParsedTerm[] {
   });
 }
 
-export function successChancePercent(dc: number, bonus: number) {
+export function successChancePercent(dc: number, bonus: number, mode: DiceRollMode = 'normal') {
   if (!Number.isFinite(dc)) return null;
   let successes = 0;
-  for (let roll = 1; roll <= 20; roll += 1) {
-    if (roll === 1) continue;
-    if (roll === 20 || roll + bonus >= dc) successes += 1;
+  const total = mode === 'normal' ? 20 : 400;
+  for (let first = 1; first <= 20; first += 1) {
+    for (let second = 1; second <= (mode === 'normal' ? 1 : 20); second += 1) {
+      const roll = mode === 'advantage' ? Math.max(first, second) : mode === 'disadvantage' ? Math.min(first, second) : first;
+      if (roll === 1) continue;
+      if (roll === 20 || roll + bonus >= dc) successes += 1;
+    }
   }
-  return Math.round((successes / 20) * 100);
+  return Math.round((successes / total) * 100);
 }
 
 function rollOneDie(sides: number, mode: DiceRollMode, rerollOnes: boolean, random: () => number): DiceDieResult {

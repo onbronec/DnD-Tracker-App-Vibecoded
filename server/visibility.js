@@ -23,7 +23,20 @@ function filterStateForClient(state, role) {
         magicItemDatabase: clone(state.magicItemDatabase || []),
         potionDatabase: clone(state.potionDatabase || []),
         conditionDatabase: clone(state.conditionDatabase || []),
+        spellDatabase: clone(state.spellDatabase || []),
         itemDatabase: [],
+        toolbelt: {
+            diceRolls: clone(state.toolbelt?.diceRolls || {}),
+            improvNames: [],
+            calendar: {
+                weekday: '',
+                day: 0,
+                month: '',
+                year: 0,
+                records: []
+            },
+            notes: []
+        },
         actionLog: filterHistoryForPlayer(state.actionLog),
         redoStacks: {},
         nextSequence: state.nextSequence

@@ -3,6 +3,7 @@ import type { Character, ClientRole, GameAction, GameState } from '../shared/typ
 import { CollapsiblePanelGroup } from '../components/CollapsiblePanel';
 import { MarkdownEditor, MarkdownRenderer } from '../components/Markdown';
 import { Modal } from '../components/Modal';
+import { SearchPicker } from '../components/SearchPicker';
 
 interface Props {
   state: GameState;
@@ -177,14 +178,14 @@ function AddItemForm({
   const [name, setName] = useState('');
   const [quantity, setQuantity] = useState('1');
   const [description, setDescription] = useState('');
-  const [databaseItemId, setDatabaseItemId] = useState('');
+  const [databaseItem, setDatabaseItem] = useState<Record<string, unknown> | null>(null);
   const [databaseSearch, setDatabaseSearch] = useState('');
   const databaseItems = kind === 'potion'
     ? potionDatabase
     : kind === 'magic'
       ? magicItemDatabase
       : [];
-  const filteredDatabaseItems = databaseItems.filter(item => Object.values(item).join(' ').toLowerCase().includes(databaseSearch.toLowerCase()));
+  const matchingDatabaseItems = matchingItems(databaseItems, databaseSearch);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -215,15 +216,23 @@ function AddItemForm({
         <button className="btn success">Add custom item</button>
       </form>
       {databaseItems.length > 0 && (
-        <div className="form-grid">
-          <input value={databaseSearch} onChange={event => setDatabaseSearch(event.target.value)} placeholder={`Search ${kind === 'potion' ? 'potions' : 'magic items'}`} />
-          <select value={databaseItemId || String(filteredDatabaseItems[0]?.id || '')} onChange={event => setDatabaseItemId(event.target.value)}>
-            {filteredDatabaseItems.map(item => <option key={String(item.id)} value={String(item.id)}>{String(item.name || 'Item')}</option>)}
-          </select>
+        <div className="stack compact-stack">
+          <SearchPicker
+            items={databaseItems}
+            query={databaseSearch}
+            onQueryChange={setDatabaseSearch}
+            selectedId={String((databaseItem || databaseItems[0])?.id || '')}
+            onSelect={setDatabaseItem}
+            placeholder={`Search ${kind === 'potion' ? 'potions' : 'magic items'}`}
+            getId={item => String(item.id)}
+            getLabel={item => String(item.name || 'Item')}
+            getMeta={item => kind === 'potion' ? String(item.rarity || 'Potion') : `${item.itemType || 'Magic item'} · ${item.rarity || 'Unknown rarity'}`}
+            getDescription={item => String(item.description || item.effect || '').slice(0, 140)}
+          />
           <button
             className="btn purple"
             onClick={() => {
-              const item = filteredDatabaseItems.find(entry => String(entry.id) === String(databaseItemId)) || filteredDatabaseItems[0];
+              const item = databaseItem && matchingDatabaseItems.includes(databaseItem) ? databaseItem : matchingDatabaseItems[0] || databaseItems[0];
               if (!item) return;
               const itemType = kind === 'potion' ? 'potion' : 'magic';
               submitAction({
@@ -430,4 +439,10 @@ function itemDescription(item: any) {
 
 function plainPreview(text: string) {
   return text.replace(/[#*_`[\]()]/g, '').replace(/\s+/g, ' ').trim().slice(0, 120);
+}
+
+function matchingItems<T extends Record<string, unknown>>(items: T[], query: string) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return items;
+  return items.filter(item => Object.values(item).join(' ').toLowerCase().includes(needle));
 }

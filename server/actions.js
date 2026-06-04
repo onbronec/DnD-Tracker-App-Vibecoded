@@ -5,8 +5,11 @@ const {
     normalizeMagicItem,
     normalizeMonsterDbItem,
     normalizePotion,
+    normalizeSpell,
+    normalizeSpellbook,
     seedConditions
 } = require('./migrations');
+const { importSpellsFromDataFolder } = require('./spellImport');
 const { clone, clamp, makeId, toNumber } = require('./utils');
 
 const LOG_LIMIT = 500;
@@ -49,10 +52,11 @@ function findCharacterIndex(state, id) {
 }
 
 function pageForAction(type) {
+    if (type.startsWith('toolbelt.')) return 'toolbelt';
     if (type === 'character.activateInCombat' || type === 'character.deactivateFromCombat' || type === 'character.deleteSavedPlayer') return 'databases';
     if (type.startsWith('combat.') || type.startsWith('character.') || type.startsWith('effect.')) return 'combat';
     if (type.startsWith('inventory.')) return 'inventory';
-    if (type.startsWith('spell.')) return 'spells';
+    if (type.startsWith('spell.') || type.startsWith('spellbook.')) return 'spells';
     if (type.startsWith('monster.')) return 'monsters';
     if (type.startsWith('database.')) return 'databases';
     return 'combat';
@@ -83,7 +87,8 @@ function snapshotPage(state, page) {
                 abilityScores: clone(c.abilityScores),
                 savingThrowProficiencies: clone(c.savingThrowProficiencies),
                 skillProficiencies: clone(c.skillProficiencies),
-                skillExpertise: clone(c.skillExpertise)
+                skillExpertise: clone(c.skillExpertise),
+                spellbook: clone(c.spellbook)
             }))
         };
     }
@@ -103,8 +108,14 @@ function snapshotPage(state, page) {
             magicItemDatabase: clone(state.magicItemDatabase || []),
             potionDatabase: clone(state.potionDatabase || []),
             conditionDatabase: clone(state.conditionDatabase || []),
+            spellDatabase: clone(state.spellDatabase || []),
             itemDatabase: clone(state.itemDatabase || []),
             playerCharacters: clone(state.characters.filter(character => character.type === 'player'))
+        };
+    }
+    if (page === 'toolbelt') {
+        return {
+            toolbelt: clone(ensureToolbelt(state))
         };
     }
     return clone(state);
@@ -121,9 +132,14 @@ function restorePage(state, page, snapshot) {
         state.magicItemDatabase = clone(snapshot.magicItemDatabase || []);
         state.potionDatabase = clone(snapshot.potionDatabase || []);
         state.conditionDatabase = clone(snapshot.conditionDatabase || []);
+        state.spellDatabase = clone(snapshot.spellDatabase || []);
         state.itemDatabase = clone(snapshot.itemDatabase || []);
         const monsters = state.characters.filter(character => character.type === 'monster');
         state.characters = [...monsters, ...clone(snapshot.playerCharacters || [])];
+        return;
+    }
+    if (page === 'toolbelt') {
+        state.toolbelt = clone(snapshot.toolbelt || ensureToolbelt(state));
         return;
     }
 
@@ -145,6 +161,7 @@ function restorePage(state, page, snapshot) {
             character.savingThrowProficiencies = clone(saved.savingThrowProficiencies || []);
             character.skillProficiencies = clone(saved.skillProficiencies || []);
             character.skillExpertise = clone(saved.skillExpertise || []);
+            character.spellbook = clone(saved.spellbook || normalizeSpellbook({}));
         }
         if (page === 'monsters') {
             character.monsterAbilities = clone(saved.monsterAbilities);
@@ -201,12 +218,103 @@ function ensureSpellShape(character) {
     if (!Array.isArray(character.skillProficiencies)) character.skillProficiencies = [];
     if (!Array.isArray(character.skillExpertise)) character.skillExpertise = [];
     character.proficiencyBonus = clamp(toNumber(character.proficiencyBonus, 2), 0, 10);
+    character.spellbook = normalizeSpellbook(character.spellbook);
 }
 
-function applyActionMutation(state, action) {
+function ensureToolbelt(state) {
+    if (!state.toolbelt || typeof state.toolbelt !== 'object') state.toolbelt = {};
+    if (!state.toolbelt.diceRolls || typeof state.toolbelt.diceRolls !== 'object') state.toolbelt.diceRolls = {};
+    if (!Array.isArray(state.toolbelt.improvNames)) state.toolbelt.improvNames = [];
+    if (!state.toolbelt.calendar || typeof state.toolbelt.calendar !== 'object') {
+        state.toolbelt.calendar = { weekday: 'Tuesday', day: 23, month: 'December', year: 502, records: [] };
+    }
+    if (!Array.isArray(state.toolbelt.calendar.records)) state.toolbelt.calendar.records = [];
+    if (!Array.isArray(state.toolbelt.notes)) state.toolbelt.notes = [];
+    return state.toolbelt;
+}
+
+function applyActionMutation(state, action, client = { id: 'system', role: 'player' }) {
     const payload = action.payload || {};
 
     switch (action.type) {
+        case 'toolbelt.dice.add': {
+            const toolbelt = ensureToolbelt(state);
+            const key = String(client.id || payload.actorId || 'player');
+            const entry = {
+                id: makeId('dice'),
+                actorId: key,
+                actorName: client.role === 'dm' ? 'DM' : 'Player',
+                expression: String(payload.expression || payload.result?.normalized || ''),
+                total: toNumber(payload.total ?? payload.result?.total, 0),
+                detail: String(payload.detail || ''),
+                mode: String(payload.mode || 'normal'),
+                rerollOnes: Boolean(payload.rerollOnes),
+                timestamp: new Date().toISOString()
+            };
+            toolbelt.diceRolls[key] = [entry, ...(toolbelt.diceRolls[key] || [])].slice(0, 5);
+            return `${entry.actorName}: dice ${entry.expression} = ${entry.total}`;
+        }
+        case 'toolbelt.improv.add': {
+            const toolbelt = ensureToolbelt(state);
+            const name = String(payload.name || '').trim();
+            if (!name) throw new Error('Jmeno chybi.');
+            toolbelt.improvNames = [{ id: makeId('improv'), name, timestamp: new Date().toISOString() }, ...toolbelt.improvNames].slice(0, 5);
+            return `Improv character: ${name}`;
+        }
+        case 'toolbelt.calendar.setDate': {
+            const calendar = ensureToolbelt(state).calendar;
+            calendar.weekday = String(payload.weekday || calendar.weekday || 'Tuesday');
+            calendar.day = Math.max(1, toNumber(payload.day, calendar.day || 23));
+            calendar.month = String(payload.month || calendar.month || 'December');
+            calendar.year = toNumber(payload.year, calendar.year || 502);
+            syncCalendarWeekday(calendar);
+            return `Calendar: ${calendar.weekday} ${calendar.day} ${calendar.month} ${calendar.year}`;
+        }
+        case 'toolbelt.calendar.advanceDays': {
+            const calendar = ensureToolbelt(state).calendar;
+            advanceCalendar(calendar, Math.max(1, toNumber(payload.days, 1)));
+            return `Calendar advanced to ${calendar.weekday} ${calendar.day} ${calendar.month} ${calendar.year}`;
+        }
+        case 'toolbelt.calendar.record.add':
+        case 'toolbelt.calendar.record.upsert': {
+            const calendar = ensureToolbelt(state).calendar;
+            const text = String(payload.text || '').trim();
+            if (!text) throw new Error('Zaznam chybi.');
+            const record = {
+                id: String(payload.id || makeId('cal')),
+                dateKey: String(payload.dateKey || calendarDateKey(calendar)),
+                text,
+                timestamp: new Date().toISOString()
+            };
+            const index = calendar.records.findIndex(item => item.id === record.id);
+            if (index >= 0) calendar.records[index] = record;
+            else calendar.records.unshift(record);
+            return 'Calendar record added';
+        }
+        case 'toolbelt.calendar.record.remove': {
+            const calendar = ensureToolbelt(state).calendar;
+            calendar.records = calendar.records.filter(record => record.id !== payload.id);
+            return 'Calendar record removed';
+        }
+        case 'toolbelt.note.upsert': {
+            const toolbelt = ensureToolbelt(state);
+            const note = {
+                id: String(payload.id || makeId('note')),
+                date: String(payload.date || new Date().toISOString().slice(0, 10)),
+                title: String(payload.title || 'Note'),
+                text: String(payload.text || ''),
+                timestamp: new Date().toISOString()
+            };
+            const index = toolbelt.notes.findIndex(item => item.id === note.id);
+            if (index >= 0) toolbelt.notes[index] = note;
+            else toolbelt.notes.unshift(note);
+            return `Note: ${note.title}`;
+        }
+        case 'toolbelt.note.remove': {
+            const toolbelt = ensureToolbelt(state);
+            toolbelt.notes = toolbelt.notes.filter(note => note.id !== payload.id);
+            return 'Note removed';
+        }
         case 'character.add': {
             const character = normalizeCharacter({
                 id: makeId(payload.type === 'monster' ? 'monster' : 'player'),
@@ -289,6 +397,9 @@ function applyActionMutation(state, action) {
             const effect = { name, level: payload.level ?? null };
             if (payload.ability) effect.ability = payload.ability;
             if (payload.value !== undefined && payload.value !== null) effect.value = toNumber(payload.value, 0);
+            if (payload.diceCount !== undefined && payload.diceCount !== null) effect.diceCount = Math.max(0, toNumber(payload.diceCount, 0));
+            if (payload.diceSides !== undefined && payload.diceSides !== null) effect.diceSides = Math.max(0, toNumber(payload.diceSides, 0));
+            if (payload.damageType !== undefined && payload.damageType !== null) effect.damageType = String(payload.damageType || '');
             character.effects.push(effect);
             return `${character.name}: efekt ${name}`;
         }
@@ -311,6 +422,19 @@ function applyActionMutation(state, action) {
             const level = clamp(toNumber(payload.level, current.level || 1), 1, toNumber(payload.maxLevel, 20));
             character.effects[index] = { ...current, level };
             return `${character.name}: ${current.name} level ${level}`;
+        }
+        case 'effect.dice.set': {
+            const character = findCharacter(state, payload.characterId);
+            if (!character) throw new Error('Postava neexistuje.');
+            const index = Number(payload.index);
+            const effect = character.effects?.[index];
+            if (!effect) throw new Error('Efekt neexistuje.');
+            const current = typeof effect === 'string' ? { name: effect, level: null } : effect;
+            const diceCount = Math.max(0, toNumber(payload.diceCount, current.diceCount || 0));
+            const diceSides = Math.max(0, toNumber(payload.diceSides, current.diceSides || 0));
+            const damageType = String(payload.damageType ?? current.damageType ?? '');
+            character.effects[index] = { ...current, diceCount, diceSides, damageType };
+            return `${character.name}: ${current.name} ${diceCount}d${diceSides}${damageType ? ` ${damageType}` : ''}`;
         }
         case 'combat.start':
             startCombat(state);
@@ -495,6 +619,50 @@ function applyActionMutation(state, action) {
             state.characters.filter(character => character.type === 'player').forEach(character => applyRest(character, restType));
             return `${restType === 'long' ? 'Long' : 'Short'} Rest All`;
         }
+        case 'spellbook.known.add': {
+            const character = findCharacter(state, payload.characterId);
+            if (!character || character.type !== 'player') throw new Error('Hrac neexistuje.');
+            ensureSpellShape(character);
+            const spellId = String(payload.spellId || '');
+            if (!spellExists(state, spellId)) throw new Error('Kouzlo neexistuje.');
+            if (!character.spellbook.knownSpellIds.includes(spellId)) character.spellbook.knownSpellIds.push(spellId);
+            return `${character.name}: learned spell ${spellName(state, spellId)}`;
+        }
+        case 'spellbook.known.remove': {
+            const character = findCharacter(state, payload.characterId);
+            if (!character || character.type !== 'player') throw new Error('Hrac neexistuje.');
+            ensureSpellShape(character);
+            const spellId = String(payload.spellId || '');
+            character.spellbook = {
+                ...character.spellbook,
+                knownSpellIds: character.spellbook.knownSpellIds.filter(id => id !== spellId),
+                preparedSpellIds: character.spellbook.preparedSpellIds.filter(id => id !== spellId)
+            };
+            return `${character.name}: removed spell ${spellName(state, spellId)}`;
+        }
+        case 'spellbook.settings.update': {
+            const character = findCharacter(state, payload.characterId);
+            if (!character || character.type !== 'player') throw new Error('Hrac neexistuje.');
+            ensureSpellShape(character);
+            character.spellbook.preparesSpells = Boolean(payload.preparesSpells);
+            character.spellbook.preparedNonEpicMax = Math.max(0, toNumber(payload.preparedNonEpicMax, character.spellbook.preparedNonEpicMax));
+            character.spellbook.preparedEpicMax = Math.max(0, toNumber(payload.preparedEpicMax, character.spellbook.preparedEpicMax));
+            character.spellbook = {
+                ...character.spellbook,
+                preparedSpellIds: validatePreparedSpellIds(state, character, character.spellbook.preparedSpellIds)
+            };
+            return `${character.name}: spellbook settings`;
+        }
+        case 'spellbook.prepared.set': {
+            const character = findCharacter(state, payload.characterId);
+            if (!character || character.type !== 'player') throw new Error('Hrac neexistuje.');
+            ensureSpellShape(character);
+            character.spellbook = {
+                ...character.spellbook,
+                preparedSpellIds: validatePreparedSpellIds(state, character, payload.preparedSpellIds)
+            };
+            return `${character.name}: prepared spells`;
+        }
         case 'monster.abilities.update': {
             const character = findCharacter(state, payload.characterId);
             if (!character || character.type !== 'monster') throw new Error('Monstrum neexistuje.');
@@ -552,12 +720,41 @@ function applyActionMutation(state, action) {
             state.conditionDatabase = seedConditions(normalizeImport(payload.items || payload.conditions));
             return `Databaze conditions: import ${state.conditionDatabase.length}`;
         }
+        case 'database.spell.upsert': {
+            const item = normalizeSpell(payload.spell || payload.item || {});
+            upsertSpellDatabaseItem(state, item);
+            return `Databaze spellu: ${item.name}`;
+        }
+        case 'database.spell.remove': {
+            const id = String(payload.id || '');
+            state.spellDatabase = (state.spellDatabase || []).filter(item => item.id !== id);
+            state.characters.forEach(character => {
+                if (character.type !== 'player') return;
+                ensureSpellShape(character);
+                character.spellbook = {
+                    ...character.spellbook,
+                    knownSpellIds: character.spellbook.knownSpellIds.filter(spellId => spellId !== id),
+                    preparedSpellIds: character.spellbook.preparedSpellIds.filter(spellId => spellId !== id)
+                };
+            });
+            return 'Databaze spellu: odstraneno';
+        }
+        case 'database.spell.import': {
+            normalizeImport(payload.items || payload.spells).map(normalizeSpell).forEach(spell => upsertSpellDatabaseItem(state, spell));
+            return `Databaze spellu: import ${state.spellDatabase.length}`;
+        }
+        case 'database.spell.importFromDataFolder': {
+            const spells = importSpellsFromDataFolder(process.cwd());
+            spells.forEach(spell => upsertSpellDatabaseItem(state, spell));
+            return `Databaze spellu: import z data/Spells ${spells.length}`;
+        }
         case 'database.importAll': {
             const data = payload.data || payload;
             if (Array.isArray(data.monsterDatabase)) state.monsterDatabase = data.monsterDatabase.map(normalizeMonsterDbItem);
             if (Array.isArray(data.magicItemDatabase)) state.magicItemDatabase = data.magicItemDatabase.map(normalizeMagicItem);
             if (Array.isArray(data.potionDatabase)) state.potionDatabase = data.potionDatabase.map(normalizePotion);
             if (Array.isArray(data.conditionDatabase)) state.conditionDatabase = seedConditions(data.conditionDatabase);
+            if (Array.isArray(data.spellDatabase)) state.spellDatabase = data.spellDatabase.map(normalizeSpell);
             if (Array.isArray(data.playerCharacters)) {
                 const monsters = state.characters.filter(character => character.type === 'monster');
                 state.characters = [...monsters, ...data.playerCharacters.map(normalizeCharacter).filter(character => character.type === 'player')];
@@ -807,6 +1004,36 @@ function applyRest(character, restType) {
     }
 }
 
+const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const GREGORIAN_YEAR_OFFSET = 1523;
+
+function advanceCalendar(calendar, days) {
+    const date = toGregorianDate(calendar);
+    date.setDate(date.getDate() + days);
+    fromGregorianDate(calendar, date);
+}
+
+function syncCalendarWeekday(calendar) {
+    fromGregorianDate(calendar, toGregorianDate(calendar));
+}
+
+function toGregorianDate(calendar) {
+    const monthIndex = Math.max(0, MONTHS.indexOf(calendar.month));
+    return new Date(toNumber(calendar.year, 502) + GREGORIAN_YEAR_OFFSET, monthIndex, Math.max(1, toNumber(calendar.day, 1)));
+}
+
+function fromGregorianDate(calendar, date) {
+    calendar.weekday = WEEKDAYS[(date.getDay() + 6) % 7];
+    calendar.day = date.getDate();
+    calendar.month = MONTHS[date.getMonth()];
+    calendar.year = date.getFullYear() - GREGORIAN_YEAR_OFFSET;
+}
+
+function calendarDateKey(calendar) {
+    return `${calendar.year}-${calendar.month}-${calendar.day}`;
+}
+
 function transferInventoryItem(state, payload) {
     const source = findCharacter(state, payload.sourceCharacterId);
     const target = findCharacter(state, payload.targetCharacterId);
@@ -826,6 +1053,61 @@ function upsertDatabaseItem(collection, item, prefix) {
     const index = collection.findIndex(entry => entry.id === id);
     if (index === -1) collection.push(next);
     else collection[index] = next;
+}
+
+function upsertSpellDatabaseItem(state, item) {
+    if (!Array.isArray(state.spellDatabase)) state.spellDatabase = [];
+    const next = normalizeSpell(item);
+    const index = state.spellDatabase.findIndex(entry => {
+        if (next.importKey && entry.importKey) return entry.importKey === next.importKey;
+        return entry.id === next.id;
+    });
+    if (index === -1) state.spellDatabase.push(next);
+    else state.spellDatabase[index] = { ...next, id: state.spellDatabase[index].id };
+}
+
+function spellExists(state, spellId) {
+    return (state.spellDatabase || []).some(spell => spell.id === spellId);
+}
+
+function spellName(state, spellId) {
+    return (state.spellDatabase || []).find(spell => spell.id === spellId)?.name || spellId || 'spell';
+}
+
+function validatePreparedSpellIds(state, character, ids) {
+    ensureSpellShape(character);
+    const known = new Set(character.spellbook.knownSpellIds);
+    const spellsById = new Map((state.spellDatabase || []).map(spell => [spell.id, spell]));
+    const result = [];
+    let normalCount = 0;
+    let epicCount = 0;
+    [...new Set(Array.isArray(ids) ? ids.map(String) : [])].forEach(id => {
+        const spell = spellsById.get(id);
+        if (!known.has(id) || !spell || spell.levelKey === 'cantrip') return;
+        if (isNormalSpellLevel(spell.levelKey)) {
+            if (normalCount >= character.spellbook.preparedNonEpicMax) return;
+            normalCount += 1;
+            result.push(id);
+            return;
+        }
+        if (isEpicSpellLevel(spell.levelKey)) {
+            if (epicCount >= character.spellbook.preparedEpicMax) return;
+            epicCount += 1;
+            result.push(id);
+            return;
+        }
+        result.push(id);
+    });
+    return result;
+}
+
+function isNormalSpellLevel(levelKey) {
+    const level = Number(levelKey);
+    return Number.isInteger(level) && level >= 1 && level <= 9;
+}
+
+function isEpicSpellLevel(levelKey) {
+    return /^epic[1-3]$/.test(String(levelKey || ''));
 }
 
 function normalizeImport(items) {
@@ -850,9 +1132,9 @@ function updateSpellSlotsForLevel(character) {
 function applyGameAction(state, action, client) {
     const page = action.page || pageForAction(action.type);
     const before = snapshotPage(state, page);
-    const label = applyActionMutation(state, action);
+    const label = applyActionMutation(state, action, client);
     const after = snapshotPage(state, page);
-    const visibility = action.type.startsWith('monster.') || action.type.startsWith('database.monster') || action.type === 'database.importAll' || action.type === 'character.deleteSavedPlayer'
+    const visibility = action.type.startsWith('monster.') || action.type.startsWith('database.monster') || action.type === 'database.importAll' || action.type === 'character.deleteSavedPlayer' || (action.type.startsWith('toolbelt.') && action.type !== 'toolbelt.dice.add')
         ? 'dm'
         : 'all';
     const entry = addLogEntry(state, action, client, page, label, before, after, true, visibility);

@@ -1,11 +1,14 @@
 export type ClientRole = 'dm' | 'player';
-export type PageScope = 'combat' | 'spells' | 'monsters' | 'inventory' | 'databases';
+export type PageScope = 'combat' | 'spells' | 'monsters' | 'inventory' | 'databases' | 'toolbelt';
 
 export interface Effect {
   name: string;
   level?: number | null;
   ability?: AbilityKey | null;
   value?: number | null;
+  diceCount?: number | null;
+  diceSides?: number | null;
+  damageType?: string | null;
 }
 
 export type AbilityKey = 'strength' | 'dexterity' | 'constitution' | 'intelligence' | 'wisdom' | 'charisma';
@@ -55,6 +58,35 @@ export interface Character {
   skillProficiencies: string[];
   skillExpertise: string[];
   inventory: Inventory;
+  spellbook: CharacterSpellbook;
+}
+
+export interface CharacterSpellbook {
+  knownSpellIds: string[];
+  preparedSpellIds: string[];
+  preparesSpells: boolean;
+  preparedNonEpicMax: number;
+  preparedEpicMax: number;
+}
+
+export interface SpellDatabaseEntry {
+  id: string;
+  name: string;
+  levelKey: string;
+  levelLabel: string;
+  classes: string[];
+  school: string;
+  castingTime: string;
+  range: string;
+  components: string;
+  duration: string;
+  ritual: boolean;
+  source: string;
+  page: string;
+  description: string;
+  atHigherLevels: string;
+  tags: string[];
+  importKey?: string;
 }
 
 export interface CustomFeature {
@@ -112,14 +144,64 @@ export interface GameState {
   magicItemDatabase: Array<Record<string, unknown>>;
   potionDatabase: Array<Record<string, unknown>>;
   conditionDatabase: Array<Record<string, unknown>>;
+  spellDatabase: SpellDatabaseEntry[];
   itemDatabase: Array<Record<string, unknown>>;
   actionLog: ActionLogEntry[];
   redoStacks: Record<string, string[]>;
   nextSequence: number;
+  toolbelt: ToolbeltState;
 }
 
 export interface GameAction<TPayload = Record<string, unknown>> {
   type: string;
   page?: PageScope;
   payload?: TPayload;
+}
+
+export interface ToolbeltState {
+  diceRolls: Record<string, DiceHistoryEntry[]>;
+  improvNames: ImprovNameEntry[];
+  calendar: WorldCalendarState;
+  notes: ToolbeltNote[];
+}
+
+export interface DiceHistoryEntry {
+  id: string;
+  actorId: string;
+  actorName: string;
+  expression: string;
+  total: number;
+  detail: string;
+  mode: string;
+  rerollOnes: boolean;
+  timestamp: string;
+}
+
+export interface ImprovNameEntry {
+  id: string;
+  name: string;
+  timestamp: string;
+}
+
+export interface WorldCalendarState {
+  weekday: string;
+  day: number;
+  month: string;
+  year: number;
+  records: CalendarRecord[];
+}
+
+export interface CalendarRecord {
+  id: string;
+  dateKey: string;
+  text: string;
+  timestamp: string;
+}
+
+export interface ToolbeltNote {
+  id: string;
+  date: string;
+  title: string;
+  text: string;
+  timestamp: string;
 }

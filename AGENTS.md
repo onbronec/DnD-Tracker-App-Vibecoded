@@ -71,12 +71,18 @@ u stolu, citelnost pri session a spolehlivost dat pred "enterprise" slozitosti.
 - Soucasna paleta je tactical dark: tmave pozadi, tmave panely, jemne bordery,
   modra/cyan pro navigaci, zelena pro pozitivni akce, cervena pro destruktivni,
   zluta/oranzova pro tah/iniciativu, fialova pro specialni moduly.
-- Globalni bottom toolbelt je fixed/disconnected bar dostupny na kazde page.
+- Globalni toolbelt je fixed/disconnected levy rail dostupny na kazde page.
   Hrace vidi jen player-safe nastroje, DM-only veci schovej. Dice roller je
-  dostupny DM i playerum.
-- Dice roller umi vyrazy typu `4d4+7d6+10`, lokalni log jednotlivych kostek,
-  advantage/disadvantage a jednorazovy reroll prirozenych 1. Advantage/disadvantage
-  v generic rolleru aplikuj konzistentne na kazdou kostku.
+  dostupny DM i playerum. Toolbelt buttons maji byt vizualne rozlisene podle
+  nastroje, ne samey.
+- Dice roller umi vyrazy typu `4d4+7d6+10`, log jednotlivych kostek,
+  advantage/disadvantage a jednorazovy reroll prirozenych 1. Poslednich 5 hodu
+  per connected actor ukladej do autosave v `state.toolbelt.diceRolls`.
+  Advantage/disadvantage v generic rolleru aplikuj konzistentne na kazdou kostku.
+- DM toolbelt obsahuje Party Checks, Improv, Stealth, World Calendar a Notepad.
+  Calendar records a notepad notes jsou Markdown a patri do autosave. World
+  Calendar je earth-like grid calendar; rok 502 after event mapuj na Gregorian
+  2025, aby 23. prosinec byl Tuesday a 24. prosinec Wednesday.
 - Primarni pracovni obsah nech otevreny. Sekundarni setup/import/add/edit
   ovladani schovavej do expand/collapse UI. Pokud je vic souvisejicich panelu
   vedle sebe, pouzij horizontalni `CollapsiblePanelGroup` a nech otevreny max
@@ -86,6 +92,16 @@ u stolu, citelnost pri session a spolehlivost dat pred "enterprise" slozitosti.
   damage/heal.
 - Page scope `spells` je v UI pojmenovany Character Sheets. Zustava jako
   `spells` kvuli socket/history kompatibilite.
+- Spell database je sesta databaze ve state (`spellDatabase`, schema v4).
+  DM ji muze editovat/importovat, players ji vidi a mohou z ni pridavat known
+  spells do player character spellbooku. Manual import z lokalniho exportu jde
+  pres `database.spell.importFromDataFolder`, cte newest nested ZIP/CSV z
+  `data/Spells` a `data/` patri do `.gitignore`.
+- Character spellbook (`character.spellbook`) drzi `knownSpellIds`,
+  `preparedSpellIds`, `preparesSpells`, `preparedNonEpicMax`,
+  `preparedEpicMax`. Cantripy jsou vzdy aktivni, levely 1-9 pocitej do
+  non-epic prepared limitu, Epic 1-3 do epic limitu, special sekce maji
+  vlastni prepared toggle bez limitu.
 - Character sheet fields: `abilityScores`, `proficiencyBonus`,
   `savingThrowProficiencies`, `skillProficiencies`, `skillExpertise`. Dodrzuj
   5e ability/skill seznamy; PC scores mohou byt do 30 a proficiency bonus do
@@ -93,10 +109,20 @@ u stolu, citelnost pri session a spolehlivost dat pred "enterprise" slozitosti.
 - Character Sheets maji levy dynamicky index obsahovych sekci. Udrzuj `id`
   anchor sekce a aktivni stav podle scrollu, ale frozen top Character header
   do indexu nedavej.
-- DM Party Checks patri do globalniho bottom toolbeltu. Ma porovnavat jeden
+- DM Party Checks patri do globalniho leveho toolbeltu. Ma porovnavat jeden
   save/check/skill napric vsemi player characters, ne ukazovat jen detail
-  vybrane postavy. DC pole ukazuje sanci na uspech; natural 1 vzdy fail,
-  natural 20 vzdy success.
+  vybrane postavy. Pouzivej jen aktivni player combatants. DC pole ukazuje
+  sanci na uspech; natural 1 vzdy fail, natural 20 vzdy success. Zachovej
+  Crow/Astria aura checkboxy a normal/advantage/disadvantage vypocet sanci.
+  Crow aura pouziva Wisdom modifier, Astria aura Intelligence modifier.
+  Inspiration je per-character d12/d20; u ability/skill checks se inspiration
+  die roluje s advantage, u saves ne. Funyana dostava half proficiency rounded
+  down na ability/skill checks, kde neni proficient ani expert.
+- Stealth tool uklada/zobrazuje base check bez globalniho Pass without Trace;
+  Pass without Trace +10 aplikuj dynamicky pri vyhodnoceni, aby toggle hned
+  zmenil success/failure.
+- Notepad rad podle note date descending, newest first; timestamp pouzij jako
+  tie-breaker.
 - Prvni/header sekce kazde page ma mit `page-sticky-section`, aby zustala
   dostupna pri scrollovani. Plati i pro normalni Inventory header se selectem
   postavy.
@@ -104,6 +130,15 @@ u stolu, citelnost pri session a spolehlivost dat pred "enterprise" slozitosti.
   vypocet sheetu pres effects, ale base hodnoty v editoru se nemeni.
 - Conditions se vizualne lisi podle `kind`: buff/debuff/neutral. V combat
   trackeru maji zobrazit ulozeny popis pri hoveru.
+- Klik na jednoduchou condition ji rovnou odstrani. Management modal otevirat
+  jen pro conditions s levely, ability-score vazbou nebo dice/damage metadaty.
+- Dice/damage conditions pouzivaji effect pole `diceCount`, `diceSides` a
+  `damageType`; condition database muze mit defaulty `defaultDiceCount`,
+  `defaultDiceSides`, `defaultDamageType`. Text ma vypadat napr.
+  `Burning 2d4 fire`.
+- Search UI pro conditions, monster databazi a inventory databaze ma byt
+  dynamicky result-list/card picker (`SearchPicker`), ne dvojice text input +
+  resetujici se `select`.
 - Inventory radky maji byt kompaktni souhrny bez opakovanych kategorickych
   labelu typu Potion/Scroll/General note; sekce uz kategorii ukazuje.
   Remove/transfer/attune ovladani patri do item detail modalu, ne stale na

@@ -21,6 +21,8 @@ const DEFAULT_CONDITIONS = [
     { name: 'Hexblade_Curse', kind: 'debuff', description: 'Nif deals extra necrotic damage, crits easier, and heals if the target dies.', source: 'homebrew' },
     { name: 'Moonlit', kind: 'debuff', description: 'Produces moonlight in a 20 ft radius and cannot be invisible.', source: 'homebrew' },
     { name: 'Confused', kind: 'debuff', description: 'Cannot take bonus actions or reactions and rolls behavior at the start of turn.', source: 'homebrew' },
+    { name: 'Burning', kind: 'debuff', description: 'Ongoing fire damage. Track the dice on the effect, for example Burning 2d4 fire.', hasDice: true, defaultDiceCount: 2, defaultDiceSides: 4, defaultDamageType: 'fire', source: 'homebrew' },
+    { name: 'Venombound', kind: 'debuff', description: 'Ongoing venom or poison binding. Track the dice and damage type on the effect.', hasDice: true, defaultDiceCount: 1, defaultDiceSides: 6, defaultDamageType: 'poison', source: 'homebrew' },
     { name: 'Insanity', kind: 'debuff', description: 'Level-based divine or psychic madness. Track the level on the effect.', hasLevels: true, maxLevel: 6, source: 'homebrew' },
     { name: 'Divine_Ire', kind: 'debuff', description: 'Level-based divine punishment. Track the level on the effect.', hasLevels: true, maxLevel: 6, source: 'homebrew' },
     { name: 'Divine_Ire_Cyric', kind: 'debuff', description: 'Level-based divine punishment from Cyric. Track the level on the effect.', hasLevels: true, maxLevel: 6, source: 'homebrew' },
