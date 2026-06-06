@@ -1,5 +1,5 @@
 import { ChangeEvent, FormEvent, useMemo, useRef, useState } from 'react';
-import type { Character, ClientRole, GameAction, GameState } from '../shared/types';
+import type { Character, ClientRole, GameAction, GameState, MonsterDatabaseEntry } from '../shared/types';
 import { effectToString, hpClass, monsterHealthLabel } from '../shared/defaults';
 import { CollapsiblePanelGroup } from '../components/CollapsiblePanel';
 import { MarkdownRenderer } from '../components/Markdown';
@@ -196,8 +196,8 @@ function AddCharacterForm({ submitAction }: { submitAction: Props['submitAction'
   );
 }
 
-function AddMonsterFromDatabase({ monsters, submitAction }: { monsters: Array<Record<string, unknown>>; submitAction: Props['submitAction'] }) {
-  const [selectedMonster, setSelectedMonster] = useState<Record<string, unknown> | null>(null);
+function AddMonsterFromDatabase({ monsters, submitAction }: { monsters: MonsterDatabaseEntry[]; submitAction: Props['submitAction'] }) {
+  const [selectedMonster, setSelectedMonster] = useState<MonsterDatabaseEntry | null>(null);
   const [count, setCount] = useState('1');
   const [search, setSearch] = useState('');
   const matchingMonsters = matchingItems(monsters, search);
@@ -208,6 +208,9 @@ function AddMonsterFromDatabase({ monsters, submitAction }: { monsters: Array<Re
     const copies = Math.max(1, Number(count) || 1);
     for (let index = 0; index < copies; index += 1) {
       const name = copies > 1 ? `${String(monster.name || 'Monster')} ${index + 1}` : String(monster.name || 'Monster');
+      const power = monster.monsterAbilities?.power;
+      const maxPower = Number(power?.max ?? monster.maxPower ?? 0) || 0;
+      const currentPower = Number(power?.current ?? maxPower) || 0;
       await submitAction({
         type: 'character.add',
         payload: {
@@ -217,12 +220,37 @@ function AddMonsterFromDatabase({ monsters, submitAction }: { monsters: Array<Re
           currentHp: Number(monster.hp || monster.maxHp || 1),
           ac: Number(monster.ac || 10),
           initBonus: Number(monster.initBonus || 0),
-          maxPower: Number(monster.maxPower || 0),
-          powerName: String(monster.powerName || 'Power'),
+          maxPower,
+          currentPower,
+          powerName: String(power?.name || monster.powerName || 'Power'),
           monsterData: monster,
           monsterAbilities: monster.monsterAbilities
         }
       });
+      if (monster.hasLairActions || monster.hasMythicActions) {
+        await submitAction({
+          type: 'character.add',
+          payload: {
+            name: `${name} ${monster.hasMythicActions ? 'Mythic' : 'Lair'} Actions`,
+            type: 'monster',
+            maxHp: 1,
+            currentHp: 1,
+            ac: 10,
+            initBonus: 0,
+            initiative: 20,
+            maxPower: 0,
+            powerName: 'Power',
+            monsterData: {
+              name: `${name} ${monster.hasMythicActions ? 'Mythic' : 'Lair'} Actions`,
+              hp: 1,
+              ac: 10,
+              initBonus: 0,
+              description: monster.hasMythicActions ? entriesToDescription(monster.mythicActions) : entriesToDescription(monster.lairActions),
+              actions: monster.hasMythicActions ? monster.mythicActions : monster.lairActions
+            }
+          }
+        });
+      }
     }
   }
 
@@ -678,10 +706,14 @@ function conditionTooltip(condition?: Record<string, unknown>) {
   return String(condition.description || condition.effect || condition.name || 'Condition');
 }
 
-function matchingItems<T extends Record<string, unknown>>(items: T[], query: string) {
+function matchingItems<T>(items: T[], query: string) {
   const needle = query.trim().toLowerCase();
   if (!needle) return items;
-  return items.filter(item => Object.values(item).join(' ').toLowerCase().includes(needle));
+  return items.filter(item => Object.values(item as Record<string, unknown>).join(' ').toLowerCase().includes(needle));
+}
+
+function entriesToDescription(entries?: Array<{ name: string; description: string }>) {
+  return (entries || []).map(entry => entry.description || `**${entry.name}.**`).join('\n\n');
 }
 
 function Stat({ label, value }: { label: string; value: string }) {

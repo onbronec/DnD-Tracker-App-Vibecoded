@@ -67,6 +67,16 @@ function normalizeSpellbook(spellbook) {
     };
 }
 
+function normalizeCharacterAbility(ability) {
+    const source = ability || {};
+    return {
+        id: String(source.id || makeId('ability')),
+        name: String(source.name || source.title || 'Ability').trim() || 'Ability',
+        description: String(source.description || source.text || source.notes || ''),
+        source: String(source.source || '')
+    };
+}
+
 function normalizeStringList(values) {
     if (!Array.isArray(values)) return [];
     return [...new Set(values.map(value => String(value)).filter(Boolean))];
@@ -102,11 +112,12 @@ function normalizeCharacter(char) {
         revealedToPlayers: char.revealedToPlayers !== undefined ? Boolean(char.revealedToPlayers) : type === 'player',
         groupId: char.groupId || null,
         groupName: char.groupName || null,
-        monsterData: char.monsterData ? clone(char.monsterData) : undefined,
-        monsterAbilities: char.monsterAbilities ? clone(char.monsterAbilities) : undefined,
+        monsterData: char.monsterData ? normalizeMonsterDbItem(char.monsterData) : undefined,
+        monsterAbilities: type === 'monster' ? normalizeMonsterAbilities(char.monsterAbilities, char) : (char.monsterAbilities ? clone(char.monsterAbilities) : undefined),
         spellcasterLevel: Number(char.spellcasterLevel) || 0,
         spellSlots: char.spellSlots && typeof char.spellSlots === 'object' ? clone(char.spellSlots) : {},
         customFeatures: Array.isArray(char.customFeatures) ? clone(char.customFeatures) : [],
+        characterAbilities: Array.isArray(char.characterAbilities) ? char.characterAbilities.map(normalizeCharacterAbility) : [],
         hitDice: char.hitDice && typeof char.hitDice === 'object'
             ? { max: Number(char.hitDice.max) || 0, current: Number(char.hitDice.current) || 0 }
             : { max: 0, current: 0 },
@@ -159,22 +170,140 @@ function normalizeSpellLevel(value) {
     return { key: `special-${slugify(raw)}`, label: raw };
 }
 
+function normalizeMonsterTextEntries(entries) {
+    if (!Array.isArray(entries)) return [];
+    return entries.map((entry, index) => {
+        if (typeof entry === 'string') {
+            const name = entry.match(/^\*\*([^*.]+).*?\.\*\*/)?.[1] || entry.split('\n')[0].replace(/\*\*/g, '').slice(0, 80) || `Entry ${index + 1}`;
+            return { id: makeId('monster_text'), name: name.trim(), description: entry };
+        }
+        return {
+            id: String(entry.id || makeId('monster_text')),
+            name: String(entry.name || entry.title || `Entry ${index + 1}`),
+            description: String(entry.description || entry.text || '')
+        };
+    });
+}
+
+function normalizeMonsterStats(stats) {
+    const source = stats || {};
+    const legacy = { str: 'strength', dex: 'dexterity', con: 'constitution', int: 'intelligence', wis: 'wisdom', cha: 'charisma' };
+    return ABILITY_KEYS.reduce((result, key) => {
+        const legacyKey = Object.keys(legacy).find(short => legacy[short] === key);
+        result[key] = Math.max(1, Math.min(30, Math.round(Number(source[key] ?? source[legacyKey]) || 10)));
+        return result;
+    }, {});
+}
+
+function normalizeMonsterAbilities(abilities, source = {}) {
+    const current = abilities || {};
+    const spellcasting = current.spellcasting || {};
+    const spellSlots = current.spellSlots || spellcasting.spellSlots || {};
+    const perDaySpells = current.perDaySpells || spellcasting.perDaySpells || [];
+    const power = current.power || {};
+    const maxPower = Number(source.maxPower ?? power.max) || 0;
+    return {
+        ...clone(current),
+        enabled: Boolean(current.enabled || maxPower || current.legendaryActions?.enabled || current.epicActions?.enabled || Object.keys(spellSlots).length || perDaySpells.length || current.customFeatures?.length),
+        power: {
+            enabled: Boolean(power.enabled || maxPower),
+            name: String(power.name || source.powerName || 'Power'),
+            max: maxPower,
+            current: Math.max(0, Math.min(maxPower, Number(power.current ?? source.currentPower ?? maxPower) || 0))
+        },
+        spellcasting: {
+            enabled: Boolean(spellcasting.enabled || current.spellcastingType || Object.keys(spellSlots).length || perDaySpells.length),
+            spellcastingType: String(spellcasting.spellcastingType || current.spellcastingType || 'none'),
+            spellcastingLevel: Number(spellcasting.spellcastingLevel || current.spellcastingLevel) || 0,
+            spellSlots: normalizeMonsterSpellSlots(spellSlots),
+            atWillSpells: Array.isArray(spellcasting.atWillSpells) ? spellcasting.atWillSpells.map(String) : [],
+            perDaySpells: normalizeMonsterPerDaySpells(perDaySpells)
+        },
+        spellSlots: normalizeMonsterSpellSlots(spellSlots),
+        perDaySpells: normalizeMonsterPerDaySpells(perDaySpells),
+        customFeatures: Array.isArray(current.customFeatures) ? clone(current.customFeatures) : [],
+        legendaryActions: {
+            enabled: Boolean(current.legendaryActions?.enabled),
+            max: Math.max(0, Number(current.legendaryActions?.max) || 0),
+            used: Math.max(0, Number(current.legendaryActions?.used) || 0)
+        },
+        epicActions: {
+            enabled: Boolean(current.epicActions?.enabled),
+            actions: Array.isArray(current.epicActions?.actions)
+                ? current.epicActions.actions.map(action => ({
+                    id: String(action.id || makeId('epic')),
+                    name: String(action.name || 'Epic Action'),
+                    description: String(action.description || ''),
+                    maxUses: Math.max(1, Number(action.maxUses) || 1),
+                    used: Math.max(0, Number(action.used) || 0)
+                }))
+                : []
+        }
+    };
+}
+
+function normalizeMonsterSpellSlots(slots) {
+    const result = {};
+    Object.entries(slots || {}).forEach(([level, value]) => {
+        const slot = value || {};
+        result[String(level)] = {
+            max: Math.max(0, Number(slot.max) || 0),
+            used: Math.max(0, Number(slot.used) || 0),
+            atWill: Boolean(slot.atWill)
+        };
+    });
+    return result;
+}
+
+function normalizeMonsterPerDaySpells(spells) {
+    return (Array.isArray(spells) ? spells : []).map(spell => ({
+        name: String(spell.name || spell.spellName || 'Spell'),
+        maxUses: Math.max(0, Number(spell.maxUses) || 0),
+        used: Math.max(0, Number(spell.used) || 0)
+    }));
+}
+
 function slugify(value) {
     return String(value || 'special').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'special';
 }
 
 function normalizeMonsterDbItem(monster) {
     const source = monster || {};
+    const stats = normalizeMonsterStats(source.stats || source.abilityScores);
+    const maxPower = Number(source.maxPower ?? source.monsterAbilities?.power?.max) || 0;
+    const powerName = source.powerName || source.monsterAbilities?.power?.name || 'Power';
     return {
         ...clone(source),
         id: String(source.id || makeId('monster_db')),
         name: String(source.name || 'Monster'),
         hp: Number(source.hp || source.maxHp) || 1,
+        maxHp: Number(source.maxHp || source.hp) || 1,
         ac: Number(source.ac) || 10,
-        initBonus: Number(source.initBonus) || 0,
-        maxPower: Number(source.maxPower) || 0,
-        powerName: source.powerName || 'Power',
+        initBonus: Number.isFinite(Number(source.initBonus)) ? Number(source.initBonus) : Math.floor(((stats.dexterity || 10) - 10) / 2),
+        speed: String(source.speed || ''),
+        stats,
+        saves: String(source.saves || source.savingThrows || ''),
+        skills: String(source.skills || ''),
+        senses: String(source.senses || ''),
+        languages: String(source.languages || ''),
+        challenge: String(source.challenge || source.cr || ''),
+        proficiency: String(source.proficiency || ''),
+        type: String(source.type || ''),
+        size: String(source.size || ''),
+        maxPower,
+        powerName,
         description: source.description || source.statblock || '',
+        defensiveFeatures: normalizeMonsterTextEntries(source.defensiveFeatures),
+        features: normalizeMonsterTextEntries(source.features || source.traits),
+        actions: normalizeMonsterTextEntries(source.actions),
+        bonusActions: normalizeMonsterTextEntries(source.bonusActions),
+        reactions: normalizeMonsterTextEntries(source.reactions),
+        legendaryActionEntries: normalizeMonsterTextEntries(source.legendaryActionEntries || source.legendaryActions),
+        mythicActions: normalizeMonsterTextEntries(source.mythicActions),
+        lairActions: normalizeMonsterTextEntries(source.lairActions),
+        hasLairActions: Boolean(source.hasLairActions || (source.lairActions || []).length),
+        hasMythicActions: Boolean(source.hasMythicActions || (source.mythicActions || []).length),
+        monsterAbilities: normalizeMonsterAbilities(source.monsterAbilities, { maxPower, powerName, currentPower: source.currentPower }),
         tags: normalizeTags(source.tags),
         source: source.source || ''
     };
@@ -243,7 +372,26 @@ function seedConditions(existing) {
         const normalized = normalizeCondition(condition);
         byName.set(normalized.name.toLowerCase(), normalized);
     });
-    return [...byName.values()];
+    return ensureUniqueDatabaseIds([...byName.values()], 'condition');
+}
+
+function ensureUniqueDatabaseIds(items, prefix) {
+    const used = new Set();
+    return (items || []).map((item, index) => {
+        const copy = { ...item };
+        let id = String(copy.id || '').trim();
+        if (!id || used.has(id)) {
+            const base = `${prefix}_${slugify(copy.name || index + 1)}`;
+            let suffix = 2;
+            id = base;
+            while (used.has(id)) {
+                id = `${base}_${suffix}`;
+                suffix += 1;
+            }
+        }
+        used.add(id);
+        return { ...copy, id };
+    });
 }
 
 function splitLegacyItems(items) {
@@ -383,6 +531,7 @@ module.exports = {
     normalizeCondition,
     normalizeSpell,
     normalizeSpellbook,
+    normalizeCharacterAbility,
     seedConditions,
     migrateAutosave
 };

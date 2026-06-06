@@ -17,6 +17,8 @@ const PLAYER_ALLOWED_TYPES = new Set([
     'spell.feature.add',
     'spell.feature.update',
     'spell.feature.remove',
+    'spell.ability.upsert',
+    'spell.ability.remove',
     'spell.rest.character',
     'spell.character.update',
     'spell.sheet.update',

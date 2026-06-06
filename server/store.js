@@ -2,7 +2,6 @@ const fs = require('fs');
 const path = require('path');
 const { createInitialState } = require('./defaults');
 const { migrateAutosave } = require('./migrations');
-const { clone } = require('./utils');
 
 const AUTOSAVE_FILE = process.env.DND_AUTOSAVE_FILE || path.join(__dirname, '..', 'dnd-tracker-autosave.json');
 
@@ -21,15 +20,57 @@ function loadStateFromDisk(filePath = AUTOSAVE_FILE) {
 
 function saveStateToDisk(state, filePath = AUTOSAVE_FILE) {
     const payload = {
-        ...clone(state),
+        ...state,
         timestamp: new Date().toISOString()
     };
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
+    fs.writeFileSync(filePath, JSON.stringify(payload), 'utf8');
+}
+
+function createDebouncedStateSaver(getState, {
+    delayMs = 750,
+    filePath = AUTOSAVE_FILE,
+    saveNow = saveStateToDisk,
+    onError = error => console.error('Autosave failed:', error)
+} = {}) {
+    let timer = null;
+
+    function clearPendingTimer() {
+        if (!timer) return;
+        clearTimeout(timer);
+        timer = null;
+    }
+
+    function flush() {
+        clearPendingTimer();
+        try {
+            saveNow(getState(), filePath);
+            return { ok: true };
+        } catch (error) {
+            onError(error);
+            return { ok: false, error };
+        }
+    }
+
+    function schedule() {
+        clearPendingTimer();
+        timer = setTimeout(() => {
+            timer = null;
+            flush();
+        }, delayMs);
+        return { ok: true, scheduled: true };
+    }
+
+    return {
+        schedule,
+        flush,
+        hasPending: () => Boolean(timer)
+    };
 }
 
 module.exports = {
     AUTOSAVE_FILE,
     loadStateFromDisk,
-    saveStateToDisk
+    saveStateToDisk,
+    createDebouncedStateSaver
 };

@@ -5,7 +5,7 @@ const fs = require('fs');
 const { networkInterfaces } = require('os');
 const socketIO = require('socket.io');
 const { loadDmToken } = require('./server/config');
-const { loadStateFromDisk, saveStateToDisk, AUTOSAVE_FILE } = require('./server/store');
+const { createDebouncedStateSaver, loadStateFromDisk, AUTOSAVE_FILE } = require('./server/store');
 const { createSocketHandlers } = require('./server/socketHandlers');
 const { filterStateForClient } = require('./server/visibility');
 
@@ -21,6 +21,7 @@ const io = socketIO(server, {
 
 const dmToken = loadDmToken();
 const stateRef = { current: loadStateFromDisk() };
+const autosaveScheduler = createDebouncedStateSaver(() => stateRef.current);
 
 app.use(express.json({ limit: '50mb' }));
 
@@ -43,7 +44,8 @@ app.post('/api/autosave', (req, res) => {
     }
     try {
         stateRef.current = req.body && req.body.schemaVersion ? req.body : stateRef.current;
-        saveStateToDisk(stateRef.current);
+        const result = autosaveScheduler.flush();
+        if (!result.ok) throw result.error;
         res.json({ success: true, message: 'Autosave created' });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -54,7 +56,7 @@ createSocketHandlers({
     io,
     stateRef,
     dmToken,
-    saveState: () => saveStateToDisk(stateRef.current)
+    saveState: autosaveScheduler.schedule
 });
 
 const distPath = path.join(__dirname, 'dist');

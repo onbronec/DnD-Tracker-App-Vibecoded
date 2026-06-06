@@ -46,12 +46,20 @@ u stolu, citelnost pri session a spolehlivost dat pred "enterprise" slozitosti.
   neni autoritativni.
 - Frontend neposila cely snapshot. Posila serverem validovane `action:submit`
   akce a server vraci filtrovany stav pres `state:init`/`state:patch`.
+- Bezna socket akce nesmi cekat na synchronni diskovy autosave. Pouzivej
+  debounced save scheduler ze `server/store.js`; manualni Autosave tlacitko
+  muze delat okamzity flush. Nevracej `fs.writeFileSync` celeho autosavu primo
+  do hot path `action:submit` / undo / redo.
 - Hlavni frontend promenne jsou `characters`, `combatState`, `monsterDatabase`,
   `itemDatabase` a aktualni vybery pro spells/monsters/inventory.
 - `monsterDatabase` i `itemDatabase` jsou server state a ukladaji se do
   autosave.
 - Historie je chronologicky `actionLog`, ale undo/redo je scoped podle page.
   Kazda reverzibilni akce ma page snapshot `before`/`after`.
+- `actionLog.before/after` snapshoty jsou server-only data pro undo/redo. Nikdy
+  je neposilej pres socket/API do browseru, ani DM klientovi; pouzij
+  `stripHistorySnapshots()` / filtrovani visibility. Jinak DM payload naroste
+  na desitky MB a kazdy klik ma sekundovou latenci.
 
 ## DM a player mode
 
@@ -90,6 +98,22 @@ u stolu, citelnost pri session a spolehlivost dat pred "enterprise" slozitosti.
 - Karty postav/monster jsou primarni pracovni jednotka. Pri zmenach hlidej:
   HP/current/max, temp HP, AC, iniciativa, effects, power, a tlacitka pro rychle
   damage/heal.
+- Monster database entries jsou strukturovana data, ne jen statblock text:
+  `stats`, `saves`, HP/AC/speed/meta, `defensiveFeatures`, `features`,
+  `actions`, `bonusActions`, `reactions`, `legendaryActionEntries`,
+  `lairActions`, `mythicActions` a `monsterAbilities`.
+- Monster editor musi podporovat ruční editaci i paste/import Markdown
+  statblocku pres `parseMonsterMarkdown()`. Import je vzdy parse -> user edit
+  -> save, ne blind overwrite bez kontroly.
+- Monster tracker zobrazuje a serverove trackuje `monsterAbilities.power`,
+  `customFeatures`, `legendaryActions`, `epicActions`, monster spell slots a
+  per-day spells. Legendary a epic action uses se resetuji serverove pri startu
+  tahu monstra; nedelat reset jen lokálně ve frontendu.
+- Lair/mythic actions jsou opt-in. Pri pridani monstra z databaze mohou vytvorit
+  samostatny initiative placeholder na count 20 s popisem prislusnych akci.
+- Monster spellcasting drzi spelly a sloty na jednom miste v monster trackeru.
+  Spell names v popisech zobrazuj jako Markdown reference na spell database,
+  kdyz je to mozne.
 - Page scope `spells` je v UI pojmenovany Character Sheets. Zustava jako
   `spells` kvuli socket/history kompatibilite.
 - Spell database je sesta databaze ve state (`spellDatabase`, schema v4).
@@ -102,6 +126,11 @@ u stolu, citelnost pri session a spolehlivost dat pred "enterprise" slozitosti.
   `preparedEpicMax`. Cantripy jsou vzdy aktivni, levely 1-9 pocitej do
   non-epic prepared limitu, Epic 1-3 do epic limitu, special sekce maji
   vlastni prepared toggle bez limitu.
+- Character Abilities (`character.characterAbilities`) jsou spodní wiki sekce
+  character sheetu: libovolny pocet `{id,name,description,source}` entries.
+  Jsou ciste popisne Markdown poznamky pro class/item/feature vysvetlivky a
+  nemaji mechanicky menit stav. Nemíchat s `customFeatures`, ktere trackuji
+  pouziti/rest recovery.
 - Character sheet fields: `abilityScores`, `proficiencyBonus`,
   `savingThrowProficiencies`, `skillProficiencies`, `skillExpertise`. Dodrzuj
   5e ability/skill seznamy; PC scores mohou byt do 30 a proficiency bonus do
@@ -154,6 +183,15 @@ u stolu, citelnost pri session a spolehlivost dat pred "enterprise" slozitosti.
   popisky tlacitek (Bold, Italic, Header...) a oddelene Preview/Pop out akce.
   Renderuj pres React node renderer, ne pres raw `innerHTML`, pokud k tomu neni
   silny duvod.
+- Markdown texty podporuji databazove reference na Conditions, Spells a
+  Monsters. Pouzivej `@Stunned` pro jednoduche nazvy a `@[Accursed Wish]` pro
+  vic slov / slozitou interpunkci. Reference renderuj jako klikaci React node,
+  ktery otevre centered detail modal; nikdy kvuli tomu neprechazej na raw HTML.
+- Automaticke doplneni techto odkazu do spell databaze resi
+  `npm.cmd run link:spell-refs`. Default je dry-run. Pro zapis do autosavu
+  pouzij `npm.cmd run link:spell-refs -- --apply`; script pred zapisem dela
+  timestamped `.bak` backup. Matching je phrase/word-boundary nad originalnim
+  textem, bez stripovani mezer, aby napr. `poi soned` nematchovalo `Poisoned`.
 - Klavesove zkratky zachovej: Space/PageUp dalsi tah, PageDown predchozi tah,
   Backspace undo aktualni stranky, Shift+Backspace redo. Ignoruj je v inputech,
   selectech, textareach a otevrenych modalech.

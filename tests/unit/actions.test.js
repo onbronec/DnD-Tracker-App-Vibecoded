@@ -26,6 +26,7 @@ function player(name = 'Nif') {
         spellcasterLevel: 0,
         spellSlots: {},
         customFeatures: [],
+        characterAbilities: [],
         spellbook: { knownSpellIds: [], preparedSpellIds: [], preparesSpells: false, preparedNonEpicMax: 0, preparedEpicMax: 0 },
         hitDice: { max: 0, current: 0 },
         proficiencyBonus: 2,
@@ -109,6 +110,13 @@ describe('permissions', () => {
         expect(result.ok).toBe(true);
     });
 
+    it('allows player character ability wiki edits on player characters', () => {
+        const state = createInitialState();
+        state.characters.push(player());
+        const result = authorizeAction(state, { type: 'spell.ability.upsert', payload: { characterId: 'nif', ability: { name: 'Bardic Inspiration' } } }, { role: 'player' });
+        expect(result.ok).toBe(true);
+    });
+
     it('allows player dice rolls but blocks DM-only toolbelt actions', () => {
         const state = createInitialState();
         expect(authorizeAction(state, { type: 'toolbelt.dice.add', payload: { expression: '1d20' } }, { role: 'player' }).ok).toBe(true);
@@ -171,6 +179,37 @@ describe('actions and history', () => {
         expect(state.characters[0].customFeatures).toEqual([]);
     });
 
+    it('stores character sheet ability wiki entries with spells undo', () => {
+        const state = createInitialState();
+        state.characters.push(player());
+        applyGameAction(state, {
+            type: 'spell.ability.upsert',
+            payload: {
+                characterId: 'nif',
+                ability: { name: 'Bardic Inspiration', description: '**Bonus** die for allies.', source: 'Class feature' }
+            }
+        }, { id: 'player', role: 'player' });
+
+        expect(state.characters[0].characterAbilities).toEqual([
+            expect.objectContaining({ name: 'Bardic Inspiration', description: '**Bonus** die for allies.', source: 'Class feature' })
+        ]);
+
+        const abilityId = state.characters[0].characterAbilities[0].id;
+        applyGameAction(state, {
+            type: 'spell.ability.upsert',
+            payload: {
+                characterId: 'nif',
+                ability: { id: abilityId, name: 'Bardic Inspiration', description: 'Updated text.', source: 'Class feature' }
+            }
+        }, { id: 'player', role: 'player' });
+        expect(state.characters[0].characterAbilities[0].description).toBe('Updated text.');
+
+        undoPage(state, 'spells', { id: 'dm', role: 'dm' });
+        expect(state.characters[0].characterAbilities[0].description).toBe('**Bonus** die for allies.');
+        undoPage(state, 'spells', { id: 'dm', role: 'dm' });
+        expect(state.characters[0].characterAbilities).toEqual([]);
+    });
+
     it('imports combat data as an undoable combat action', () => {
         const state = createInitialState();
         state.characters.push(player('Nif'));
@@ -211,6 +250,57 @@ describe('actions and history', () => {
         expect(state.characters.map(character => character.name)).toEqual(['Orc']);
         undoPage(state, 'databases', { id: 'dm', role: 'dm' });
         expect(state.characters.map(character => character.name).sort()).toEqual(['Ayla', 'Orc']);
+    });
+
+    it('tracks monster features, spell uses, legendary actions and epic actions', () => {
+        const state = createInitialState();
+        const boss = monster('Zealot');
+        boss.monsterAbilities = {
+            enabled: true,
+            customFeatures: [{ name: 'Divine Protection', maxUses: 2, used: 0 }],
+            legendaryActions: { enabled: true, max: 3, used: 0 },
+            epicActions: { enabled: true, actions: [{ name: 'Swipe', maxUses: 2, used: 0, description: '' }] },
+            spellcasting: {
+                enabled: true,
+                spellSlots: { 1: { max: 2, used: 0 } },
+                perDaySpells: [{ name: 'Counterspell', maxUses: 1, used: 0 }]
+            }
+        };
+        state.characters.push(boss);
+
+        applyGameAction(state, { type: 'monster.feature.uses', payload: { characterId: 'zealot', index: 0, used: 1 } }, { id: 'dm', role: 'dm' });
+        applyGameAction(state, { type: 'monster.legendary.uses', payload: { characterId: 'zealot', used: 2 } }, { id: 'dm', role: 'dm' });
+        applyGameAction(state, { type: 'monster.epic.uses', payload: { characterId: 'zealot', index: 0, used: 1 } }, { id: 'dm', role: 'dm' });
+        applyGameAction(state, { type: 'monster.spellSlot.toggle', payload: { characterId: 'zealot', level: 1, index: 0 } }, { id: 'dm', role: 'dm' });
+        applyGameAction(state, { type: 'monster.perDaySpell.uses', payload: { characterId: 'zealot', index: 0, used: 1 } }, { id: 'dm', role: 'dm' });
+
+        const abilities = state.characters[0].monsterAbilities;
+        expect(abilities.customFeatures[0].used).toBe(1);
+        expect(abilities.legendaryActions.used).toBe(2);
+        expect(abilities.epicActions.actions[0].used).toBe(1);
+        expect(abilities.spellcasting.spellSlots[1].used).toBe(1);
+        expect(abilities.spellcasting.perDaySpells[0].used).toBe(1);
+    });
+
+    it('resets monster legendary and epic actions when the monster turn starts', () => {
+        const state = createInitialState();
+        const hero = player('Ayla');
+        const boss = monster('Zealot');
+        hero.initiative = 20;
+        boss.initiative = 10;
+        boss.monsterAbilities = {
+            enabled: true,
+            legendaryActions: { enabled: true, max: 3, used: 3 },
+            epicActions: { enabled: true, actions: [{ name: 'Swipe', maxUses: 2, used: 2, description: '' }] }
+        };
+        state.characters.push(hero, boss);
+        state.combatState = { active: true, currentTurn: 0, round: 1, playedThisRound: [] };
+
+        applyGameAction(state, { type: 'combat.nextTurn' }, { id: 'dm', role: 'dm' });
+
+        expect(state.combatState.currentTurn).toBe(1);
+        expect(state.characters[1].monsterAbilities.legendaryActions.used).toBe(0);
+        expect(state.characters[1].monsterAbilities.epicActions.actions[0].used).toBe(0);
     });
 
     it('applies short and long rests to spell resources', () => {
@@ -356,6 +446,7 @@ describe('migrations', () => {
         expect(state.conditionDatabase.some(condition => condition.name === 'Blinded')).toBe(true);
         expect(state.conditionDatabase.some(condition => condition.name === 'Burning' && condition.hasDice)).toBe(true);
         expect(state.schemaVersion).toBe(4);
+        expect(state.characters[0].characterAbilities).toEqual([]);
         expect(state.characters[0].spellbook).toEqual({ knownSpellIds: [], preparedSpellIds: [], preparesSpells: false, preparedNonEpicMax: 0, preparedEpicMax: 0 });
     });
 
@@ -379,6 +470,22 @@ describe('migrations', () => {
 
         expect(state.conditionDatabase).toEqual(expect.arrayContaining([
             expect.objectContaining({ name: 'Acidbound', hasDice: true, defaultDiceCount: 3, defaultDiceSides: 8, defaultDamageType: 'acid' })
+        ]));
+    });
+
+    it('deduplicates condition database ids during migration', () => {
+        const state = migrateAutosave({
+            conditionDatabase: [
+                { id: 'condition_23', name: 'Burning', hasDice: true, defaultDiceCount: 2, defaultDiceSides: 4, defaultDamageType: 'fire' },
+                { id: 'condition_23', name: 'Custom Flame Mark', kind: 'debuff' }
+            ]
+        });
+        const ids = state.conditionDatabase.map(condition => condition.id);
+
+        expect(new Set(ids).size).toBe(ids.length);
+        expect(state.conditionDatabase).toEqual(expect.arrayContaining([
+            expect.objectContaining({ name: 'Burning', id: 'condition_23' }),
+            expect.objectContaining({ name: 'Custom Flame Mark', id: expect.stringMatching(/^condition_custom-flame-mark/) })
         ]));
     });
 
@@ -409,6 +516,19 @@ describe('visibility', () => {
         expect(filtered.conditionDatabase.length).toBeGreaterThan(0);
         expect(Array.isArray(filtered.magicItemDatabase)).toBe(true);
         expect(Array.isArray(filtered.spellDatabase)).toBe(true);
+    });
+
+    it('strips undo snapshots from DM state payloads while keeping server history usable', () => {
+        const state = createInitialState();
+        state.characters.push(player());
+        applyGameAction(state, { type: 'character.adjustHp', payload: { characterId: 'nif', amount: 1 } }, { id: 'dm', role: 'dm' });
+        expect(state.actionLog[0].before).toBeTruthy();
+        expect(state.actionLog[0].after).toBeTruthy();
+
+        const filtered = filterStateForClient(state, 'dm');
+        expect(filtered.actionLog[0]).toEqual(expect.objectContaining({ label: expect.any(String) }));
+        expect(filtered.actionLog[0].before).toBeUndefined();
+        expect(filtered.actionLog[0].after).toBeUndefined();
     });
 });
 

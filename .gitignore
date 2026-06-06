@@ -17,7 +17,7 @@ Thumbs.db
 npm-debug.log*
 
 # Autosave files
-dnd-tracker-autosave.json
+dnd-tracker-autosave.json*
 dm-token.local
 data/
 

@@ -12,7 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "check": "npm.cmd run build && npm.cmd test"
+    "check": "npm.cmd run build && npm.cmd test",
+    "link:spell-refs": "node scripts/link-spell-markdown-references.js"
   },
   "keywords": [
     "dnd",

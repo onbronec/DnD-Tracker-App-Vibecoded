@@ -1,8 +1,8 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import type { AbilityKey, Character, CharacterSpellbook, ClientRole, CustomFeature, GameAction, GameState, SpellDatabaseEntry } from '../shared/types';
+import type { AbilityKey, Character, CharacterAbility, CharacterSpellbook, ClientRole, CustomFeature, GameAction, GameState, SpellDatabaseEntry } from '../shared/types';
 import { CollapsiblePanelGroup } from '../components/CollapsiblePanel';
 import { Modal } from '../components/Modal';
-import { MarkdownRenderer } from '../components/Markdown';
+import { MarkdownEditor, MarkdownRenderer } from '../components/Markdown';
 import { SearchPicker } from '../components/SearchPicker';
 import { EffectModal, effectRequiresManagement } from './CombatPage';
 import { effectToString, hpClass } from '../shared/defaults';
@@ -147,6 +147,7 @@ export function SpellsPage({ state, role, submitAction, selectedCharacterId, onS
         <SpellbookSection character={selected} spellDatabase={state.spellDatabase || []} submitAction={submitAction} />
         <HitDice character={selected} submitAction={submitAction} />
         <Features character={selected} submitAction={submitAction} />
+        <AbilitiesWiki character={selected} submitAction={submitAction} />
       </div>
     </div>
   );
@@ -160,7 +161,8 @@ const SHEET_SECTION_LINKS = [
   { id: 'sheet-spell-slots', label: 'Spell Slots' },
   { id: 'sheet-spells-known', label: 'Spells Known' },
   { id: 'sheet-hit-dice', label: 'Hit Dice' },
-  { id: 'sheet-features', label: 'Custom Features' }
+  { id: 'sheet-features', label: 'Custom Features' },
+  { id: 'sheet-abilities', label: 'Abilities' }
 ];
 
 const SHEET_NAV_LINKS = SHEET_SECTION_LINKS.filter(link => link.id !== 'sheet-top');
@@ -986,6 +988,201 @@ function Features({ character, submitAction }: { character: Character; submitAct
         </div>
       )}
     </section>
+  );
+}
+
+function AbilitiesWiki({ character, submitAction }: { character: Character; submitAction: Props['submitAction'] }) {
+  const abilities = character.characterAbilities || [];
+  const [detail, setDetail] = useState<CharacterAbility | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [editingTarget, setEditingTarget] = useState<CharacterAbility | null>(null);
+
+  return (
+    <section id="sheet-abilities" className="section sheet-section-anchor">
+      <div className="section-title-row">
+        <div>
+          <h2>Abilities</h2>
+          <p>{abilities.length === 0 ? 'Character wiki entries for abilities, items, features and notes.' : `${abilities.length} character wiki entr${abilities.length === 1 ? 'y' : 'ies'}.`}</p>
+        </div>
+        <button className="btn" onClick={() => setEditing(true)}>Edit abilities</button>
+      </div>
+
+      {abilities.length === 0 && <p className="empty">No abilities recorded yet.</p>}
+      <div className="ability-wiki-grid">
+        {abilities.map(ability => (
+          <button
+            key={ability.id}
+            className="ability-wiki-card"
+            onClick={() => setDetail(ability)}
+            data-testid={`ability-${ability.name}`}
+          >
+            <strong>{ability.name}</strong>
+            {ability.source && <span>{ability.source}</span>}
+          </button>
+        ))}
+      </div>
+
+      {detail && (
+        <AbilityDetailModal
+          ability={detail}
+          onClose={() => setDetail(null)}
+          onEdit={() => {
+            setEditingTarget(detail);
+            setDetail(null);
+            setEditing(true);
+          }}
+        />
+      )}
+      {editing && (
+        <AbilityEditorModal
+          character={character}
+          initialEditing={editingTarget}
+          submitAction={submitAction}
+          onClose={() => {
+            setEditing(false);
+            setEditingTarget(null);
+          }}
+        />
+      )}
+    </section>
+  );
+}
+
+function AbilityDetailModal({ ability, onClose, onEdit }: { ability: CharacterAbility; onClose: () => void; onEdit: () => void }) {
+  return (
+    <Modal className="item-modal-backdrop">
+      <div className="modal-card item-modal-card">
+        <div className="section-title-row">
+          <div>
+            <h2>{ability.name}</h2>
+            <p>{ability.source || 'Character ability'}</p>
+          </div>
+          <div className="button-row">
+            <button className="btn" onClick={onEdit}>Edit</button>
+            <button className="btn" onClick={onClose}>Close</button>
+          </div>
+        </div>
+        <div className="item-detail-body">
+          <MarkdownRenderer text={ability.description} emptyLabel="No ability notes yet." />
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function AbilityEditorModal({
+  character,
+  initialEditing,
+  submitAction,
+  onClose
+}: {
+  character: Character;
+  initialEditing: CharacterAbility | null;
+  submitAction: Props['submitAction'];
+  onClose: () => void;
+}) {
+  const abilities = character.characterAbilities || [];
+  const [editingAbility, setEditingAbility] = useState<CharacterAbility | null>(initialEditing);
+
+  async function saveAbility(ability: Partial<CharacterAbility>) {
+    await submitAction({
+      type: 'spell.ability.upsert',
+      payload: {
+        characterId: character.id,
+        ability
+      }
+    });
+    setEditingAbility(null);
+  }
+
+  return (
+    <Modal>
+      <div className="modal-card sheet-editor-modal">
+        <div className="section-title-row">
+          <div>
+            <h2>Edit {character.name} Abilities</h2>
+            <p>Small character wiki entries. These do not change mechanics by themselves.</p>
+          </div>
+          <button className="btn" onClick={onClose}>Close</button>
+        </div>
+
+        <div className="ability-editor-layout">
+          <div className="spellbook-known-list">
+            {abilities.length === 0 && <p className="empty">No saved abilities.</p>}
+            {abilities.map(ability => (
+              <div className="spellbook-known-row" key={ability.id}>
+                <div>
+                  <strong>{ability.name}</strong>
+                  <span>{ability.source || 'Character ability'}</span>
+                </div>
+                <div className="button-row">
+                  <button className="btn small" onClick={() => setEditingAbility(ability)}>Edit</button>
+                  <button
+                    className="btn danger small"
+                    onClick={() => submitAction({ type: 'spell.ability.remove', payload: { characterId: character.id, id: ability.id } })}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <AbilityForm
+            key={editingAbility?.id || 'new-ability'}
+            initial={editingAbility}
+            submitLabel={editingAbility ? 'Save ability' : 'Add ability'}
+            onSubmit={saveAbility}
+          />
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function AbilityForm({
+  initial,
+  submitLabel,
+  onSubmit
+}: {
+  initial: CharacterAbility | null;
+  submitLabel: string;
+  onSubmit: (ability: Partial<CharacterAbility>) => Promise<unknown>;
+}) {
+  const [name, setName] = useState(initial?.name || '');
+  const [source, setSource] = useState(initial?.source || '');
+  const [description, setDescription] = useState(initial?.description || '');
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!name.trim()) return;
+    await onSubmit({
+      id: initial?.id,
+      name: name.trim(),
+      source: source.trim(),
+      description
+    });
+    if (!initial) {
+      setName('');
+      setSource('');
+      setDescription('');
+    }
+  }
+
+  return (
+    <form className="form-grid" onSubmit={submit}>
+      <input value={name} onChange={event => setName(event.target.value)} placeholder="Ability heading" />
+      <input value={source} onChange={event => setSource(event.target.value)} placeholder="Optional source, item or feature" />
+      <div className="form-wide">
+        <MarkdownEditor
+          value={description}
+          onChange={setDescription}
+          label="Ability notes"
+          placeholder="Markdown notes, rules text, item explanation or reminders"
+        />
+      </div>
+      <button className="btn success">{submitLabel}</button>
+    </form>
   );
 }
 

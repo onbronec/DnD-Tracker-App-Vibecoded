@@ -1,6 +1,7 @@
 const {
     normalizeCharacter,
     normalizeCondition,
+    normalizeCharacterAbility,
     normalizeInventory,
     normalizeMagicItem,
     normalizeMonsterDbItem,
@@ -81,6 +82,7 @@ function snapshotPage(state, page) {
                 spellcasterLevel: c.spellcasterLevel,
                 spellSlots: clone(c.spellSlots),
                 customFeatures: clone(c.customFeatures),
+                characterAbilities: clone(c.characterAbilities || []),
                 hitDice: clone(c.hitDice),
                 effects: clone(c.effects),
                 proficiencyBonus: c.proficiencyBonus,
@@ -154,6 +156,7 @@ function restorePage(state, page, snapshot) {
             character.spellcasterLevel = saved.spellcasterLevel || 0;
             character.spellSlots = clone(saved.spellSlots || {});
             character.customFeatures = clone(saved.customFeatures || []);
+            character.characterAbilities = clone(saved.characterAbilities || []);
             character.hitDice = clone(saved.hitDice || { max: 0, current: 0 });
             character.effects = clone(saved.effects || []);
             character.proficiencyBonus = saved.proficiencyBonus || 2;
@@ -210,6 +213,9 @@ function ensureInventory(character) {
 function ensureSpellShape(character) {
     if (!character.spellSlots || typeof character.spellSlots !== 'object') character.spellSlots = {};
     if (!Array.isArray(character.customFeatures)) character.customFeatures = [];
+    character.characterAbilities = Array.isArray(character.characterAbilities)
+        ? character.characterAbilities.map(normalizeCharacterAbility)
+        : [];
     if (!character.hitDice || typeof character.hitDice !== 'object') character.hitDice = { max: 0, current: 0 };
     if (!character.abilityScores || typeof character.abilityScores !== 'object') {
         character.abilityScores = { strength: 10, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: 10 };
@@ -386,6 +392,7 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             const character = findCharacter(state, payload.characterId);
             if (!character) throw new Error('Postava neexistuje.');
             character.currentPower = clamp(toNumber(payload.value, character.currentPower || 0), 0, character.maxPower || 0);
+            if (character.monsterAbilities?.power) character.monsterAbilities.power.current = character.currentPower;
             return `${character.name}: ${character.powerName || 'Power'} ${character.currentPower}`;
         }
         case 'effect.add': {
@@ -608,6 +615,25 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             character.customFeatures.splice(index, 1);
             return `${character.name}: odebrana feature ${removed.name}`;
         }
+        case 'spell.ability.upsert': {
+            const character = findCharacter(state, payload.characterId);
+            if (!character || character.type !== 'player') throw new Error('Hrac neexistuje.');
+            ensureSpellShape(character);
+            const ability = normalizeCharacterAbility(payload.ability || payload);
+            const index = character.characterAbilities.findIndex(item => item.id === ability.id);
+            if (index === -1) character.characterAbilities.push(ability);
+            else character.characterAbilities[index] = ability;
+            return `${character.name}: ability ${ability.name}`;
+        }
+        case 'spell.ability.remove': {
+            const character = findCharacter(state, payload.characterId);
+            if (!character || character.type !== 'player') throw new Error('Hrac neexistuje.');
+            ensureSpellShape(character);
+            const id = String(payload.id || '');
+            const removed = character.characterAbilities.find(item => item.id === id);
+            character.characterAbilities = character.characterAbilities.filter(item => item.id !== id);
+            return `${character.name}: removed ability ${removed?.name || id}`;
+        }
         case 'spell.rest.character': {
             const character = findCharacter(state, payload.characterId);
             if (!character || character.type !== 'player') throw new Error('Hrac neexistuje.');
@@ -668,6 +694,50 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             if (!character || character.type !== 'monster') throw new Error('Monstrum neexistuje.');
             character.monsterAbilities = clone(payload.monsterAbilities || {});
             return `${character.name}: monster abilities`;
+        }
+        case 'monster.feature.uses': {
+            const character = findCharacter(state, payload.characterId);
+            if (!character || character.type !== 'monster') throw new Error('Monstrum neexistuje.');
+            const feature = character.monsterAbilities?.customFeatures?.[Number(payload.index)];
+            if (!feature) throw new Error('Feature neexistuje.');
+            feature.used = clamp(toNumber(payload.used, feature.used || 0), 0, feature.maxUses || 0);
+            return `${character.name}: ${feature.name}`;
+        }
+        case 'monster.spellSlot.toggle': {
+            const character = findCharacter(state, payload.characterId);
+            if (!character || character.type !== 'monster') throw new Error('Monstrum neexistuje.');
+            const slots = character.monsterAbilities?.spellcasting?.spellSlots?.[String(payload.level)] || character.monsterAbilities?.spellSlots?.[String(payload.level)];
+            if (!slots || slots.atWill) throw new Error('Spell slot level neexistuje.');
+            const index = Number(payload.index);
+            slots.used = index < slots.used ? index : index + 1;
+            slots.used = clamp(slots.used, 0, slots.max || 0);
+            if (character.monsterAbilities?.spellSlots?.[String(payload.level)]) character.monsterAbilities.spellSlots[String(payload.level)].used = slots.used;
+            return `${character.name}: monster spell slot L${payload.level}`;
+        }
+        case 'monster.perDaySpell.uses': {
+            const character = findCharacter(state, payload.characterId);
+            if (!character || character.type !== 'monster') throw new Error('Monstrum neexistuje.');
+            const spell = character.monsterAbilities?.spellcasting?.perDaySpells?.[Number(payload.index)] || character.monsterAbilities?.perDaySpells?.[Number(payload.index)];
+            if (!spell) throw new Error('Spell neexistuje.');
+            spell.used = clamp(toNumber(payload.used, spell.used || 0), 0, spell.maxUses || 0);
+            if (character.monsterAbilities?.perDaySpells?.[Number(payload.index)]) character.monsterAbilities.perDaySpells[Number(payload.index)].used = spell.used;
+            return `${character.name}: ${spell.name}`;
+        }
+        case 'monster.legendary.uses': {
+            const character = findCharacter(state, payload.characterId);
+            if (!character || character.type !== 'monster') throw new Error('Monstrum neexistuje.');
+            const legendary = character.monsterAbilities?.legendaryActions;
+            if (!legendary?.enabled) throw new Error('Legendary actions nejsou aktivni.');
+            legendary.used = clamp(toNumber(payload.used, legendary.used || 0), 0, legendary.max || 0);
+            return `${character.name}: legendary ${legendary.used}/${legendary.max}`;
+        }
+        case 'monster.epic.uses': {
+            const character = findCharacter(state, payload.characterId);
+            if (!character || character.type !== 'monster') throw new Error('Monstrum neexistuje.');
+            const epic = character.monsterAbilities?.epicActions?.actions?.[Number(payload.index)];
+            if (!epic) throw new Error('Epic action neexistuje.');
+            epic.used = clamp(toNumber(payload.used, epic.used || 0), 0, epic.maxUses || 0);
+            return `${character.name}: epic ${epic.name}`;
         }
         case 'database.monster.upsert': {
             upsertDatabaseItem(state.monsterDatabase, normalizeMonsterDbItem(payload.monster || {}), 'monster_db');
@@ -825,12 +895,24 @@ function firstCombatantIndex(state) {
 
 function revealCurrentMonster(state) {
     const current = state.characters[state.combatState.currentTurn];
-    if (current?.type === 'monster') current.revealedToPlayers = true;
+    if (current?.type === 'monster') {
+        current.revealedToPlayers = true;
+        resetMonsterTurnResources(current);
+    }
+}
+
+function resetMonsterTurnResources(monster) {
+    const abilities = monster.monsterAbilities || {};
+    if (abilities.legendaryActions?.enabled) abilities.legendaryActions.used = 0;
+    if (abilities.epicActions?.enabled && Array.isArray(abilities.epicActions.actions)) {
+        abilities.epicActions.actions.forEach(action => {
+            action.used = 0;
+        });
+    }
 }
 
 function nextTurn(state) {
     if (!state.combatState.active || state.characters.length === 0) return;
-    revealCurrentMonster(state);
     const indexes = combatantIndexes(state);
     if (indexes.length === 0) return;
     const currentPosition = Math.max(0, indexes.indexOf(state.combatState.currentTurn));

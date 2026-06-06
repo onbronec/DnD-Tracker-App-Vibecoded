@@ -1,6 +1,6 @@
 const { applyGameAction, redoPage, undoPage } = require('./actions');
 const { authorizeAction, canUseHistory } = require('./permissions');
-const { filterHistoryForPlayer, filterStateForClient } = require('./visibility');
+const { filterHistoryForPlayer, filterStateForClient, stripHistorySnapshots } = require('./visibility');
 
 function createSocketHandlers({ io, stateRef, dmToken, saveState }) {
     const clients = new Map();
@@ -28,7 +28,7 @@ function createSocketHandlers({ io, stateRef, dmToken, saveState }) {
         io.sockets.sockets.forEach(socket => {
             const client = clientFor(socket);
             socket.emit('history:updated', client.role === 'dm'
-                ? stateRef.current.actionLog
+                ? stripHistorySnapshots(stateRef.current.actionLog)
                 : filterHistoryForPlayer(stateRef.current.actionLog));
         });
     }
@@ -66,7 +66,7 @@ function createSocketHandlers({ io, stateRef, dmToken, saveState }) {
         socket.on('history:list', (_payload, ack) => {
             const client = clientFor(socket);
             const list = client.role === 'dm'
-                ? stateRef.current.actionLog
+                ? stripHistorySnapshots(stateRef.current.actionLog)
                 : filterHistoryForPlayer(stateRef.current.actionLog);
             if (typeof ack === 'function') ack({ ok: true, actionLog: list });
         });
@@ -113,8 +113,7 @@ function createSocketHandlers({ io, stateRef, dmToken, saveState }) {
 
 function sanitizeEntry(entry, role) {
     if (!entry) return entry;
-    if (role === 'dm') return entry;
-    if (entry.visibility === 'dm') return null;
+    if (role !== 'dm' && entry.visibility === 'dm') return null;
     const safe = { ...entry };
     delete safe.before;
     delete safe.after;

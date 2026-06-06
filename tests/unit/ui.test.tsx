@@ -5,6 +5,7 @@ import '@testing-library/jest-dom/vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { CollapsiblePanel, CollapsiblePanelGroup } from '../../src/components/CollapsiblePanel';
+import { DatabaseReferenceProvider } from '../../src/components/DatabaseReferences';
 import { MarkdownEditor, MarkdownRenderer } from '../../src/components/Markdown';
 import { SearchPicker } from '../../src/components/SearchPicker';
 import { Toolbelt } from '../../src/components/Toolbelt';
@@ -37,6 +38,64 @@ describe('visual UX helpers', () => {
     expect(screen.getByText('italic')).toBeInTheDocument();
     expect(document.querySelector('script')).toBeNull();
     expect(screen.getByText('<script>alert(1)</script>')).toBeInTheDocument();
+  });
+
+  it('renders clickable database references for conditions, spells and monsters', () => {
+    render(
+      <DatabaseReferenceProvider
+        state={gameState({
+          conditionDatabase: [
+            { id: 'stunned', name: 'Stunned', kind: 'debuff', description: '**Incapacitated** and cannot move.' },
+            { id: 'invisible', name: 'Invisible', kind: 'buff', description: 'Cannot be seen.' }
+          ],
+          spellDatabase: [
+            spell({ id: 'accursed', name: 'Accursed Wish', levelLabel: 'Level 2', school: 'Conjuration', description: 'Wish text.' }),
+            spell({ id: 'invisibility', name: 'Invisibility', levelLabel: 'Level 2', school: 'Illusion', description: 'Become unseen.' })
+          ],
+          monsterDatabase: [{ id: 'orc', name: 'Orc Warlord', hp: 90, ac: 16, description: 'A dangerous commander.' }]
+        })}
+      >
+        <MarkdownRenderer text={'Hit @Stunned, become @invisible, cast @[Accursed Wish], sustain @invisibility, then face @Orc Warlord.'} />
+      </DatabaseReferenceProvider>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stunned' }));
+    expect(screen.getByRole('heading', { name: 'Stunned' })).toBeInTheDocument();
+    expect(screen.getByText('Incapacitated')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Invisible' }));
+    expect(screen.getByRole('heading', { name: 'Invisible' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Accursed Wish' }));
+    expect(screen.getByRole('heading', { name: 'Accursed Wish' })).toBeInTheDocument();
+    expect(screen.getByText(/Level 2/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Invisibility' }));
+    expect(screen.getByRole('heading', { name: 'Invisibility' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Orc Warlord' }));
+    expect(screen.getByRole('heading', { name: 'Orc Warlord' })).toBeInTheDocument();
+    expect(screen.getByText('A dangerous commander.')).toBeInTheDocument();
+  });
+
+  it('links database references followed by spaces, not only punctuation', () => {
+    render(
+      <DatabaseReferenceProvider
+        state={gameState({
+          conditionDatabase: [{ id: 'invisible', name: 'Invisible', kind: 'buff', description: 'Cannot be seen.' }],
+          spellDatabase: [spell({ id: 'invisibility', name: 'Invisibility', levelLabel: 'Level 2', school: 'Illusion', description: 'Become unseen.' })]
+        })}
+      >
+        <MarkdownRenderer text={"You become @Invisible for the spell's duration. The @Invisibility will last. As long as you remain @Invisible, the first attack is stronger."} />
+      </DatabaseReferenceProvider>
+    );
+
+    expect(screen.getAllByRole('button', { name: 'Invisible' })).toHaveLength(2);
+    expect(screen.getByRole('button', { name: 'Invisibility' })).toBeInTheDocument();
   });
 
   it('opens only one horizontal expander panel at a time', () => {
@@ -205,6 +264,38 @@ describe('page visual behavior', () => {
     expect(screen.queryByRole('button', { name: 'Add Spell' })).not.toBeInTheDocument();
   });
 
+  it('does not leak condition cards into other database tabs while switching and searching', () => {
+    render(
+      <DatabasesPage
+        state={gameState({
+          magicItemDatabase: [{ id: 'moonblade', name: 'Moonblade', itemType: 'Weapon', rarity: 'Rare', description: 'Silver blade' }],
+          conditionDatabase: [
+            { id: 'condition_23', name: 'Burning', kind: 'debuff', description: 'Ongoing fire.', hasDice: true, defaultDiceCount: 2, defaultDiceSides: 4, defaultDamageType: 'fire' },
+            { id: 'condition_23', name: 'Burning', kind: 'debuff', description: 'Ongoing fire.', hasDice: true, defaultDiceCount: 2, defaultDiceSides: 4, defaultDamageType: 'fire' }
+          ],
+          spellDatabase: [spell({ id: 'shield', name: 'Shield', levelKey: '1', levelLabel: 'Level 1', school: 'Abjuration' })]
+        })}
+        role="dm"
+        submitAction={vi.fn(async (_action: GameAction) => undefined)}
+        onBackToCombat={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Conditions' }));
+    expect(screen.getAllByRole('heading', { name: 'Burning' })).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Spells' }));
+    expect(screen.queryByRole('heading', { name: 'Burning' })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Shield' })).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText('Search Spells'), { target: { value: 'burn' } });
+    expect(screen.queryByRole('heading', { name: 'Burning' })).not.toBeInTheDocument();
+    expect(screen.getByText('No entries found.')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Magic Items' }));
+    expect(screen.queryByRole('heading', { name: 'Burning' })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Moonblade' })).toBeInTheDocument();
+  });
+
   it('shows known spells, opens spell details and edits learned/prepared spells', () => {
     const submitAction = vi.fn(async (_action: GameAction) => undefined);
     const state = gameState({
@@ -254,6 +345,45 @@ describe('page visual behavior', () => {
     expect(submitAction).toHaveBeenCalledWith(expect.objectContaining({
       type: 'spellbook.prepared.set',
       payload: expect.objectContaining({ characterId: 'ayla', preparedSpellIds: expect.arrayContaining(['shield', 'song']) })
+    }));
+  });
+
+  it('shows character abilities as heading cards with markdown detail and editor actions', () => {
+    const submitAction = vi.fn(async (_action: GameAction) => undefined);
+    render(
+      <SpellsPage
+        state={gameState({
+          characters: [character({
+            characterAbilities: [
+              { id: 'bardic', name: 'Bardic Inspiration', source: 'Class feature', description: '**Bonus** die for an ally.' }
+            ]
+          })]
+        })}
+        role="player"
+        submitAction={submitAction}
+        selectedCharacterId="ayla"
+        onSelectCharacter={vi.fn()}
+        onBackToCombat={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole('heading', { name: 'Abilities' })).toBeInTheDocument();
+    expect(screen.getByTestId('ability-Bardic Inspiration')).toHaveTextContent('Bardic Inspiration');
+    expect(screen.queryByText('Bonus')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('ability-Bardic Inspiration'));
+    expect(screen.getByRole('heading', { name: 'Bardic Inspiration' })).toBeInTheDocument();
+    expect(screen.getByText('Bonus')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    expect(screen.getByRole('heading', { name: 'Edit Ayla Abilities' })).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText('Ability heading'), { target: { value: 'Bardic Inspiration Updated' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save ability' }));
+    expect(submitAction).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'spell.ability.upsert',
+      payload: expect.objectContaining({
+        characterId: 'ayla',
+        ability: expect.objectContaining({ id: 'bardic', name: 'Bardic Inspiration Updated' })
+      })
     }));
   });
 
@@ -536,6 +666,7 @@ function character(overrides: Partial<Character> = {}): Character {
     spellcasterLevel: 1,
     spellSlots: {},
     customFeatures: [],
+    characterAbilities: [],
     hitDice: { max: 1, current: 1 },
     proficiencyBonus: 2,
     abilityScores: { strength: 10, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: 10 },

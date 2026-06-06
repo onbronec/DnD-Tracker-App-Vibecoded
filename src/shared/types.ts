@@ -51,6 +51,7 @@ export interface Character {
   spellcasterLevel: number;
   spellSlots: Record<string, { max: number; used: number }>;
   customFeatures: CustomFeature[];
+  characterAbilities: CharacterAbility[];
   hitDice: { max: number; current: number };
   proficiencyBonus: number;
   abilityScores: Record<AbilityKey, number>;
@@ -67,6 +68,13 @@ export interface CharacterSpellbook {
   preparesSpells: boolean;
   preparedNonEpicMax: number;
   preparedEpicMax: number;
+}
+
+export interface CharacterAbility {
+  id: string;
+  name: string;
+  description: string;
+  source?: string;
 }
 
 export interface SpellDatabaseEntry {
@@ -104,14 +112,82 @@ export interface CustomFeature {
   statusEffect?: boolean;
 }
 
+export interface MonsterTextEntry {
+  id?: string;
+  name: string;
+  description: string;
+}
+
+export interface MonsterEpicAction {
+  id?: string;
+  name: string;
+  description: string;
+  maxUses: number;
+  used: number;
+}
+
+export interface MonsterPowerResource {
+  enabled: boolean;
+  name: string;
+  max: number;
+  current: number;
+}
+
+export interface MonsterSpellcasting {
+  enabled?: boolean;
+  spellcastingType?: string;
+  spellcastingLevel?: number;
+  spellSlots?: Record<string, { max: number; used: number; atWill?: boolean }>;
+  atWillSpells?: string[];
+  perDaySpells?: Array<{ name: string; maxUses: number; used: number }>;
+}
+
 export interface MonsterAbilities {
   enabled?: boolean;
   spellcastingType?: string;
   spellcastingLevel?: number;
-  spellSlots?: Record<string, { max: number; used: number }>;
+  spellSlots?: Record<string, { max: number; used: number; atWill?: boolean }>;
   perDaySpells?: Array<{ name: string; maxUses: number; used: number }>;
   customFeatures?: CustomFeature[];
   legendaryActions?: { enabled: boolean; max: number; used: number };
+  power?: MonsterPowerResource;
+  spellcasting?: MonsterSpellcasting;
+  epicActions?: { enabled: boolean; actions: MonsterEpicAction[] };
+}
+
+export interface MonsterDatabaseEntry {
+  id: string;
+  name: string;
+  hp: number;
+  maxHp?: number;
+  ac: number;
+  initBonus: number;
+  speed?: string;
+  stats?: Record<AbilityKey, number>;
+  saves?: string;
+  skills?: string;
+  senses?: string;
+  languages?: string;
+  challenge?: string;
+  proficiency?: string;
+  type?: string;
+  size?: string;
+  description?: string;
+  defensiveFeatures?: MonsterTextEntry[];
+  features?: MonsterTextEntry[];
+  actions?: MonsterTextEntry[];
+  bonusActions?: MonsterTextEntry[];
+  reactions?: MonsterTextEntry[];
+  legendaryActionEntries?: MonsterTextEntry[];
+  mythicActions?: MonsterTextEntry[];
+  lairActions?: MonsterTextEntry[];
+  hasLairActions?: boolean;
+  hasMythicActions?: boolean;
+  maxPower?: number;
+  powerName?: string;
+  monsterAbilities?: MonsterAbilities;
+  tags?: string[];
+  source?: string;
 }
 
 export interface CombatState {
@@ -140,7 +216,7 @@ export interface GameState {
   schemaVersion: number;
   characters: Character[];
   combatState: CombatState;
-  monsterDatabase: Array<Record<string, unknown>>;
+  monsterDatabase: MonsterDatabaseEntry[];
   magicItemDatabase: Array<Record<string, unknown>>;
   potionDatabase: Array<Record<string, unknown>>;
   conditionDatabase: Array<Record<string, unknown>>;

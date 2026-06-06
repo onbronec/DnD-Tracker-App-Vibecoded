@@ -8,6 +8,7 @@ import { MonstersPage } from './pages/MonstersPage';
 import { DatabasesPage } from './pages/DatabasesPage';
 import { HistoryPanel } from './components/HistoryPanel';
 import { Toolbelt } from './components/Toolbelt';
+import { DatabaseReferenceProvider } from './components/DatabaseReferences';
 
 const PAGES: Array<{ id: PageScope; label: string; dmOnly?: boolean }> = [
   { id: 'combat', label: 'Combat' },
@@ -92,7 +93,8 @@ export function App() {
   }
 
   return (
-    <main className="app-shell">
+    <DatabaseReferenceProvider state={state}>
+      <main className="app-shell">
       <header className="topbar">
         <div>
           <h1>DnD Companion</h1>
@@ -189,7 +191,8 @@ export function App() {
         )}
       </div>
       <Toolbelt role={socket.role} state={state} submitAction={socket.submitAction} />
-    </main>
+      </main>
+    </DatabaseReferenceProvider>
   );
 }
 

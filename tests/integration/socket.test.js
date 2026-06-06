@@ -90,4 +90,23 @@ describe('socket roles and actions', () => {
         harness.io.close();
         await new Promise(resolve => harness.httpServer.close(resolve));
     });
+
+    it('does not send undo snapshots over socket acknowledgements or history', async () => {
+        const harness = await startHarness();
+        const dm = await connect(harness.url, { mode: 'dm', token: 'secret' });
+        const hpResult = await new Promise(resolve => dm.socket.emit('action:submit', { type: 'character.adjustHp', payload: { characterId: 'hero', amount: 1 } }, resolve));
+        expect(hpResult.ok).toBe(true);
+        expect(hpResult.entry.before).toBeUndefined();
+        expect(hpResult.entry.after).toBeUndefined();
+        expect(harness.stateRef.current.actionLog[0].before).toBeTruthy();
+
+        const historyResult = await new Promise(resolve => dm.socket.emit('history:list', {}, resolve));
+        expect(historyResult.ok).toBe(true);
+        expect(historyResult.actionLog[0].before).toBeUndefined();
+        expect(historyResult.actionLog[0].after).toBeUndefined();
+
+        dm.socket.disconnect();
+        harness.io.close();
+        await new Promise(resolve => harness.httpServer.close(resolve));
+    });
 });

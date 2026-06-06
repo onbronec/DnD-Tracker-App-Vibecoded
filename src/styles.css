@@ -790,6 +790,41 @@ textarea {
   background: #0f172a;
 }
 
+.ability-wiki-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.ability-wiki-card {
+  display: grid;
+  gap: 5px;
+  min-height: 70px;
+  padding: 12px;
+  text-align: left;
+  color: var(--text);
+  background: #0f172a;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.ability-wiki-card:hover {
+  border-color: var(--primary);
+  background: #111c31;
+}
+
+.ability-wiki-card span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.ability-editor-layout {
+  display: grid;
+  gap: 16px;
+}
+
 .dot,
 .hit-die {
   width: 28px;
@@ -867,6 +902,83 @@ textarea {
 .feature-bar-fill {
   height: 100%;
   background: var(--success);
+}
+
+.monster-meta-grid,
+.monster-tracker-grid,
+.monster-spell-grid,
+.monster-entry-list {
+  display: grid;
+  gap: 12px;
+}
+
+.monster-meta-grid {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  margin-top: 14px;
+}
+
+.monster-meta,
+.monster-tracker-card,
+.monster-entry-card {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0f172a;
+}
+
+.monster-meta span,
+.monster-tracker-card p {
+  color: var(--muted);
+}
+
+.monster-meta span {
+  display: block;
+  margin-bottom: 5px;
+  font-weight: 800;
+}
+
+.monster-tracker-grid,
+.monster-spell-grid {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.monster-tracker-card {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.monster-tracker-card h3,
+.monster-entry-card h3 {
+  margin-bottom: 4px;
+}
+
+.monster-entry-card {
+  display: grid;
+  gap: 8px;
+}
+
+.monster-editor-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.monster-entry-editor {
+  min-width: 0;
+}
+
+.monster-import-box {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0b1220;
+}
+
+.monster-ability-grid {
+  margin-bottom: 0;
 }
 
 .sheet-ability-grid {
@@ -1496,6 +1608,42 @@ textarea {
 .markdown-editor {
   display: grid;
   gap: 8px;
+}
+
+.markdown-reference {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 2px;
+  padding: 1px 6px;
+  border: 1px solid rgba(56, 189, 248, 0.42);
+  border-radius: 6px;
+  background: rgba(14, 165, 233, 0.12);
+  color: #7dd3fc;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+  vertical-align: baseline;
+}
+
+.markdown-reference:hover {
+  background: rgba(14, 165, 233, 0.22);
+  border-color: var(--primary);
+}
+
+.markdown-reference-condition {
+  border-color: rgba(168, 85, 247, 0.46);
+  background: rgba(168, 85, 247, 0.13);
+  color: #d8b4fe;
+}
+
+.markdown-reference-monster {
+  border-color: rgba(248, 113, 113, 0.45);
+  background: rgba(248, 113, 113, 0.13);
+  color: #fecaca;
+}
+
+.database-reference-modal {
+  width: min(980px, calc(100vw - 48px));
 }
 
 .markdown-toolbar {
