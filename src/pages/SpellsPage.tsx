@@ -11,12 +11,19 @@ import {
   ABILITIES,
   SKILLS,
   abilityModifier,
+  abilityCheckBonus,
+  armorClass,
   adjustedAbilityScores,
   clampAbilityScore,
   clampProficiencyBonus,
   saveBonus,
+  skillAbility,
   signed,
-  skillBonus
+  skillBonus,
+  spellAttackBonus,
+  spellSaveDc,
+  spellcastingAbility,
+  initiativeBonus
 } from '../shared/characterSheet';
 
 interface Props {
@@ -124,6 +131,7 @@ export function SpellsPage({ state, role, submitAction, selectedCharacterId, onS
           </div>
         </section>
         <HealthConditionsPanel character={selected} role={role} conditions={state.conditionDatabase || []} submitAction={submitAction} />
+        <CharacterGeneral character={selected} submitAction={submitAction} />
         <CharacterSheet character={selected} submitAction={submitAction} />
         <section id="sheet-tools" className="sheet-section-anchor">
           <CollapsiblePanelGroup
@@ -144,6 +152,7 @@ export function SpellsPage({ state, role, submitAction, selectedCharacterId, onS
           />
         </section>
         <SpellSlots character={selected} submitAction={submitAction} />
+        <ActionsWiki character={selected} submitAction={submitAction} />
         <SpellbookSection character={selected} spellDatabase={state.spellDatabase || []} submitAction={submitAction} />
         <HitDice character={selected} submitAction={submitAction} />
         <Features character={selected} submitAction={submitAction} />
@@ -156,9 +165,11 @@ export function SpellsPage({ state, role, submitAction, selectedCharacterId, onS
 const SHEET_SECTION_LINKS = [
   { id: 'sheet-top', label: 'Character' },
   { id: 'sheet-health', label: 'Health & Conditions' },
+  { id: 'sheet-general', label: 'General' },
   { id: 'sheet-core', label: 'Scores, Saves & Skills' },
   { id: 'sheet-tools', label: 'Setup & Features' },
   { id: 'sheet-spell-slots', label: 'Spell Slots' },
+  { id: 'sheet-actions', label: 'Actions & Attacks' },
   { id: 'sheet-spells-known', label: 'Spells Known' },
   { id: 'sheet-hit-dice', label: 'Hit Dice' },
   { id: 'sheet-features', label: 'Custom Features' },
@@ -284,6 +295,63 @@ function conditionKindClass(condition?: Record<string, unknown>) {
   return 'effect-neutral';
 }
 
+function CharacterGeneral({ character, submitAction }: { character: Character; submitAction: Props['submitAction'] }) {
+  const [editing, setEditing] = useState(false);
+  const adjusted = adjustedAbilityScores(character);
+  const castingAbility = spellcastingAbility(character);
+  const speeds = character.sheetGeneral?.speeds || {};
+  const visibleSpeeds = [
+    ['Walk', speeds.walk ?? 30],
+    ['Fly', speeds.fly ?? 0],
+    ['Hover', speeds.hover ?? 0],
+    ['Swim', speeds.swim ?? 0],
+    ['Climb', speeds.climb ?? 0],
+    ['Burrow', speeds.burrow ?? 0]
+  ].filter(([, value], index) => index === 0 || Number(value) > 0);
+
+  return (
+    <section id="sheet-general" className="section sheet-section-anchor">
+      <div className="section-title-row">
+        <div>
+          <h2>General</h2>
+          <p>Compact combat and spellcasting reference.</p>
+        </div>
+        <button className="btn" onClick={() => setEditing(true)}>Edit General</button>
+      </div>
+      <div className="stats-grid compact-stats-grid">
+        <div className="stat"><span>AC</span><strong>{armorClass(character)}</strong><small>{bonusMeta(character, 'ac') || `Base ${character.ac || 10}`}</small></div>
+        <div className="stat"><span>Initiative</span><strong>{character.initiative ?? signed(initiativeBonus(character, adjusted.scores) + (character.initBonus || 0))}</strong><small>{bonusMeta(character, 'initiative') || `Base ${signed(character.initBonus || 0)}`}</small></div>
+        <div className="stat"><span>Spell DC</span><strong>{spellSaveDc(character, adjusted.scores)}</strong><small>{bonusMeta(character, 'spellDc')}</small></div>
+        <div className="stat"><span>Spell Attack</span><strong>{signed(spellAttackBonus(character, adjusted.scores))}</strong><small>{bonusMeta(character, 'spellAttack')}</small></div>
+        <div className="stat"><span>Casting</span><strong>{ABILITIES.find(ability => ability.key === castingAbility)?.short}</strong></div>
+        <div className="stat"><span>Reactions</span><strong>{character.currentReactions ?? character.maxReactions ?? 1}/{character.maxReactions ?? 1}</strong></div>
+      </div>
+      <div className="sheet-speed-row">
+        {visibleSpeeds.map(([label, value]) => (
+          <span className="type-pill" key={String(label)}>{label}: {value} ft.</span>
+        ))}
+      </div>
+      {editing && (
+        <SheetEditorModal
+          character={character}
+          onClose={() => setEditing(false)}
+          onSave={async payload => {
+            await submitAction({ type: 'spell.sheet.update', payload: { characterId: character.id, ...payload } });
+            setEditing(false);
+          }}
+        />
+      )}
+    </section>
+  );
+}
+
+function bonusMeta(character: Character, targetType: string) {
+  return (character.sheetBonuses || [])
+    .filter(bonus => bonus.targetType === targetType)
+    .map(bonus => `${bonus.valueMode === 'halfProficiency' ? 'half PB' : signed(Number(bonus.value) || 0)}${bonus.source ? ` / ${bonus.source}` : ''}`)
+    .join(', ');
+}
+
 function CharacterSheet({ character, submitAction }: { character: Character; submitAction: Props['submitAction'] }) {
   const [editing, setEditing] = useState(false);
   const adjusted = adjustedAbilityScores(character);
@@ -331,8 +399,17 @@ function CharacterSheet({ character, submitAction }: { character: Character; sub
           rows={SKILLS.map(skill => ({
             key: skill.key,
             label: skill.label,
-            meta: `${ABILITIES.find(ability => ability.key === skill.ability)?.short}${(character.skillExpertise || []).includes(skill.key) ? ' / expertise' : (character.skillProficiencies || []).includes(skill.key) ? ' / proficient' : ''}`,
+            meta: `${ABILITIES.find(ability => ability.key === skillAbility(character, skill.key))?.short}${(character.skillExpertise || []).includes(skill.key) ? ' / expertise' : (character.skillProficiencies || []).includes(skill.key) ? ' / proficient' : ''}`,
             value: skillBonus(character, skill.key, adjusted.scores)
+          }))}
+        />
+        <SheetBonusList
+          title="Ability Checks"
+          rows={ABILITIES.map(ability => ({
+            key: ability.key,
+            label: ability.label,
+            meta: ability.short,
+            value: abilityCheckBonus(character, ability.key, adjusted.scores)
           }))}
         />
       </div>
@@ -370,6 +447,21 @@ function SheetBonusList({ title, rows }: { title: string; rows: Array<{ key: str
 
 function SheetEditorModal({ character, onClose, onSave }: { character: Character; onClose: () => void; onSave: (payload: Record<string, unknown>) => Promise<unknown> }) {
   const [proficiencyBonus, setProficiencyBonus] = useState(String(character.proficiencyBonus || 2));
+  const [baseAc, setBaseAc] = useState(String(character.ac || 10));
+  const [baseInitBonus, setBaseInitBonus] = useState(String(character.initBonus || 0));
+  const [maxReactions, setMaxReactions] = useState(String(character.maxReactions ?? 1));
+  const [spellAbility, setSpellAbility] = useState<AbilityKey>(spellcastingAbility(character));
+  const [speeds, setSpeeds] = useState<Record<string, string>>(() => {
+    const current = character.sheetGeneral?.speeds || {};
+    return {
+      walk: String(current.walk ?? 30),
+      fly: String(current.fly ?? 0),
+      hover: String(current.hover ?? 0),
+      swim: String(current.swim ?? 0),
+      climb: String(current.climb ?? 0),
+      burrow: String(current.burrow ?? 0)
+    };
+  });
   const [scores, setScores] = useState<Record<AbilityKey, string>>(() => ABILITIES.reduce((result, ability) => {
     result[ability.key] = String(character.abilityScores?.[ability.key] ?? 10);
     return result;
@@ -377,6 +469,8 @@ function SheetEditorModal({ character, onClose, onSave }: { character: Character
   const [saveProficiencies, setSaveProficiencies] = useState<AbilityKey[]>(character.savingThrowProficiencies || []);
   const [skillProficiencies, setSkillProficiencies] = useState<string[]>(character.skillProficiencies || []);
   const [skillExpertise, setSkillExpertise] = useState<string[]>(character.skillExpertise || []);
+  const [intimidationAbility, setIntimidationAbility] = useState<AbilityKey>(character.skillAbilityOverrides?.intimidation || 'charisma');
+  const [sheetBonuses, setSheetBonuses] = useState(() => (character.sheetBonuses || []).map(bonus => ({ ...bonus })));
 
   function toggle<T extends string>(values: T[], value: T, checked: boolean) {
     return checked ? [...new Set([...values, value])] : values.filter(item => item !== value);
@@ -390,11 +484,24 @@ function SheetEditorModal({ character, onClose, onSave }: { character: Character
     const expertise = skillExpertise;
     onSave({
       proficiencyBonus: clampProficiencyBonus(Number(proficiencyBonus)),
+      ac: Number(baseAc) || 10,
+      initBonus: Number(baseInitBonus) || 0,
+      maxReactions: Number(maxReactions) || 0,
       abilityScores: nextScores,
       savingThrowProficiencies: saveProficiencies,
       skillProficiencies: [...new Set([...skillProficiencies, ...expertise])],
-      skillExpertise: expertise
+      skillExpertise: expertise,
+      skillAbilityOverrides: intimidationAbility === 'strength' ? { ...(character.skillAbilityOverrides || {}), intimidation: 'strength' } : { ...(character.skillAbilityOverrides || {}), intimidation: 'charisma' },
+      sheetBonuses,
+      sheetGeneral: {
+        spellcastingAbility: spellAbility,
+        speeds: Object.fromEntries(Object.entries(speeds).map(([key, value]) => [key, Number(value) || 0]))
+      }
     });
+  }
+
+  function updateBonus(index: number, patch: Record<string, unknown>) {
+    setSheetBonuses(current => current.map((bonus, bonusIndex) => bonusIndex === index ? { ...bonus, ...patch } : bonus));
   }
 
   return (
@@ -412,6 +519,30 @@ function SheetEditorModal({ character, onClose, onSave }: { character: Character
             <span>Proficiency Bonus</span>
             <input value={proficiencyBonus} onChange={event => setProficiencyBonus(event.target.value)} type="number" min={0} max={10} />
           </label>
+          <label className="field-card">
+            <span>Base AC</span>
+            <input value={baseAc} onChange={event => setBaseAc(event.target.value)} type="number" min={0} />
+          </label>
+          <label className="field-card">
+            <span>Initiative Bonus</span>
+            <input value={baseInitBonus} onChange={event => setBaseInitBonus(event.target.value)} type="number" />
+          </label>
+          <label className="field-card">
+            <span>Reactions</span>
+            <input value={maxReactions} onChange={event => setMaxReactions(event.target.value)} type="number" min={0} />
+          </label>
+          <label className="field-card">
+            <span>Spellcasting Ability</span>
+            <select value={spellAbility} onChange={event => setSpellAbility(event.target.value as AbilityKey)}>
+              {ABILITIES.map(ability => <option key={ability.key} value={ability.key}>{ability.label}</option>)}
+            </select>
+          </label>
+          {Object.keys(speeds).map(speed => (
+            <label className="field-card" key={speed}>
+              <span>{speed}</span>
+              <input value={speeds[speed]} onChange={event => setSpeeds(current => ({ ...current, [speed]: event.target.value }))} type="number" min={0} />
+            </label>
+          ))}
           {ABILITIES.map(ability => (
             <label className="field-card" key={ability.key}>
               <span>{ability.label}</span>
@@ -441,6 +572,13 @@ function SheetEditorModal({ character, onClose, onSave }: { character: Character
           </div>
           <div className="sheet-edit-list">
             <h3>Skill Proficiencies And Expertise</h3>
+            <label className="field-card">
+              <span>Intimidation ability</span>
+              <select value={intimidationAbility} onChange={event => setIntimidationAbility(event.target.value as AbilityKey)}>
+                <option value="charisma">Charisma</option>
+                <option value="strength">Strength</option>
+              </select>
+            </label>
             {SKILLS.map(skill => (
               <div className="skill-edit-row" key={skill.key}>
                 <span>{skill.label}</span>
@@ -466,6 +604,57 @@ function SheetEditorModal({ character, onClose, onSave }: { character: Character
               </div>
             ))}
           </div>
+        </div>
+        <div className="sheet-edit-list sheet-bonus-editor">
+          <div className="section-title-row">
+            <div>
+              <h3>Numeric Bonuses</h3>
+              <p>Applies to saves, skills or raw ability checks. Use half proficiency for Jack-of-all-trades style rules.</p>
+            </div>
+            <button
+              className="btn small"
+              onClick={() => setSheetBonuses(current => [...current, { id: `draft-${Date.now()}`, targetType: 'skill', targetKey: 'perception', value: 1, valueMode: 'fixed', source: '', note: '', condition: 'always' }])}
+            >
+              Add bonus
+            </button>
+          </div>
+          {sheetBonuses.length === 0 && <p className="empty">No sheet bonuses.</p>}
+          {sheetBonuses.map((bonus, index) => (
+            <div className="sheet-bonus-row" key={bonus.id || index}>
+              <select value={bonus.targetType} onChange={event => updateBonus(index, { targetType: event.target.value })}>
+                <option value="allSaves">All saves</option>
+                <option value="save">Specific save</option>
+                <option value="allSkills">All skills</option>
+                <option value="skill">Specific skill</option>
+                <option value="allAbilityChecks">All ability checks</option>
+                <option value="abilityCheck">Specific ability check</option>
+                <option value="ac">AC</option>
+                <option value="initiative">Initiative</option>
+                <option value="spellAttack">Spell attack</option>
+                <option value="spellDc">Spell DC</option>
+              </select>
+              <select value={bonus.targetKey || ''} onChange={event => updateBonus(index, { targetKey: event.target.value })} disabled={String(bonus.targetType).startsWith('all') || ['ac', 'initiative', 'spellAttack', 'spellDc'].includes(String(bonus.targetType))}>
+                <option value="">Target...</option>
+                {bonus.targetType === 'save' || bonus.targetType === 'abilityCheck'
+                  ? ABILITIES.map(ability => <option key={ability.key} value={ability.key}>{ability.label}</option>)
+                  : SKILLS.map(skill => <option key={skill.key} value={skill.key}>{skill.label}</option>)}
+              </select>
+              <select value={bonus.valueMode || 'fixed'} onChange={event => updateBonus(index, { valueMode: event.target.value, value: event.target.value === 'halfProficiency' ? 0 : bonus.value })}>
+                <option value="fixed">Fixed</option>
+                <option value="halfProficiency">Half proficiency</option>
+              </select>
+              {bonus.valueMode !== 'halfProficiency' && (
+                <input value={String(bonus.value ?? 0)} onChange={event => updateBonus(index, { value: Number(event.target.value) || 0 })} type="number" placeholder="Bonus" />
+              )}
+              <select value={bonus.condition || 'always'} onChange={event => updateBonus(index, { condition: event.target.value })}>
+                <option value="always">Always</option>
+                <option value="ifNotProficientOrExpert">If not proficient/expert</option>
+              </select>
+              <input value={bonus.source || ''} onChange={event => updateBonus(index, { source: event.target.value })} placeholder="Source" />
+              <input value={bonus.note || ''} onChange={event => updateBonus(index, { note: event.target.value })} placeholder="Note" />
+              <button className="btn danger small" onClick={() => setSheetBonuses(current => current.filter((_, bonusIndex) => bonusIndex !== index))}>Remove</button>
+            </div>
+          ))}
         </div>
         <div className="button-row rest-row">
           <button className="btn success" onClick={save}>Save Sheet</button>
@@ -617,6 +806,8 @@ function SpellSlots({ character, submitAction }: { character: Character; submitA
 }
 
 function spellSlotLabel(level: string) {
+  const epic = level.match(/^epic([1-3])$/);
+  if (epic) return `Epic ${epic[1]}`;
   const numeric = Number(level);
   if (numeric >= 10 && numeric <= 12) return `Epic ${numeric - 9}`;
   return `Level ${level}`;
@@ -1045,6 +1236,115 @@ function AbilitiesWiki({ character, submitAction }: { character: Character; subm
         />
       )}
     </section>
+  );
+}
+
+function ActionsWiki({ character, submitAction }: { character: Character; submitAction: Props['submitAction'] }) {
+  const actions = character.characterActions || [];
+  const [detail, setDetail] = useState<CharacterAbility | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [editingTarget, setEditingTarget] = useState<CharacterAbility | null>(null);
+
+  return (
+    <section id="sheet-actions" className="section sheet-section-anchor">
+      <div className="section-title-row">
+        <div>
+          <h2>Actions / Attacks</h2>
+          <p>{actions.length === 0 ? 'Attacks, common actions and combat reminders.' : `${actions.length} action entr${actions.length === 1 ? 'y' : 'ies'}.`}</p>
+        </div>
+        <button className="btn" onClick={() => setEditing(true)}>Edit actions</button>
+      </div>
+
+      {actions.length === 0 && <p className="empty">No actions recorded yet.</p>}
+      <div className="ability-wiki-grid">
+        {actions.map(action => (
+          <button key={action.id} className="ability-wiki-card" onClick={() => setDetail(action)} data-testid={`action-${action.name}`}>
+            <strong>{action.name}</strong>
+            {action.source && <span>{action.source}</span>}
+          </button>
+        ))}
+      </div>
+
+      {detail && (
+        <AbilityDetailModal
+          ability={detail}
+          onClose={() => setDetail(null)}
+          onEdit={() => {
+            setEditingTarget(detail);
+            setDetail(null);
+            setEditing(true);
+          }}
+        />
+      )}
+      {editing && (
+        <ActionEditorModal
+          character={character}
+          initialEditing={editingTarget}
+          submitAction={submitAction}
+          onClose={() => {
+            setEditing(false);
+            setEditingTarget(null);
+          }}
+        />
+      )}
+    </section>
+  );
+}
+
+function ActionEditorModal({
+  character,
+  initialEditing,
+  submitAction,
+  onClose
+}: {
+  character: Character;
+  initialEditing: CharacterAbility | null;
+  submitAction: Props['submitAction'];
+  onClose: () => void;
+}) {
+  const actions = character.characterActions || [];
+  const [editingAction, setEditingAction] = useState<CharacterAbility | null>(initialEditing);
+
+  async function saveAction(action: Partial<CharacterAbility>) {
+    await submitAction({ type: 'spell.action.upsert', payload: { characterId: character.id, action } });
+    setEditingAction(null);
+  }
+
+  return (
+    <Modal>
+      <div className="modal-card sheet-editor-modal">
+        <div className="section-title-row">
+          <div>
+            <h2>Edit {character.name} Actions</h2>
+            <p>Combat-facing action and attack notes. Markdown references are supported.</p>
+          </div>
+          <button className="btn" onClick={onClose}>Close</button>
+        </div>
+        <div className="ability-editor-layout">
+          <div className="spellbook-known-list">
+            {actions.length === 0 && <p className="empty">No saved actions.</p>}
+            {actions.map(action => (
+              <div className="spellbook-known-row" key={action.id}>
+                <div>
+                  <strong>{action.name}</strong>
+                  <span>{action.source || 'Action / attack'}</span>
+                </div>
+                <div className="button-row">
+                  <button className="btn small" onClick={() => setEditingAction(action)}>Edit</button>
+                  <button className="btn danger small" onClick={() => submitAction({ type: 'spell.action.remove', payload: { characterId: character.id, id: action.id } })}>Remove</button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <AbilityForm
+            key={editingAction?.id || 'new-action'}
+            initial={editingAction}
+            submitLabel={editingAction ? 'Save action' : 'Add action'}
+            onSubmit={saveAction}
+          />
+        </div>
+      </div>
+    </Modal>
   );
 }
 

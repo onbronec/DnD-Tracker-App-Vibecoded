@@ -46,7 +46,9 @@ const DEFAULT_CONDITIONS = [
     { name: 'Marked', kind: 'neutral', description: 'Marked for tracking or a special effect.', source: 'homebrew' },
     { name: 'Ability Score Set', kind: 'neutral', description: 'Temporarily sets one ability score to a chosen value. This affects Character Sheets until removed.', hasLevels: true, maxLevel: 30, statAdjustmentType: 'set', source: 'sheet' },
     { name: 'Ability Score Increased', kind: 'buff', description: 'Temporarily increases one ability score by a chosen amount. This affects Character Sheets until removed.', hasLevels: true, maxLevel: 30, statAdjustmentType: 'increase', source: 'sheet' },
-    { name: 'Ability Score Reduced', kind: 'debuff', description: 'Temporarily reduces one ability score by a chosen amount. This affects Character Sheets until removed.', hasLevels: true, maxLevel: 30, statAdjustmentType: 'decrease', source: 'sheet' }
+    { name: 'Ability Score Reduced', kind: 'debuff', description: 'Temporarily reduces one ability score by a chosen amount. This affects Character Sheets until removed.', hasLevels: true, maxLevel: 30, statAdjustmentType: 'decrease', source: 'sheet' },
+    { name: 'Armor Class Increased', kind: 'buff', description: 'Temporarily increases AC by the tracked level/value.', hasLevels: true, maxLevel: 30, source: 'sheet' },
+    { name: 'Armor Class Reduced', kind: 'debuff', description: 'Temporarily reduces AC by the tracked level/value.', hasLevels: true, maxLevel: 30, source: 'sheet' }
 ];
 
 module.exports = {

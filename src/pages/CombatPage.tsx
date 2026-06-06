@@ -5,7 +5,7 @@ import { CollapsiblePanelGroup } from '../components/CollapsiblePanel';
 import { MarkdownRenderer } from '../components/Markdown';
 import { Modal } from '../components/Modal';
 import { SearchPicker } from '../components/SearchPicker';
-import { ABILITIES } from '../shared/characterSheet';
+import { ABILITIES, armorClass } from '../shared/characterSheet';
 
 interface Props {
   state: GameState;
@@ -154,7 +154,8 @@ function AddCharacterForm({ submitAction }: { submitAction: Props['submitAction'
     currentHp: '',
     ac: '10',
     initBonus: '0',
-    maxPower: '0'
+    maxPower: '0',
+    maxReactions: '1'
   });
 
   function update(key: string, value: string) {
@@ -173,7 +174,9 @@ function AddCharacterForm({ submitAction }: { submitAction: Props['submitAction'
         currentHp: Number(form.currentHp) || Number(form.maxHp) || 1,
         ac: Number(form.ac) || 10,
         initBonus: Number(form.initBonus) || 0,
-        maxPower: Number(form.maxPower) || 0
+        maxPower: Number(form.maxPower) || 0,
+        maxReactions: Number(form.maxReactions) || 1,
+        currentReactions: Number(form.maxReactions) || 1
       }
     });
     setForm(current => ({ ...current, name: '', currentHp: '' }));
@@ -191,6 +194,7 @@ function AddCharacterForm({ submitAction }: { submitAction: Props['submitAction'
       <input value={form.ac} onChange={event => update('ac', event.target.value)} type="number" placeholder="AC" />
       <input value={form.initBonus} onChange={event => update('initBonus', event.target.value)} type="number" placeholder="Initiative bonus" />
       <input value={form.maxPower} onChange={event => update('maxPower', event.target.value)} type="number" placeholder="Max Power" />
+      <input value={form.maxReactions} onChange={event => update('maxReactions', event.target.value)} type="number" placeholder="Reactions" />
       <button className="btn success">Add</button>
     </form>
   );
@@ -219,6 +223,8 @@ function AddMonsterFromDatabase({ monsters, submitAction }: { monsters: MonsterD
           maxHp: Number(monster.hp || monster.maxHp || 1),
           currentHp: Number(monster.hp || monster.maxHp || 1),
           ac: Number(monster.ac || 10),
+          maxReactions: Number(monster.maxReactions || 1),
+          currentReactions: Number(monster.maxReactions || 1),
           initBonus: Number(monster.initBonus || 0),
           maxPower,
           currentPower,
@@ -236,6 +242,8 @@ function AddMonsterFromDatabase({ monsters, submitAction }: { monsters: MonsterD
             maxHp: 1,
             currentHp: 1,
             ac: 10,
+            maxReactions: 0,
+            currentReactions: 0,
             initBonus: 0,
             initiative: 20,
             maxPower: 0,
@@ -346,6 +354,8 @@ function CharacterCard({
         ac: character.ac,
         initBonus: character.initBonus,
         maxPower: character.maxPower || 0,
+        maxReactions: character.maxReactions ?? 1,
+        currentReactions: character.maxReactions ?? 1,
         powerName: character.powerName || 'Power',
         monsterData: character.monsterData,
         monsterAbilities: character.monsterAbilities
@@ -375,8 +385,9 @@ function CharacterCard({
       <div className="stats-grid">
         <Stat label="HP" value={role === 'player' && character.type === 'monster' ? monsterHealthLabel(character.currentHp, character.maxHp) : `${character.currentHp}/${character.maxHp}`} />
         <Stat label="Temp" value={String(character.tempHp || 0)} />
-        <Stat label="AC" value={String(character.ac || 10)} />
+        <Stat label="AC" value={String(armorClass(character))} />
         <Stat label="Init" value={String(character.initiative ?? '-')} />
+        <Stat label="React" value={`${character.currentReactions ?? character.maxReactions ?? 1}/${character.maxReactions ?? 1}`} />
         {isDM && character.type === 'monster' && <Stat label={character.powerName || 'Power'} value={`${character.currentPower || 0}/${character.maxPower || 0}`} />}
       </div>
 
@@ -418,6 +429,21 @@ function CharacterCard({
             <button className="btn danger small" onClick={() => submitAction({ type: 'character.adjustHp', payload: { characterId: character.id, amount: -10 } })}>HP -10</button>
             <button className="btn success small" onClick={() => submitAction({ type: 'character.adjustHp', payload: { characterId: character.id, amount: 1 } })}>HP +1</button>
             <button className="btn success small" onClick={() => submitAction({ type: 'character.adjustHp', payload: { characterId: character.id, amount: 10 } })}>HP +10</button>
+          </div>
+          <div className="quick-row">
+            {Array.from({ length: Math.max(0, character.maxReactions ?? 1) }, (_, reactionIndex) => {
+              const currentReactions = character.currentReactions ?? character.maxReactions ?? 1;
+              const isAvailable = reactionIndex < currentReactions;
+              return (
+                <button
+                  key={reactionIndex}
+                  className={`feature-box ${isAvailable ? '' : 'used'}`}
+                  onClick={() => submitAction({ type: 'character.reaction.set', payload: { characterId: character.id, value: currentReactions + (isAvailable ? -1 : 1) } })}
+                  aria-label={`${character.name} reaction ${reactionIndex + 1}`}
+                  title="Reaction"
+                />
+              );
+            })}
           </div>
           <div className="input-action-row">
             <input value={drafts.damage} onChange={event => setDraft('damage', event.target.value)} type="number" placeholder="Damage" data-testid={`damage-${character.name}`} />

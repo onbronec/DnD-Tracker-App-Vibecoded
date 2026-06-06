@@ -37,6 +37,19 @@ const SPELL_SLOTS_TABLE = {
     20: [4, 3, 3, 3, 3, 2, 2, 1, 1]
 };
 
+const EPIC_SLOTS_TABLE = {
+    21: { epic1: 0, epic2: 0, epic3: 0 },
+    22: { epic1: 2, epic2: 0, epic3: 0 },
+    23: { epic1: 3, epic2: 0, epic3: 0 },
+    24: { epic1: 3, epic2: 1, epic3: 0 },
+    25: { epic1: 3, epic2: 2, epic3: 0 },
+    26: { epic1: 3, epic2: 2, epic3: 1 },
+    27: { epic1: 3, epic2: 2, epic3: 1 },
+    28: { epic1: 3, epic2: 2, epic3: 1 },
+    29: { epic1: 3, epic2: 2, epic3: 1 },
+    30: { epic1: 3, epic2: 2, epic3: 1 }
+};
+
 const ABILITY_KEYS = ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'];
 const SKILL_KEYS = [
     'acrobatics', 'animalHandling', 'arcana', 'athletics', 'deception', 'history',
@@ -83,6 +96,11 @@ function snapshotPage(state, page) {
                 spellSlots: clone(c.spellSlots),
                 customFeatures: clone(c.customFeatures),
                 characterAbilities: clone(c.characterAbilities || []),
+                characterActions: clone(c.characterActions || []),
+                ac: c.ac,
+                initBonus: c.initBonus,
+                maxReactions: c.maxReactions,
+                currentReactions: c.currentReactions,
                 hitDice: clone(c.hitDice),
                 effects: clone(c.effects),
                 proficiencyBonus: c.proficiencyBonus,
@@ -90,6 +108,9 @@ function snapshotPage(state, page) {
                 savingThrowProficiencies: clone(c.savingThrowProficiencies),
                 skillProficiencies: clone(c.skillProficiencies),
                 skillExpertise: clone(c.skillExpertise),
+                skillAbilityOverrides: clone(c.skillAbilityOverrides || {}),
+                sheetBonuses: clone(c.sheetBonuses || []),
+                sheetGeneral: clone(c.sheetGeneral || {}),
                 spellbook: clone(c.spellbook)
             }))
         };
@@ -157,6 +178,11 @@ function restorePage(state, page, snapshot) {
             character.spellSlots = clone(saved.spellSlots || {});
             character.customFeatures = clone(saved.customFeatures || []);
             character.characterAbilities = clone(saved.characterAbilities || []);
+            character.characterActions = clone(saved.characterActions || []);
+            character.ac = saved.ac || character.ac || 10;
+            character.initBonus = saved.initBonus || 0;
+            character.maxReactions = saved.maxReactions ?? 1;
+            character.currentReactions = saved.currentReactions ?? character.maxReactions ?? 1;
             character.hitDice = clone(saved.hitDice || { max: 0, current: 0 });
             character.effects = clone(saved.effects || []);
             character.proficiencyBonus = saved.proficiencyBonus || 2;
@@ -164,6 +190,9 @@ function restorePage(state, page, snapshot) {
             character.savingThrowProficiencies = clone(saved.savingThrowProficiencies || []);
             character.skillProficiencies = clone(saved.skillProficiencies || []);
             character.skillExpertise = clone(saved.skillExpertise || []);
+            character.skillAbilityOverrides = clone(saved.skillAbilityOverrides || {});
+            character.sheetBonuses = clone(saved.sheetBonuses || []);
+            character.sheetGeneral = clone(saved.sheetGeneral || {});
             character.spellbook = clone(saved.spellbook || normalizeSpellbook({}));
         }
         if (page === 'monsters') {
@@ -216,6 +245,9 @@ function ensureSpellShape(character) {
     character.characterAbilities = Array.isArray(character.characterAbilities)
         ? character.characterAbilities.map(normalizeCharacterAbility)
         : [];
+    character.characterActions = Array.isArray(character.characterActions)
+        ? character.characterActions.map(normalizeCharacterAbility)
+        : [];
     if (!character.hitDice || typeof character.hitDice !== 'object') character.hitDice = { max: 0, current: 0 };
     if (!character.abilityScores || typeof character.abilityScores !== 'object') {
         character.abilityScores = { strength: 10, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: 10 };
@@ -223,6 +255,11 @@ function ensureSpellShape(character) {
     if (!Array.isArray(character.savingThrowProficiencies)) character.savingThrowProficiencies = [];
     if (!Array.isArray(character.skillProficiencies)) character.skillProficiencies = [];
     if (!Array.isArray(character.skillExpertise)) character.skillExpertise = [];
+    if (!character.skillAbilityOverrides || typeof character.skillAbilityOverrides !== 'object') character.skillAbilityOverrides = {};
+    if (!Array.isArray(character.sheetBonuses)) character.sheetBonuses = [];
+    if (!character.sheetGeneral || typeof character.sheetGeneral !== 'object') character.sheetGeneral = { spellcastingAbility: 'charisma', speeds: { walk: 30, fly: 0, hover: 0, swim: 0, climb: 0, burrow: 0 } };
+    character.maxReactions = Math.max(0, toNumber(character.maxReactions, 1));
+    character.currentReactions = clamp(toNumber(character.currentReactions, character.maxReactions), 0, character.maxReactions);
     character.proficiencyBonus = clamp(toNumber(character.proficiencyBonus, 2), 0, 10);
     character.spellbook = normalizeSpellbook(character.spellbook);
 }
@@ -394,6 +431,13 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             character.currentPower = clamp(toNumber(payload.value, character.currentPower || 0), 0, character.maxPower || 0);
             if (character.monsterAbilities?.power) character.monsterAbilities.power.current = character.currentPower;
             return `${character.name}: ${character.powerName || 'Power'} ${character.currentPower}`;
+        }
+        case 'character.reaction.set': {
+            const character = findCharacter(state, payload.characterId);
+            if (!character) throw new Error('Postava neexistuje.');
+            character.maxReactions = Math.max(0, toNumber(character.maxReactions, 1));
+            character.currentReactions = clamp(toNumber(payload.value, character.currentReactions ?? character.maxReactions), 0, character.maxReactions);
+            return `${character.name}: reactions ${character.currentReactions}/${character.maxReactions}`;
         }
         case 'effect.add': {
             const character = findCharacter(state, payload.characterId);
@@ -580,11 +624,37 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             if (!character || character.type !== 'player') throw new Error('Hrac neexistuje.');
             ensureSpellShape(character);
             character.proficiencyBonus = clamp(toNumber(payload.proficiencyBonus, character.proficiencyBonus || 2), 0, 10);
+            character.ac = Math.max(0, toNumber(payload.ac, character.ac || 10));
+            character.initBonus = toNumber(payload.initBonus, character.initBonus || 0);
+            character.maxReactions = Math.max(0, toNumber(payload.maxReactions, character.maxReactions ?? 1));
+            character.currentReactions = clamp(toNumber(character.currentReactions, character.maxReactions), 0, character.maxReactions);
             character.abilityScores = normalizeSheetAbilityScores(payload.abilityScores || character.abilityScores);
             character.savingThrowProficiencies = normalizeAllowedList(payload.savingThrowProficiencies, ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma']);
             character.skillProficiencies = normalizeAllowedList(payload.skillProficiencies, SKILL_KEYS);
             character.skillExpertise = normalizeAllowedList(payload.skillExpertise, SKILL_KEYS);
+            character.skillAbilityOverrides = normalizeSkillAbilityOverrides(payload.skillAbilityOverrides);
+            character.sheetBonuses = normalizeSheetBonuses(payload.sheetBonuses);
+            character.sheetGeneral = normalizeSheetGeneral(payload.sheetGeneral);
             return `${character.name}: character sheet`;
+        }
+        case 'spell.action.upsert': {
+            const character = findCharacter(state, payload.characterId);
+            if (!character || character.type !== 'player') throw new Error('Hrac neexistuje.');
+            ensureSpellShape(character);
+            const action = normalizeCharacterAbility(payload.action || payload);
+            const index = character.characterActions.findIndex(item => item.id === action.id);
+            if (index === -1) character.characterActions.push(action);
+            else character.characterActions[index] = action;
+            return `${character.name}: action ${action.name}`;
+        }
+        case 'spell.action.remove': {
+            const character = findCharacter(state, payload.characterId);
+            if (!character || character.type !== 'player') throw new Error('Hrac neexistuje.');
+            ensureSpellShape(character);
+            const id = String(payload.id || '');
+            const removed = character.characterActions.find(item => item.id === id);
+            character.characterActions = character.characterActions.filter(item => item.id !== id);
+            return `${character.name}: removed action ${removed?.name || id}`;
         }
         case 'spell.feature.add': {
             const character = findCharacter(state, payload.characterId);
@@ -895,10 +965,16 @@ function firstCombatantIndex(state) {
 
 function revealCurrentMonster(state) {
     const current = state.characters[state.combatState.currentTurn];
+    if (current) resetTurnResources(current);
     if (current?.type === 'monster') {
         current.revealedToPlayers = true;
         resetMonsterTurnResources(current);
     }
+}
+
+function resetTurnResources(character) {
+    character.maxReactions = Math.max(0, toNumber(character.maxReactions, 1));
+    character.currentReactions = character.maxReactions;
 }
 
 function resetMonsterTurnResources(monster) {
@@ -970,7 +1046,9 @@ function getInventoryItem(character, collection, index) {
 }
 
 function addInventoryItem(inv, itemType, item) {
-    if (itemType === 'potion') {
+    if (itemType === 'component' || itemType === 'spellComponent') {
+        inv.spellComponents.push(normalizeInventoryItemForCollection('spellComponents', item));
+    } else if (itemType === 'potion') {
         inv.potions.push(normalizeInventoryItemForCollection('potions', item));
     } else if (itemType === 'scroll') {
         inv.scrolls.push(normalizeInventoryItemForCollection('scrolls', item));
@@ -985,6 +1063,18 @@ function normalizeInventoryItemForCollection(collection, item, current = {}) {
     const source = typeof item === 'string' ? { name: item } : item;
     const previous = typeof current === 'string' ? { name: current } : current;
     const base = { ...clone(previous), ...clone(source) };
+    if (collection === 'spellComponents') {
+        const trackingType = String(base.trackingType || (base.goldValue !== undefined ? 'value' : 'count')).toLowerCase() === 'value' ? 'value' : 'count';
+        return {
+            ...base,
+            id: String(base.id || makeId('component')),
+            name: String(base.name || 'Spell Component'),
+            trackingType,
+            count: trackingType === 'count' ? Math.max(0, toNumber(base.count ?? base.quantity, 1)) : undefined,
+            goldValue: trackingType === 'value' ? Math.max(0, toNumber(base.goldValue ?? base.value, 0)) : undefined,
+            description: String(base.description || base.notes || '')
+        };
+    }
     if (collection === 'potions') {
         return {
             ...base,
@@ -1051,6 +1141,50 @@ function normalizeSheetAbilityScores(scores) {
         result[key] = clamp(toNumber(source[key], 10), 1, 30);
         return result;
     }, {});
+}
+
+function normalizeSkillAbilityOverrides(overrides) {
+    const source = overrides && typeof overrides === 'object' ? overrides : {};
+    const result = {};
+    Object.entries(source).forEach(([skill, ability]) => {
+        const normalized = String(ability || '');
+        if (SKILL_KEYS.includes(skill) && ABILITY_KEYS.includes(normalized)) result[skill] = normalized;
+    });
+    return result;
+}
+
+function normalizeSheetBonuses(bonuses) {
+    if (!Array.isArray(bonuses)) return [];
+    const targetTypes = ['save', 'skill', 'abilityCheck', 'allSaves', 'allSkills', 'allAbilityChecks', 'ac', 'initiative', 'spellAttack', 'spellDc'];
+    return bonuses.map(bonus => {
+        const valueMode = bonus?.valueMode === 'halfProficiency' ? 'halfProficiency' : 'fixed';
+        return {
+            id: String(bonus?.id || makeId('sheet_bonus')),
+            targetType: targetTypes.includes(bonus?.targetType) ? bonus.targetType : 'skill',
+            targetKey: bonus?.targetKey ? String(bonus.targetKey) : '',
+            value: valueMode === 'halfProficiency' ? 0 : toNumber(bonus?.value, 0),
+            valueMode,
+            source: String(bonus?.source || ''),
+            note: String(bonus?.note || ''),
+            condition: bonus?.condition === 'ifNotProficientOrExpert' ? 'ifNotProficientOrExpert' : 'always'
+        };
+    });
+}
+
+function normalizeSheetGeneral(general) {
+    const source = general && typeof general === 'object' ? general : {};
+    const speeds = source.speeds && typeof source.speeds === 'object' ? source.speeds : {};
+    return {
+        spellcastingAbility: ABILITY_KEYS.includes(source.spellcastingAbility) ? source.spellcastingAbility : 'charisma',
+        speeds: {
+            walk: Math.max(0, toNumber(speeds.walk, 30)),
+            fly: Math.max(0, toNumber(speeds.fly, 0)),
+            hover: Math.max(0, toNumber(speeds.hover, 0)),
+            swim: Math.max(0, toNumber(speeds.swim, 0)),
+            climb: Math.max(0, toNumber(speeds.climb, 0)),
+            burrow: Math.max(0, toNumber(speeds.burrow ?? speeds.dig, 0))
+        }
+    };
 }
 
 function regainFeatureUses(feature, restType) {
@@ -1208,7 +1342,21 @@ function updateSpellSlotsForLevel(character) {
             nextSlots[level] = { max, used: clamp(used, 0, max) };
         }
     });
+    Object.entries(epicSlotsForLevel(character.spellcasterLevel || 0)).forEach(([level, max]) => {
+        if (max <= 0) return;
+        const used = character.spellSlots?.[level]?.used || 0;
+        nextSlots[level] = { max, used: clamp(used, 0, max) };
+    });
     character.spellSlots = nextSlots;
+}
+
+function epicSlotsForLevel(level) {
+    const normalized = clamp(toNumber(level, 0), 0, 30);
+    const key = Object.keys(EPIC_SLOTS_TABLE)
+        .map(Number)
+        .filter(item => item <= normalized)
+        .sort((a, b) => b - a)[0];
+    return key ? EPIC_SLOTS_TABLE[key] : {};
 }
 
 function applyGameAction(state, action, client) {

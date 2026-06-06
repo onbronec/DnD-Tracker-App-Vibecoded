@@ -21,11 +21,20 @@ export interface Inventory {
     silver: number;
     copper: number;
   };
-  spellComponents: Array<Record<string, unknown>>;
+  spellComponents: SpellComponentItem[];
   potions: Array<{ id?: string; name: string; quantity: number; description?: string }>;
   scrolls: Array<{ id?: string; spellName: string; quantity: number; description?: string }>;
   generalItems: Array<string | { id?: string; name: string; quantity?: number; description?: string; notes?: string }>;
   magicItems: Array<{ id?: string; name: string; itemType?: string; rarity?: string; description?: string; attuned?: boolean }>;
+}
+
+export interface SpellComponentItem {
+  id?: string;
+  name: string;
+  trackingType: 'count' | 'value';
+  count?: number;
+  goldValue?: number;
+  description?: string;
 }
 
 export interface Character {
@@ -38,6 +47,8 @@ export interface Character {
   ac: number;
   initBonus: number;
   initiative: number | null;
+  maxReactions?: number;
+  currentReactions?: number;
   maxPower?: number;
   currentPower?: number;
   powerName?: string;
@@ -52,12 +63,16 @@ export interface Character {
   spellSlots: Record<string, { max: number; used: number }>;
   customFeatures: CustomFeature[];
   characterAbilities: CharacterAbility[];
+  characterActions: CharacterAbility[];
   hitDice: { max: number; current: number };
   proficiencyBonus: number;
   abilityScores: Record<AbilityKey, number>;
   savingThrowProficiencies: AbilityKey[];
   skillProficiencies: string[];
   skillExpertise: string[];
+  skillAbilityOverrides?: Record<string, AbilityKey>;
+  sheetBonuses?: SheetBonus[];
+  sheetGeneral?: CharacterSheetGeneral;
   inventory: Inventory;
   spellbook: CharacterSpellbook;
 }
@@ -75,6 +90,22 @@ export interface CharacterAbility {
   name: string;
   description: string;
   source?: string;
+}
+
+export interface CharacterSheetGeneral {
+  spellcastingAbility?: AbilityKey;
+  speeds?: Record<string, number>;
+}
+
+export interface SheetBonus {
+  id?: string;
+  targetType: 'save' | 'skill' | 'abilityCheck' | 'allSaves' | 'allSkills' | 'allAbilityChecks' | 'ac' | 'initiative' | 'spellAttack' | 'spellDc';
+  targetKey?: string;
+  value: number;
+  valueMode?: 'fixed' | 'halfProficiency';
+  source?: string;
+  note?: string;
+  condition?: 'always' | 'ifNotProficientOrExpert';
 }
 
 export interface SpellDatabaseEntry {

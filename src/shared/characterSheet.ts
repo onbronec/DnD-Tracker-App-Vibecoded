@@ -1,4 +1,4 @@
-import type { AbilityKey, Character, Effect } from './types';
+import type { AbilityKey, Character, Effect, SheetBonus } from './types';
 
 export const ABILITIES: Array<{ key: AbilityKey; label: string; short: string }> = [
   { key: 'strength', label: 'Strength', short: 'STR' },
@@ -84,16 +84,91 @@ export function adjustedAbilityScores(character: Character) {
 
 export function saveBonus(character: Character, ability: AbilityKey, adjustedScores = adjustedAbilityScores(character).scores) {
   const proficient = (character.savingThrowProficiencies || []).includes(ability);
-  return abilityModifier(adjustedScores[ability]) + (proficient ? character.proficiencyBonus || 0 : 0);
+  return abilityModifier(adjustedScores[ability]) + (proficient ? character.proficiencyBonus || 0 : 0) + bonusTotal(character, 'save', ability, { proficient, expert: false });
 }
 
 export function skillBonus(character: Character, skillKey: string, adjustedScores = adjustedAbilityScores(character).scores) {
   const skill = SKILLS.find(item => item.key === skillKey);
   if (!skill) return 0;
+  const ability = skillAbility(character, skillKey);
   const proficient = (character.skillProficiencies || []).includes(skillKey);
   const expert = (character.skillExpertise || []).includes(skillKey);
   const proficiency = character.proficiencyBonus || 0;
-  return abilityModifier(adjustedScores[skill.ability]) + (expert ? proficiency * 2 : proficient ? proficiency : 0);
+  return abilityModifier(adjustedScores[ability]) + (expert ? proficiency * 2 : proficient ? proficiency : 0) + bonusTotal(character, 'skill', skillKey, { proficient, expert });
+}
+
+export function abilityCheckBonus(character: Character, ability: AbilityKey, adjustedScores = adjustedAbilityScores(character).scores) {
+  return abilityModifier(adjustedScores[ability]) + bonusTotal(character, 'abilityCheck', ability, { proficient: false, expert: false });
+}
+
+export function spellcastingAbility(character: Character): AbilityKey {
+  return character.sheetGeneral?.spellcastingAbility || 'charisma';
+}
+
+export function spellSaveDc(character: Character, adjustedScores = adjustedAbilityScores(character).scores) {
+  const ability = spellcastingAbility(character);
+  return 8 + (character.proficiencyBonus || 0) + abilityModifier(adjustedScores[ability]) + bonusTotal(character, 'spellDc', 'spellDc', { proficient: false, expert: false });
+}
+
+export function spellAttackBonus(character: Character, adjustedScores = adjustedAbilityScores(character).scores) {
+  const ability = spellcastingAbility(character);
+  return (character.proficiencyBonus || 0) + abilityModifier(adjustedScores[ability]) + bonusTotal(character, 'spellAttack', 'spellAttack', { proficient: false, expert: false });
+}
+
+export function armorClass(character: Character) {
+  return (character.ac || 10) + bonusTotal(character, 'ac', 'ac', { proficient: false, expert: false }) + acEffectBonus(character);
+}
+
+export function initiativeBonus(character: Character, adjustedScores = adjustedAbilityScores(character).scores) {
+  return abilityModifier(adjustedScores.dexterity) + bonusTotal(character, 'initiative', 'initiative', { proficient: false, expert: false }) + bonusTotal(character, 'abilityCheck', 'dexterity', { proficient: false, expert: false });
+}
+
+export function skillAbility(character: Character, skillKey: string): AbilityKey {
+  const override = character.skillAbilityOverrides?.[skillKey];
+  if (override && ABILITIES.some(ability => ability.key === override)) return override;
+  return SKILLS.find(item => item.key === skillKey)?.ability || 'dexterity';
+}
+
+function bonusTotal(
+  character: Character,
+  targetType: 'save' | 'skill' | 'abilityCheck' | 'ac' | 'initiative' | 'spellAttack' | 'spellDc',
+  targetKey: string,
+  status: { proficient: boolean; expert: boolean }
+) {
+  return (character.sheetBonuses || [])
+    .filter(bonus => bonusApplies(bonus, targetType, targetKey, status))
+    .reduce((sum, bonus) => sum + bonusValue(character, bonus), 0);
+}
+
+function bonusApplies(
+  bonus: SheetBonus,
+  targetType: 'save' | 'skill' | 'abilityCheck',
+  targetKey: string,
+  status: { proficient: boolean; expert: boolean }
+) {
+  if (bonus.condition === 'ifNotProficientOrExpert' && (status.proficient || status.expert)) return false;
+  if (bonus.targetType === targetType && bonus.targetKey === targetKey) return true;
+  if (['ac', 'initiative', 'spellAttack', 'spellDc'].includes(targetType) && bonus.targetType === targetType) return true;
+  if (targetType === 'save' && bonus.targetType === 'allSaves') return true;
+  if (targetType === 'skill' && bonus.targetType === 'allSkills') return true;
+  if (targetType === 'abilityCheck' && bonus.targetType === 'allAbilityChecks') return true;
+  return false;
+}
+
+function acEffectBonus(character: Character) {
+  return (character.effects || []).reduce((sum, effect) => {
+    const current = normalizeEffectLike(effect);
+    const value = Number(current.value ?? current.level ?? 0);
+    if (!Number.isFinite(value)) return sum;
+    if (current.name === 'Armor Class Increased') return sum + value;
+    if (current.name === 'Armor Class Reduced') return sum - value;
+    return sum;
+  }, 0);
+}
+
+function bonusValue(character: Character, bonus: SheetBonus) {
+  if (bonus.valueMode === 'halfProficiency') return Math.floor((character.proficiencyBonus || 0) / 2);
+  return Number(bonus.value) || 0;
 }
 
 function normalizeEffectLike(effect: Effect | string) {

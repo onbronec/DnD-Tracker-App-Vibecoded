@@ -1020,6 +1020,17 @@ textarea {
   margin-top: 14px;
 }
 
+.compact-stats-grid {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
+.sheet-speed-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 .sheet-list {
   display: grid;
   gap: 8px;
@@ -1115,6 +1126,21 @@ textarea {
   gap: 8px;
   align-content: start;
   padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0f172a;
+}
+
+.sheet-bonus-editor {
+  margin-top: 16px;
+}
+
+.sheet-bonus-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #0f172a;
@@ -1314,7 +1340,9 @@ textarea {
 
 .calendar-modal {
   width: min(1720px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
   min-height: calc(100vh - 48px);
+  overflow-x: hidden;
 }
 
 .calendar-modal.modal-card {
@@ -1323,14 +1351,16 @@ textarea {
 
 .calendar-layout {
   display: grid;
-  grid-template-columns: minmax(560px, 1.2fr) minmax(440px, 0.8fr);
+  grid-template-columns: minmax(0, 1.45fr) minmax(360px, 0.75fr);
   gap: 16px;
   margin-top: 16px;
   min-height: calc(100vh - 210px);
+  min-width: 0;
 }
 
 .calendar-board,
 .calendar-details {
+  min-width: 0;
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: 8px;

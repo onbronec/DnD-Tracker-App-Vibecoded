@@ -1,5 +1,6 @@
 const PLAYER_ALLOWED_TYPES = new Set([
     'character.adjustHp',
+    'character.reaction.set',
     'effect.add',
     'effect.remove',
     'effect.level.set',
@@ -22,6 +23,8 @@ const PLAYER_ALLOWED_TYPES = new Set([
     'spell.rest.character',
     'spell.character.update',
     'spell.sheet.update',
+    'spell.action.upsert',
+    'spell.action.remove',
     'spellbook.known.add',
     'spellbook.known.remove',
     'spellbook.settings.update',

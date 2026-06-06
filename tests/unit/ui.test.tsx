@@ -14,7 +14,7 @@ import { DatabasesPage } from '../../src/pages/DatabasesPage';
 import { InventoryPage } from '../../src/pages/InventoryPage';
 import { SpellsPage } from '../../src/pages/SpellsPage';
 import type { Character, GameAction, GameState } from '../../src/shared/types';
-import { adjustedAbilityScores, saveBonus, skillBonus } from '../../src/shared/characterSheet';
+import { abilityCheckBonus, adjustedAbilityScores, armorClass, initiativeBonus, saveBonus, skillBonus, spellAttackBonus, spellSaveDc } from '../../src/shared/characterSheet';
 
 describe('visual UX helpers', () => {
   it('keeps collapsible panels closed by default and opens on demand', () => {
@@ -121,6 +121,7 @@ describe('visual UX helpers', () => {
     expect(screen.getByRole('button', { name: 'Bold' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Italic' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Header' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reference' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Preview' })).toHaveClass('markdown-preview-toggle');
     expect(screen.getByRole('button', { name: 'Pop out' })).toHaveClass('markdown-popout');
   });
@@ -145,6 +146,28 @@ describe('visual UX helpers', () => {
     expect(screen.getByRole('option', { name: /Burning/i })).toHaveClass('search-result');
     fireEvent.click(screen.getByRole('option', { name: /Burning/i }));
     expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ name: 'Burning' }));
+  });
+
+  it('limits quoted search to entry names', () => {
+    render(
+      <SearchPicker
+        items={[
+          { id: 'named', name: 'Named Shield', description: 'Protective magic.' },
+          { id: 'remove', name: 'Remove Person', description: 'Name the target.' }
+        ]}
+        query={'"Name"'}
+        onQueryChange={vi.fn()}
+        selectedId=""
+        onSelect={vi.fn()}
+        placeholder="Search spells"
+        getId={item => item.id}
+        getLabel={item => item.name}
+        getDescription={item => item.description}
+      />
+    );
+
+    expect(screen.getByRole('option', { name: /Named Shield/i })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /Remove Person/i })).not.toBeInTheDocument();
   });
 });
 
@@ -469,7 +492,7 @@ describe('page visual behavior', () => {
     expect(screen.getByLabelText('Astria aura +3')).toBeInTheDocument();
   });
 
-  it('adds per-character inspiration and Funyana half proficiency on unproficient checks', () => {
+  it('adds per-character inspiration and uses sheet bonuses for Funyana-style unproficient checks', () => {
     const state = gameState({
       characters: [
         character({
@@ -478,7 +501,8 @@ describe('page visual behavior', () => {
           proficiencyBonus: 5,
           abilityScores: { strength: 10, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: 10 },
           skillProficiencies: [],
-          skillExpertise: []
+          skillExpertise: [],
+          sheetBonuses: [{ targetType: 'allAbilityChecks', valueMode: 'halfProficiency', value: 0, condition: 'ifNotProficientOrExpert', source: 'Funyana rule' }]
         })
       ]
     });
@@ -487,7 +511,7 @@ describe('page visual behavior', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Party Checks' }));
     fireEvent.change(screen.getByDisplayValue('Saving throw'), { target: { value: 'ability' } });
     fireEvent.change(screen.getByLabelText('Difficulty class'), { target: { value: '15' } });
-    expect(screen.getByText(/Funyana \+2/)).toBeInTheDocument();
+    expect(screen.getByText(/base \+2/)).toBeInTheDocument();
     expect(screen.getByText('40%')).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText('d12'));
     expect(screen.getByLabelText('d12')).toBeChecked();
@@ -581,6 +605,7 @@ describe('page visual behavior', () => {
     );
 
     expect(screen.getByRole('heading', { name: 'Inventory' }).closest('section')).toHaveClass('page-sticky-section');
+    expect(screen.getByTestId('inventory-item-Moonblade')).not.toHaveTextContent('x1');
     expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId('inventory-item-Moonblade'));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
@@ -604,6 +629,83 @@ describe('page visual behavior', () => {
       })
     }));
   });
+
+  it('adds scrolls from the spell database search picker', () => {
+    const submitAction = vi.fn(async (_action: GameAction) => undefined);
+    render(
+      <InventoryPage
+        state={gameState({
+          spellDatabase: [spell({ id: 'fireball', name: 'Fireball', levelKey: '3', levelLabel: 'Level 3', school: 'Evocation', description: 'A bright streak flashes.' })]
+        })}
+        role="player"
+        submitAction={submitAction}
+        selectedCharacterId="ayla"
+        onSelectCharacter={vi.fn()}
+        onBackToCombat={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Add item/i }));
+    fireEvent.change(screen.getByDisplayValue('General'), { target: { value: 'scroll' } });
+    fireEvent.change(screen.getByPlaceholderText('Search spells for scrolls'), { target: { value: 'fire' } });
+    fireEvent.click(screen.getByRole('option', { name: /Fireball/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add from database' }));
+
+    expect(submitAction).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'inventory.item.add',
+      payload: expect.objectContaining({
+        itemType: 'scroll',
+        item: expect.objectContaining({ spellName: 'Fireball', quantity: 1, description: 'A bright streak flashes.' })
+      })
+    }));
+  });
+
+  it('shows spell components as their own inventory section with count and value tracking', () => {
+    render(
+      <InventoryPage
+        state={gameState({
+          characters: [
+            character({
+              inventory: {
+                ...emptyInventory(),
+                spellComponents: [
+                  { name: 'Soul Coin', trackingType: 'count', count: 666 },
+                  { name: 'Diamond Dust', trackingType: 'value', goldValue: 200 }
+                ]
+              }
+            })
+          ]
+        })}
+        role="player"
+        submitAction={vi.fn(async (_action: GameAction) => undefined)}
+        selectedCharacterId="ayla"
+        onSelectCharacter={vi.fn()}
+        onBackToCombat={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole('heading', { name: 'Spell Components' })).toBeInTheDocument();
+    expect(screen.getByTestId('inventory-item-Soul Coin')).toHaveTextContent('x666');
+    expect(screen.getByTestId('inventory-item-Diamond Dust')).toHaveTextContent('200 gp');
+  });
+
+  it('labels epic spell slot keys cleanly in the spell tracker', () => {
+    render(
+      <SpellsPage
+        state={gameState({
+          characters: [character({ spellSlots: { epic1: { max: 1, used: 0 }, epic2: { max: 1, used: 1 } } })]
+        })}
+        role="player"
+        submitAction={vi.fn(async (_action: GameAction) => undefined)}
+        selectedCharacterId="ayla"
+        onSelectCharacter={vi.fn()}
+        onBackToCombat={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('Epic 1: 1/1')).toBeInTheDocument();
+    expect(screen.getByText('Epic 2: 0/1')).toBeInTheDocument();
+  });
 });
 
 describe('character sheet math', () => {
@@ -622,6 +724,48 @@ describe('character sheet math', () => {
     expect(saveBonus(hero, 'strength', adjusted.scores)).toBe(8);
     expect(skillBonus(hero, 'athletics', adjusted.scores)).toBe(8);
     expect(skillBonus(hero, 'perception', adjusted.scores)).toBe(11);
+  });
+
+  it('applies sheet bonus rules and intimidation ability override', () => {
+    const hero = character({
+      proficiencyBonus: 6,
+      abilityScores: { strength: 18, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: 8 },
+      skillProficiencies: ['athletics'],
+      skillExpertise: [],
+      skillAbilityOverrides: { intimidation: 'strength' },
+      sheetBonuses: [
+        { targetType: 'allSkills', valueMode: 'halfProficiency', value: 0, condition: 'ifNotProficientOrExpert', source: 'Special rule' },
+        { targetType: 'allAbilityChecks', valueMode: 'halfProficiency', value: 0, condition: 'ifNotProficientOrExpert', source: 'Special rule' }
+      ]
+    });
+
+    const adjusted = adjustedAbilityScores(hero);
+    expect(skillBonus(hero, 'intimidation', adjusted.scores)).toBe(7);
+    expect(skillBonus(hero, 'athletics', adjusted.scores)).toBe(10);
+    expect(abilityCheckBonus(hero, 'dexterity', adjusted.scores)).toBe(3);
+  });
+
+  it('applies sheet and condition bonuses to AC, initiative and spellcasting numbers', () => {
+    const hero = character({
+      ac: 17,
+      initBonus: 1,
+      proficiencyBonus: 4,
+      abilityScores: { strength: 10, dexterity: 14, constitution: 10, intelligence: 18, wisdom: 10, charisma: 10 },
+      sheetGeneral: { spellcastingAbility: 'intelligence', speeds: { walk: 30, fly: 0, hover: 0, swim: 0, climb: 0, burrow: 0 } },
+      effects: [{ name: 'Armor Class Increased', value: 2 }],
+      sheetBonuses: [
+        { targetType: 'ac', valueMode: 'flat', value: 1, source: 'Shield' },
+        { targetType: 'initiative', valueMode: 'flat', value: 3, source: 'Alert' },
+        { targetType: 'spellAttack', valueMode: 'flat', value: 2, source: 'Wand' },
+        { targetType: 'spellDc', valueMode: 'flat', value: 1, source: 'Focus' }
+      ]
+    });
+
+    const adjusted = adjustedAbilityScores(hero);
+    expect(armorClass(hero)).toBe(20);
+    expect(initiativeBonus(hero, adjusted.scores) + (hero.initBonus || 0)).toBe(6);
+    expect(spellAttackBonus(hero, adjusted.scores)).toBe(10);
+    expect(spellSaveDc(hero, adjusted.scores)).toBe(17);
   });
 });
 
@@ -660,6 +804,8 @@ function character(overrides: Partial<Character> = {}): Character {
     ac: 15,
     initBonus: 2,
     initiative: null,
+    maxReactions: 1,
+    currentReactions: 1,
     effects: [],
     activeInCombat: true,
     revealedToPlayers: true,
@@ -667,12 +813,16 @@ function character(overrides: Partial<Character> = {}): Character {
     spellSlots: {},
     customFeatures: [],
     characterAbilities: [],
+    characterActions: [],
     hitDice: { max: 1, current: 1 },
     proficiencyBonus: 2,
     abilityScores: { strength: 10, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: 10 },
     savingThrowProficiencies: [],
     skillProficiencies: [],
     skillExpertise: [],
+    skillAbilityOverrides: {},
+    sheetBonuses: [],
+    sheetGeneral: { spellcastingAbility: 'charisma', speeds: { walk: 30, fly: 0, hover: 0, swim: 0, climb: 0, burrow: 0 } },
     inventory: emptyInventory(),
     spellbook: { knownSpellIds: [], preparedSpellIds: [], preparesSpells: false, preparedNonEpicMax: 0, preparedEpicMax: 0 },
     ...overrides

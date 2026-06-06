@@ -73,6 +73,7 @@ export function MarkdownEditor({ value, onChange, placeholder, label = 'Markdown
         <button type="button" className="btn small markdown-tool" onClick={() => insertPrefix('## ')}>Header</button>
         <button type="button" className="btn small markdown-tool" onClick={() => insertPrefix('- ')}>List</button>
         <button type="button" className="btn small markdown-tool" onClick={() => applyWrap('[', '](https://)')}>Link</button>
+        <button type="button" className="btn small markdown-tool" onClick={() => applyWrap('@[', ']')}>Reference</button>
       </div>
       <div className="markdown-toolbar-group markdown-view-group">
         <button type="button" className="btn small markdown-preview-toggle" onClick={() => setPreview(value => !value)}>{preview ? 'Edit text' : 'Preview'}</button>

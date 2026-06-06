@@ -48,11 +48,27 @@ function normalizeInventory(inventory) {
     const source = inventory || {};
     return {
         currency: { ...fallback.currency, ...(source.currency || {}) },
-        spellComponents: Array.isArray(source.spellComponents) ? source.spellComponents : [],
+        spellComponents: Array.isArray(source.spellComponents) ? source.spellComponents.map(normalizeSpellComponent) : [],
         potions: Array.isArray(source.potions) ? source.potions : [],
         scrolls: Array.isArray(source.scrolls) ? source.scrolls : [],
         generalItems: Array.isArray(source.generalItems) ? source.generalItems : [],
         magicItems: Array.isArray(source.magicItems) ? source.magicItems : []
+    };
+}
+
+function normalizeSpellComponent(component) {
+    const source = typeof component === 'string' ? { name: component } : (component || {});
+    const trackingType = String(source.trackingType || (source.goldValue !== undefined ? 'value' : 'count')).toLowerCase() === 'value'
+        ? 'value'
+        : 'count';
+    return {
+        ...clone(source),
+        id: String(source.id || makeId('component')),
+        name: String(source.name || 'Spell Component'),
+        trackingType,
+        count: trackingType === 'count' ? Math.max(0, Number(source.count ?? source.quantity ?? 1) || 0) : undefined,
+        goldValue: trackingType === 'value' ? Math.max(0, Number(source.goldValue ?? source.value ?? 0) || 0) : undefined,
+        description: String(source.description || source.notes || '')
     };
 }
 
@@ -75,6 +91,48 @@ function normalizeCharacterAbility(ability) {
         description: String(source.description || source.text || source.notes || ''),
         source: String(source.source || '')
     };
+}
+
+function normalizeSheetBonus(bonus) {
+    const source = bonus || {};
+    const targetTypes = ['save', 'skill', 'abilityCheck', 'allSaves', 'allSkills', 'allAbilityChecks', 'ac', 'initiative', 'spellAttack', 'spellDc'];
+    const valueMode = source.valueMode === 'halfProficiency' ? 'halfProficiency' : 'fixed';
+    return {
+        id: String(source.id || makeId('sheet_bonus')),
+        targetType: targetTypes.includes(source.targetType) ? source.targetType : 'skill',
+        targetKey: source.targetKey ? String(source.targetKey) : '',
+        value: valueMode === 'halfProficiency' ? 0 : Number(source.value) || 0,
+        valueMode,
+        source: String(source.source || ''),
+        note: String(source.note || ''),
+        condition: source.condition === 'ifNotProficientOrExpert' ? 'ifNotProficientOrExpert' : 'always'
+    };
+}
+
+function normalizeSheetGeneral(general) {
+    const source = general || {};
+    const speeds = source.speeds && typeof source.speeds === 'object' ? source.speeds : {};
+    return {
+        spellcastingAbility: normalizeAbilityKey(source.spellcastingAbility) || 'charisma',
+        speeds: {
+            walk: Math.max(0, Number(speeds.walk) || 30),
+            fly: Math.max(0, Number(speeds.fly) || 0),
+            hover: Math.max(0, Number(speeds.hover) || 0),
+            swim: Math.max(0, Number(speeds.swim) || 0),
+            climb: Math.max(0, Number(speeds.climb) || 0),
+            burrow: Math.max(0, Number(speeds.burrow ?? speeds.dig) || 0)
+        }
+    };
+}
+
+function normalizeSkillAbilityOverrides(overrides) {
+    const source = overrides && typeof overrides === 'object' ? overrides : {};
+    const result = {};
+    Object.entries(source).forEach(([skill, ability]) => {
+        const normalized = normalizeAbilityKey(ability);
+        if (normalized && SKILL_KEYS.includes(skill)) result[skill] = normalized;
+    });
+    return result;
 }
 
 function normalizeStringList(values) {
@@ -102,6 +160,8 @@ function normalizeCharacter(char) {
         initiative: char.initiative === null || char.initiative === undefined || char.initiative === ''
             ? null
             : Number(char.initiative),
+        maxReactions: Math.max(0, Number(char.maxReactions) || 1),
+        currentReactions: Math.max(0, Math.min(Math.max(0, Number(char.maxReactions) || 1), Number.isFinite(Number(char.currentReactions)) ? Number(char.currentReactions) : (Number(char.maxReactions) || 1))),
         maxPower: Number(char.maxPower) || 0,
         currentPower: Number.isFinite(Number(char.currentPower)) ? Number(char.currentPower) : (Number(char.maxPower) || 0),
         powerName: char.powerName || 'Power',
@@ -118,6 +178,7 @@ function normalizeCharacter(char) {
         spellSlots: char.spellSlots && typeof char.spellSlots === 'object' ? clone(char.spellSlots) : {},
         customFeatures: Array.isArray(char.customFeatures) ? clone(char.customFeatures) : [],
         characterAbilities: Array.isArray(char.characterAbilities) ? char.characterAbilities.map(normalizeCharacterAbility) : [],
+        characterActions: Array.isArray(char.characterActions) ? char.characterActions.map(normalizeCharacterAbility) : [],
         hitDice: char.hitDice && typeof char.hitDice === 'object'
             ? { max: Number(char.hitDice.max) || 0, current: Number(char.hitDice.current) || 0 }
             : { max: 0, current: 0 },
@@ -126,6 +187,9 @@ function normalizeCharacter(char) {
         savingThrowProficiencies: normalizeKeyList(char.savingThrowProficiencies, ABILITY_KEYS),
         skillProficiencies: normalizeKeyList(char.skillProficiencies, SKILL_KEYS),
         skillExpertise: normalizeKeyList(char.skillExpertise, SKILL_KEYS),
+        skillAbilityOverrides: normalizeSkillAbilityOverrides(char.skillAbilityOverrides),
+        sheetBonuses: Array.isArray(char.sheetBonuses) ? char.sheetBonuses.map(normalizeSheetBonus) : [],
+        sheetGeneral: normalizeSheetGeneral(char.sheetGeneral),
         inventory: normalizeInventory(char.inventory),
         spellbook: normalizeSpellbook(char.spellbook)
     };
@@ -162,6 +226,10 @@ function normalizeSpellLevel(value) {
     const lower = raw.toLowerCase();
     if (!raw) return { key: 'special-unknown', label: 'Special' };
     if (lower === 'cantrip') return { key: 'cantrip', label: 'Cantrip' };
+    const normalizedEpic = lower.match(/^(?:special-)*epic([1-3])$/);
+    if (normalizedEpic) return { key: `epic${normalizedEpic[1]}`, label: `Epic ${normalizedEpic[1]}` };
+    const epicLabel = lower.match(/^epic\s*([1-3])$/);
+    if (epicLabel) return { key: `epic${epicLabel[1]}`, label: `Epic ${epicLabel[1]}` };
     const ordinal = lower.match(/^(\d+)(st|nd|rd|th)$/);
     if (ordinal) return { key: ordinal[1], label: `Level ${ordinal[1]}` };
     const epic = lower.match(/^tier\s+(\d+)\s+epic$/);
@@ -279,6 +347,7 @@ function normalizeMonsterDbItem(monster) {
         hp: Number(source.hp || source.maxHp) || 1,
         maxHp: Number(source.maxHp || source.hp) || 1,
         ac: Number(source.ac) || 10,
+        maxReactions: Math.max(0, Number(source.maxReactions) || 1),
         initBonus: Number.isFinite(Number(source.initBonus)) ? Number(source.initBonus) : Math.floor(((stats.dexterity || 10) - 10) / 2),
         speed: String(source.speed || ''),
         stats,

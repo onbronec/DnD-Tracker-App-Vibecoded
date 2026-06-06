@@ -20,6 +20,8 @@ function player(name = 'Nif') {
         ac: 15,
         initBonus: 2,
         initiative: null,
+        maxReactions: 1,
+        currentReactions: 1,
         effects: [],
         activeInCombat: true,
         revealedToPlayers: true,
@@ -162,6 +164,43 @@ describe('actions and history', () => {
         expect(state.characters[0].inventory.generalItems[0]).toEqual(expect.objectContaining({ name: 'Old diary' }));
     });
 
+    it('tracks spell components by count or gold value', () => {
+        const state = createInitialState();
+        state.characters.push(player());
+        applyGameAction(state, {
+            type: 'inventory.item.add',
+            payload: {
+                characterId: 'nif',
+                itemType: 'component',
+                item: { name: 'Diamond Dust', trackingType: 'value', goldValue: 200 }
+            }
+        }, { id: 'player', role: 'player' });
+        applyGameAction(state, {
+            type: 'inventory.item.add',
+            payload: {
+                characterId: 'nif',
+                itemType: 'component',
+                item: { name: 'Pearl', trackingType: 'count', count: 2 }
+            }
+        }, { id: 'player', role: 'player' });
+
+        expect(state.characters[0].inventory.spellComponents).toEqual([
+            expect.objectContaining({ name: 'Diamond Dust', trackingType: 'value', goldValue: 200 }),
+            expect.objectContaining({ name: 'Pearl', trackingType: 'count', count: 2 })
+        ]);
+
+        applyGameAction(state, {
+            type: 'inventory.item.update',
+            payload: {
+                characterId: 'nif',
+                collection: 'spellComponents',
+                index: 1,
+                item: { name: 'Pearl', trackingType: 'count', count: 1 }
+            }
+        }, { id: 'player', role: 'player' });
+        expect(state.characters[0].inventory.spellComponents[1]).toEqual(expect.objectContaining({ count: 1 }));
+    });
+
     it('adds and removes custom spell features', () => {
         const state = createInitialState();
         state.characters.push(player());
@@ -288,6 +327,8 @@ describe('actions and history', () => {
         const boss = monster('Zealot');
         hero.initiative = 20;
         boss.initiative = 10;
+        boss.maxReactions = 2;
+        boss.currentReactions = 0;
         boss.monsterAbilities = {
             enabled: true,
             legendaryActions: { enabled: true, max: 3, used: 3 },
@@ -299,8 +340,29 @@ describe('actions and history', () => {
         applyGameAction(state, { type: 'combat.nextTurn' }, { id: 'dm', role: 'dm' });
 
         expect(state.combatState.currentTurn).toBe(1);
+        expect(state.characters[1].currentReactions).toBe(2);
         expect(state.characters[1].monsterAbilities.legendaryActions.used).toBe(0);
         expect(state.characters[1].monsterAbilities.epicActions.actions[0].used).toBe(0);
+    });
+
+    it('tracks reactions and resets them when a creature turn starts', () => {
+        const state = createInitialState();
+        const hero = player('Ayla');
+        hero.maxReactions = 2;
+        hero.currentReactions = 2;
+        hero.initiative = 20;
+        const ally = player('Borin');
+        ally.initiative = 10;
+        state.characters.push(hero, ally);
+        state.combatState = { active: true, currentTurn: 0, round: 1, playedThisRound: [] };
+
+        applyGameAction(state, { type: 'character.reaction.set', payload: { characterId: 'ayla', value: 0 } }, { id: 'player', role: 'player' });
+        expect(state.characters[0].currentReactions).toBe(0);
+
+        applyGameAction(state, { type: 'combat.nextTurn' }, { id: 'dm', role: 'dm' });
+        applyGameAction(state, { type: 'combat.nextTurn' }, { id: 'dm', role: 'dm' });
+        expect(state.combatState.currentTurn).toBe(0);
+        expect(state.characters[0].currentReactions).toBe(2);
     });
 
     it('applies short and long rests to spell resources', () => {
@@ -339,7 +401,16 @@ describe('actions and history', () => {
                 abilityScores: { strength: 18, dexterity: 14, constitution: 16, intelligence: 10, wisdom: 12, charisma: 8 },
                 savingThrowProficiencies: ['strength', 'constitution'],
                 skillProficiencies: ['athletics'],
-                skillExpertise: ['perception']
+                skillExpertise: ['perception'],
+                ac: 18,
+                initBonus: 4,
+                maxReactions: 2,
+                sheetBonuses: [
+                    { targetType: 'ac', valueMode: 'flat', value: 1, source: 'Shield' },
+                    { targetType: 'initiative', valueMode: 'flat', value: 2, source: 'Alert' },
+                    { targetType: 'spellAttack', valueMode: 'flat', value: 1, source: 'Wand' },
+                    { targetType: 'spellDc', valueMode: 'flat', value: 1, source: 'Focus' }
+                ]
             }
         }, { id: 'player', role: 'player' });
 
@@ -347,10 +418,55 @@ describe('actions and history', () => {
         expect(state.characters[0].abilityScores.strength).toBe(18);
         expect(state.characters[0].savingThrowProficiencies).toEqual(['strength', 'constitution']);
         expect(state.characters[0].skillExpertise).toEqual(['perception']);
+        expect(state.characters[0].ac).toBe(18);
+        expect(state.characters[0].initBonus).toBe(4);
+        expect(state.characters[0].maxReactions).toBe(2);
+        expect(state.characters[0].currentReactions).toBe(1);
+        expect(state.characters[0].sheetBonuses).toEqual(expect.arrayContaining([
+            expect.objectContaining({ targetType: 'ac', source: 'Shield' }),
+            expect.objectContaining({ targetType: 'initiative', source: 'Alert' }),
+            expect.objectContaining({ targetType: 'spellAttack', source: 'Wand' }),
+            expect.objectContaining({ targetType: 'spellDc', source: 'Focus' })
+        ]));
 
         undoPage(state, 'spells', { id: 'dm', role: 'dm' });
         expect(state.characters[0].proficiencyBonus).toBe(2);
         expect(state.characters[0].abilityScores.strength).toBe(10);
+        expect(state.characters[0].ac).toBe(15);
+    });
+
+    it('stores character sheet general fields, bonuses and action entries with undo', () => {
+        const state = createInitialState();
+        state.characters.push(player('Funyana'));
+        applyGameAction(state, {
+            type: 'spell.sheet.update',
+            payload: {
+                characterId: 'funyana',
+                proficiencyBonus: 6,
+                abilityScores: { strength: 10, dexterity: 14, constitution: 10, intelligence: 18, wisdom: 10, charisma: 10 },
+                savingThrowProficiencies: [],
+                skillProficiencies: [],
+                skillExpertise: [],
+                skillAbilityOverrides: { intimidation: 'strength' },
+                sheetGeneral: { spellcastingAbility: 'intelligence', speeds: { walk: 30, fly: 60, hover: 0, swim: 0, climb: 0, burrow: 0 } },
+                sheetBonuses: [{ targetType: 'allSkills', valueMode: 'halfProficiency', value: 0, condition: 'ifNotProficientOrExpert', source: 'Special rule' }]
+            }
+        }, { id: 'player', role: 'player' });
+        applyGameAction(state, {
+            type: 'spell.action.upsert',
+            payload: { characterId: 'funyana', action: { name: 'Crossbow Shot', description: 'Attack text', source: 'Weapon' } }
+        }, { id: 'player', role: 'player' });
+
+        expect(state.characters[0].sheetGeneral.spellcastingAbility).toBe('intelligence');
+        expect(state.characters[0].sheetGeneral.speeds.fly).toBe(60);
+        expect(state.characters[0].skillAbilityOverrides.intimidation).toBe('strength');
+        expect(state.characters[0].sheetBonuses[0]).toEqual(expect.objectContaining({ valueMode: 'halfProficiency', source: 'Special rule' }));
+        expect(state.characters[0].characterActions[0]).toEqual(expect.objectContaining({ name: 'Crossbow Shot' }));
+
+        undoPage(state, 'spells', { id: 'dm', role: 'dm' });
+        expect(state.characters[0].characterActions).toEqual([]);
+        undoPage(state, 'spells', { id: 'dm', role: 'dm' });
+        expect(state.characters[0].sheetBonuses).toEqual([]);
     });
 
     it('updates spell database and spellbooks with page-scoped undo', () => {
@@ -364,6 +480,38 @@ describe('actions and history', () => {
         expect(state.characters[0].spellbook.knownSpellIds).toEqual([]);
         undoPage(state, 'databases', { id: 'dm', role: 'dm' });
         expect(state.spellDatabase).toEqual([]);
+    });
+
+    it('normalizes already-prefixed epic spell levels without repeated special prefixes', () => {
+        const migrated = migrateAutosave({
+            spellDatabase: [
+                { id: 'a', name: 'Crescent Cleave', levelKey: 'special-special-epic1', levelLabel: 'special-special-epic1' },
+                { id: 'b', name: 'Congruent Spellward', levelKey: 'special-epic2', levelLabel: 'special-epic2' }
+            ]
+        });
+
+        expect(migrated.spellDatabase).toEqual([
+            expect.objectContaining({ levelKey: 'epic1', levelLabel: 'Epic 1' }),
+            expect.objectContaining({ levelKey: 'epic2', levelLabel: 'Epic 2' })
+        ]);
+    });
+
+    it('adds epic spell slots for level 25 casters', () => {
+        const state = createInitialState();
+        const hero = player('Ariamus');
+        hero.spellcasterLevel = 20;
+        hero.spellSlots = {};
+        state.characters.push(hero);
+        applyGameAction(state, {
+            type: 'spell.character.update',
+            payload: { characterId: 'ariamus', spellcasterLevel: 25, hitDiceMax: 1, hitDiceCurrent: 1, customFeatures: [] }
+        }, { id: 'player', role: 'player' });
+
+        expect(state.characters[0].spellSlots).toEqual(expect.objectContaining({
+            epic1: { max: 3, used: 0 },
+            epic2: { max: 2, used: 0 }
+        }));
+        expect(state.characters[0].spellSlots.epic3).toBeUndefined();
     });
 
     it('validates prepared spell limits while ignoring cantrips and allowing special toggles', () => {

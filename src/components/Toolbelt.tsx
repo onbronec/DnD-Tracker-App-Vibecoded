@@ -1,10 +1,11 @@
 import { FormEvent, useMemo, useState } from 'react';
 import { Modal } from './Modal';
 import { MarkdownEditor, MarkdownRenderer } from './Markdown';
-import type { AbilityKey, CalendarRecord, Character, ClientRole, GameAction, GameState, ToolbeltNote } from '../shared/types';
+import type { AbilityKey, CalendarRecord, ClientRole, GameAction, GameState, ToolbeltNote } from '../shared/types';
 import {
   ABILITIES,
   SKILLS,
+  abilityCheckBonus,
   abilityModifier,
   adjustedAbilityScores,
   saveBonus,
@@ -73,16 +74,14 @@ function PartyChecksModal({ state, onClose }: { state: GameState; onClose: () =>
     const base = mode === 'save'
       ? saveBonus(character, ability, adjusted.scores)
       : mode === 'ability'
-        ? abilityModifier(adjusted.scores[ability])
+        ? abilityCheckBonus(character, ability, adjusted.scores)
         : skillBonus(character, skill, adjusted.scores);
-    const funyana = funyanaBonus(character, mode, skill);
-    const value = base + aura + funyana;
+    const value = base + aura;
     const inspiration = inspirations[character.id] || 'none';
     return {
       character,
       value,
       base,
-      funyana,
       inspiration,
       chance: dc ? partySuccessChancePercent(dcNumber, value, rollMode, inspiration, mode !== 'save') : null
     };
@@ -141,14 +140,13 @@ function PartyChecksModal({ state, onClose }: { state: GameState; onClose: () =>
             <span>Inspiration</span>
             <span>Chance</span>
           </div>
-          {rows.map(({ character, value, base, funyana, inspiration, chance }) => (
+          {rows.map(({ character, value, base, inspiration, chance }) => (
             <div className="party-check-row" key={character.id}>
               <div>
                 <strong>{character.name}</strong>
                 <span>{[
                   `base ${signed(base)}`,
-                  aura ? `aura ${signed(aura)}` : '',
-                  funyana ? `Funyana ${signed(funyana)}` : ''
+                  aura ? `aura ${signed(aura)}` : ''
                 ].filter(Boolean).join(', ') || `PB ${signed(character.proficiencyBonus || 0)}`}</span>
               </div>
               <b>{signed(value)}</b>
@@ -520,13 +518,6 @@ function auraBonus(state: GameState, name: string, ability: AbilityKey) {
   const character = state.characters.find(item => item.type === 'player' && item.name.toLowerCase().includes(name));
   if (!character) return 0;
   return abilityModifier(adjustedAbilityScores(character).scores[ability]);
-}
-
-function funyanaBonus(character: Character, mode: 'save' | 'ability' | 'skill', skill: string) {
-  if (!character.name.toLowerCase().includes('funyana')) return 0;
-  if (mode === 'save') return 0;
-  if (mode === 'skill' && ((character.skillProficiencies || []).includes(skill) || (character.skillExpertise || []).includes(skill))) return 0;
-  return Math.floor((character.proficiencyBonus || 0) / 2);
 }
 
 function partySuccessChancePercent(dc: number, modifier: number, rollMode: DiceRollMode, inspiration: 'none' | 'd12' | 'd20', inspirationAdvantage: boolean) {

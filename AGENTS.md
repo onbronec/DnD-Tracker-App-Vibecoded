@@ -126,6 +126,12 @@ u stolu, citelnost pri session a spolehlivost dat pred "enterprise" slozitosti.
   `preparedEpicMax`. Cantripy jsou vzdy aktivni, levely 1-9 pocitej do
   non-epic prepared limitu, Epic 1-3 do epic limitu, special sekce maji
   vlastni prepared toggle bez limitu.
+- Epic spell level keys musi byt kanonicky `epic1`, `epic2`, `epic3`; nikdy
+  je neprefixuj jako `special-epic1`. Migrace/import musi opravit i stare
+  `special-special-...-epicN` hodnoty zpet na kanonicky epic key. Epic spell
+  sloty v `character.spellSlots` pouzivej take jako `epic1/2/3`, ne jako
+  numericke 10/11/12. Epic slot progression je: lvl 21 `0-0-0`, 22 `2-0-0`,
+  23 `3-0-0`, 24 `3-1-0`, 25 `3-2-0`, 26-30 `3-2-1`.
 - Character Abilities (`character.characterAbilities`) jsou spodní wiki sekce
   character sheetu: libovolny pocet `{id,name,description,source}` entries.
   Jsou ciste popisne Markdown poznamky pro class/item/feature vysvetlivky a
@@ -135,6 +141,12 @@ u stolu, citelnost pri session a spolehlivost dat pred "enterprise" slozitosti.
   `savingThrowProficiencies`, `skillProficiencies`, `skillExpertise`. Dodrzuj
   5e ability/skill seznamy; PC scores mohou byt do 30 a proficiency bonus do
   10.
+- Character sheet ma take `sheetGeneral` pro spellcasting ability a rychlosti,
+  `characterActions` pro combat-facing Actions/Attacks wiki sekci,
+  `skillAbilityOverrides` pro vyjimky jako Strength Intimidation a
+  `sheetBonuses` pro numericke bonusy k saves/skills/ability checks. Funyanino
+  pravidlo modeluj jako half-proficiency bonus na `allSkills` a
+  `allAbilityChecks` s condition `ifNotProficientOrExpert`, ne jako pevne cislo.
 - Character Sheets maji levy dynamicky index obsahovych sekci. Udrzuj `id`
   anchor sekce a aktivni stav podle scrollu, ale frozen top Character header
   do indexu nedavej.
@@ -146,7 +158,9 @@ u stolu, citelnost pri session a spolehlivost dat pred "enterprise" slozitosti.
   Crow aura pouziva Wisdom modifier, Astria aura Intelligence modifier.
   Inspiration je per-character d12/d20; u ability/skill checks se inspiration
   die roluje s advantage, u saves ne. Funyana dostava half proficiency rounded
-  down na ability/skill checks, kde neni proficient ani expert.
+  down na ability/skill checks, kde neni proficient ani expert. Toto pravidlo
+  modeluj pres `sheetBonuses`, ne special-case kodem v toolbeltu; Party Checks
+  musi pouzivat stejne `abilityCheckBonus`/`skillBonus` helpery jako sheet.
 - Stealth tool uklada/zobrazuje base check bez globalniho Pass without Trace;
   Pass without Trace +10 aplikuj dynamicky pri vyhodnoceni, aby toggle hned
   zmenil success/failure.
@@ -157,6 +171,14 @@ u stolu, citelnost pri session a spolehlivost dat pred "enterprise" slozitosti.
   postavy.
 - Ability Score Set/Increased/Reduced jsou docasne conditions. Ovlivnuji
   vypocet sheetu pres effects, ale base hodnoty v editoru se nemeni.
+- Armor Class Increased/Reduced jsou docasne conditions pro AC. AC, initiative,
+  spell attack a spell DC podporuji take `sheetBonuses` s targety `ac`,
+  `initiative`, `spellAttack` a `spellDc`; zobrazuj jejich zdroje pod hodnotami
+  ve stejnem duchu jako skill/save metadata.
+- `maxReactions`/`currentReactions` jsou soucast `Character`. Combat tracker je
+  zobrazuje jako utratitelne checkboxy a server je resetuje na zacatku tahu
+  kazdeho combatanta. Player sheet editor upravuje player `maxReactions`,
+  monster editor/statblock data upravuje monster `maxReactions`.
 - Conditions se vizualne lisi podle `kind`: buff/debuff/neutral. V combat
   trackeru maji zobrazit ulozeny popis pri hoveru.
 - Klik na jednoduchou condition ji rovnou odstrani. Management modal otevirat
@@ -167,11 +189,20 @@ u stolu, citelnost pri session a spolehlivost dat pred "enterprise" slozitosti.
   `Burning 2d4 fire`.
 - Search UI pro conditions, monster databazi a inventory databaze ma byt
   dynamicky result-list/card picker (`SearchPicker`), ne dvojice text input +
-  resetujici se `select`.
+  resetujici se `select`. Pokud je dotaz v uvozovkach, napr. `"Name"`, hledej
+  pouze v nazvu/headeru entry; neprohledavej dlouhy popis.
 - Inventory radky maji byt kompaktni souhrny bez opakovanych kategorickych
   labelu typu Potion/Scroll/General note; sekce uz kategorii ukazuje.
   Remove/transfer/attune ovladani patri do item detail modalu, ne stale na
-  radek.
+  radek. U magic/general itemu nezobrazuj `x1`; quantity zobraz jen pokud je
+  vetsi nez 1. U potions, scrolls a spell components quantity/value dava smysl
+  porad.
+- Scrolls jsou 1:1 se spell databazi. Add item flow pro scrolls ma umet hledat
+  spellDatabase, vlozit scroll podle spellu a trackovat jeho pocet pouziti/kusu.
+- Inventory ma samostatnou sekci `spellComponents`. Komponenty trackuj bud
+  jako `{trackingType:"count", count}` nebo `{trackingType:"value", goldValue}`;
+  nepremichavat je s general notes, protoze slouzi pro rychle utraceni
+  material components u kouzel.
 - Item detail modal se renderuje pres portal do `document.body`, aby byl vzdy
   centrovany v cele obrazovce a prekryl i history panel.
 - Inventory itemy musi jit editovat pres serverovou akci `inventory.item.update`;
@@ -187,6 +218,8 @@ u stolu, citelnost pri session a spolehlivost dat pred "enterprise" slozitosti.
   Monsters. Pouzivej `@Stunned` pro jednoduche nazvy a `@[Accursed Wish]` pro
   vic slov / slozitou interpunkci. Reference renderuj jako klikaci React node,
   ktery otevre centered detail modal; nikdy kvuli tomu neprechazej na raw HTML.
+  Markdown editor musi mit tlacitko Reference, ktere vlozi `@[]`, protoze hraci
+  si syntax nemaji muset pamatovat.
 - Automaticke doplneni techto odkazu do spell databaze resi
   `npm.cmd run link:spell-refs`. Default je dry-run. Pro zapis do autosavu
   pouzij `npm.cmd run link:spell-refs -- --apply`; script pred zapisem dela

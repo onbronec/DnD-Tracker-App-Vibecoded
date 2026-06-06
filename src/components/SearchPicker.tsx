@@ -29,9 +29,12 @@ export function SearchPicker<T>({
   getDescription,
   limit = 8
 }: Props<T>) {
-  const needle = query.trim().toLowerCase();
+  const parsed = parseQuery(query);
   const results = items
-    .filter(item => !needle || searchText(item).includes(needle))
+    .filter(item => {
+      if (!parsed.needle) return true;
+      return (parsed.nameOnly ? getLabel(item) : searchText(item)).toLowerCase().includes(parsed.needle);
+    })
     .slice(0, limit);
 
   return (
@@ -64,4 +67,13 @@ export function SearchPicker<T>({
 function searchText(item: unknown) {
   if (!item || typeof item !== 'object') return String(item || '').toLowerCase();
   return Object.values(item as Record<string, unknown>).join(' ').toLowerCase();
+}
+
+function parseQuery(query: string) {
+  const trimmed = query.trim();
+  const quoted = trimmed.match(/^"(.+)"$/);
+  return {
+    needle: (quoted ? quoted[1] : trimmed).toLowerCase(),
+    nameOnly: Boolean(quoted)
+  };
 }

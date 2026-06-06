@@ -355,6 +355,7 @@ function DatabaseEditorModal({
     importKey: String(initial?.importKey || ''),
     hp: String(initial?.hp || '10'),
     ac: String(initial?.ac || '10'),
+    maxReactions: String(initial?.maxReactions || '1'),
     speed: String(initial?.speed || ''),
     stats: statsToText(initial?.stats),
     saves: String(initial?.saves || ''),
@@ -425,7 +426,7 @@ function DatabaseEditorModal({
     } else if (kind === 'spell') {
       onSave({
         ...base,
-        levelKey: '',
+        levelKey: form.levelKey,
         levelLabel: form.levelLabel,
         classes: String(form.classes).split(',').map(item => item.trim()).filter(Boolean),
         school: form.school,
@@ -458,6 +459,7 @@ function DatabaseEditorModal({
         hp: Number(form.hp) || 1,
         maxHp: Number(form.hp) || 1,
         ac: Number(form.ac) || 10,
+        maxReactions: Number(form.maxReactions) || 1,
         speed: form.speed,
         stats,
         saves: form.saves,
@@ -640,6 +642,7 @@ function DatabaseEditorModal({
               </div>
               <input value={String(form.hp)} onChange={event => update('hp', event.target.value)} type="number" min={1} placeholder="HP" />
               <input value={String(form.ac)} onChange={event => update('ac', event.target.value)} type="number" min={1} placeholder="AC" />
+              <input value={String(form.maxReactions)} onChange={event => update('maxReactions', event.target.value)} type="number" min={0} placeholder="Reactions per round" />
               <input value={String(form.speed)} onChange={event => update('speed', event.target.value)} placeholder="Speed" />
               <input value={String(form.stats)} onChange={event => update('stats', event.target.value)} placeholder="Stats: Str 10, Dex 14, Con 12, Int 10, Wis 14, Cha 13" />
               <input value={String(form.saves)} onChange={event => update('saves', event.target.value)} placeholder="Saving throws" />
