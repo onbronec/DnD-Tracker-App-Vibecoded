@@ -691,6 +691,32 @@ describe('page visual behavior', () => {
     }));
   });
 
+  it('formats repeated parenthesized dice expressions with individual roll sub-totals in the log', () => {
+    const submitAction = vi.fn(async (_action: GameAction) => undefined);
+    const random = vi.spyOn(Math, 'random')
+      .mockReturnValueOnce(0.4)   // 9
+      .mockReturnValueOnce(0.45)  // 10
+      .mockReturnValueOnce(0.5)   // 11
+      .mockReturnValueOnce(0.55)  // 12
+      .mockReturnValueOnce(0.8);  // 17
+
+    render(<Toolbelt role="dm" state={gameState()} submitAction={submitAction} />);
+    fireEvent.click(within(screen.getByLabelText('Table toolbelt')).getByRole('button', { name: 'Dice Roller' }));
+    fireEvent.change(screen.getByLabelText('Dice expression'), { target: { value: '5*(1d20+2*5)' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Roll' }));
+
+    expect(submitAction).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'toolbelt.dice.add',
+      payload: expect.objectContaining({
+        expression: '5*(1d20+10)',
+        total: 109,
+        detail: '5×(1d20+10): 19 [9+10], 20 [10+10], 21 [11+10], 22 [12+10], 27 [17+10]'
+      })
+    }));
+
+    random.mockRestore();
+  });
+
   it('uses Wisdom for Crow aura and Intelligence for Astria aura', () => {
     const state = gameState({
       characters: [

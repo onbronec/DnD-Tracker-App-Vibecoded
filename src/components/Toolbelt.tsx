@@ -630,7 +630,29 @@ function calendarCells(year: number, monthIndex: number) {
 
 function describeDiceResult(result: DiceRollResult) {
   return result.terms.map(term => {
-    if (!term.dice) return `${term.sign < 0 ? '-' : '+'}${term.notation}: ${term.constant}`;
-    return `${term.sign < 0 ? '-' : '+'}${term.notation}: ${term.dice.map(die => `${die.kept}${die.rolls.length > 1 ? ` (${die.rolls.join('/')})` : ''}${die.rerolledOnes.length ? ` rerolled to ${die.rerolledOnes.join('/')}` : ''}`).join(', ')}`;
+    const signPrefix = term.sign < 0 ? '-' : '+';
+    if (term.iterations && term.iterations.length > 0) {
+      const label = `${signPrefix}${term.repeatCount || term.iterations.length}×(${term.innerNotation || term.notation})`;
+      const values = term.iterations.map(iter => `${iter.total} [${describeIterationBreakdown(iter)}]`).join(', ');
+      return `${label}: ${values}`;
+    }
+    if (!term.dice) return `${signPrefix}${term.notation}: ${term.constant}`;
+    return `${signPrefix}${term.notation}: ${term.dice.map(formatDieResult).join(', ')}`;
   }).join(' | ').replace(/^\+/, '');
+}
+
+function describeIterationBreakdown(result: DiceRollResult): string {
+  return result.terms.map((term, index) => {
+    const signPrefix = term.sign < 0 ? '-' : index === 0 ? '' : '+';
+    if (term.iterations && term.iterations.length > 0) {
+      return `${signPrefix}${term.iterations.map(iter => iter.total).join('+')}`;
+    }
+    if (!term.dice) return `${signPrefix}${term.constant}`;
+    const dicePart = term.dice.map(formatDieResult).join('+');
+    return `${signPrefix}${dicePart}`;
+  }).join('');
+}
+
+function formatDieResult(die: NonNullable<DiceRollResult['terms'][number]['dice']>[number]) {
+  return `${die.kept}${die.rolls.length > 1 ? ` (${die.rolls.join('/')})` : ''}${die.rerolledOnes.length ? ` rerolled to ${die.rerolledOnes.join('/')}` : ''}`;
 }

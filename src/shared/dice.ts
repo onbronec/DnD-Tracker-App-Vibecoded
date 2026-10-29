@@ -19,6 +19,9 @@ export interface DiceTermResult {
   total: number;
   dice?: DiceDieResult[];
   constant?: number;
+  repeatCount?: number;
+  innerNotation?: string;
+  iterations?: DiceRollResult[];
 }
 
 export interface DiceRollResult {
@@ -28,13 +31,49 @@ export interface DiceRollResult {
   terms: DiceTermResult[];
 }
 
-export type ParsedTerm = { sign: 1 | -1; count?: number; sides?: number; constant?: number; notation: string };
+export type ParsedTerm = {
+  sign: 1 | -1;
+  count?: number;
+  sides?: number;
+  constant?: number;
+  repeatCount?: number;
+  innerTerms?: ParsedTerm[];
+  innerNotation?: string;
+  notation: string;
+};
 
 export function rollDiceExpression(expression: string, options: DiceRollOptions = {}): DiceRollResult {
   const terms = parseDiceExpression(expression);
   const random = options.random || Math.random;
   const mode = options.mode || 'normal';
-  const resultTerms = terms.map(term => {
+  return evaluateParsedTerms(expression, terms, mode, Boolean(options.rerollOnes), random);
+}
+
+function evaluateParsedTerms(
+  expression: string,
+  terms: ParsedTerm[],
+  mode: DiceRollMode,
+  rerollOnes: boolean,
+  random: () => number
+): DiceRollResult {
+  const resultTerms: DiceTermResult[] = terms.map(term => {
+    if (term.repeatCount && term.innerTerms) {
+      const innerNorm = formatNormalizedTerms(term.innerTerms);
+      const iterations = Array.from({ length: term.repeatCount }, () =>
+        evaluateParsedTerms(innerNorm, term.innerTerms!, mode, rerollOnes, random)
+      );
+      const unsignedTotal = iterations.reduce((sum, item) => sum + item.total, 0);
+      return {
+        sign: term.sign,
+        notation: term.notation,
+        repeatCount: term.repeatCount,
+        innerNotation: term.innerNotation || innerNorm,
+        iterations,
+        dice: iterations.flatMap(item => item.terms.flatMap(innerTerm => innerTerm.dice || [])),
+        total: term.sign * unsignedTotal
+      };
+    }
+
     if (typeof term.constant === 'number') {
       return {
         sign: term.sign,
@@ -44,7 +83,7 @@ export function rollDiceExpression(expression: string, options: DiceRollOptions 
       };
     }
 
-    const dice = Array.from({ length: term.count || 1 }, () => rollOneDie(term.sides || 20, mode, Boolean(options.rerollOnes), random));
+    const dice = Array.from({ length: term.count || 1 }, () => rollOneDie(term.sides || 20, mode, rerollOnes, random));
     const unsignedTotal = dice.reduce((sum, die) => sum + die.kept, 0);
     return {
       sign: term.sign,
@@ -56,10 +95,14 @@ export function rollDiceExpression(expression: string, options: DiceRollOptions 
 
   return {
     expression,
-    normalized: terms.map(term => `${term.sign < 0 ? '-' : '+'}${term.notation}`).join('').replace(/^\+/, ''),
+    normalized: formatNormalizedTerms(terms),
     total: resultTerms.reduce((sum, term) => sum + term.total, 0),
     terms: resultTerms
   };
+}
+
+function formatNormalizedTerms(terms: ParsedTerm[]): string {
+  return terms.map(term => `${term.sign < 0 ? '-' : '+'}${term.notation}`).join('').replace(/^\+/, '');
 }
 
 type Token =
@@ -224,11 +267,20 @@ function negateTerms(terms: ParsedTerm[]): ParsedTerm[] {
 }
 
 function isPureConstant(terms: ParsedTerm[]): boolean {
-  return terms.every(term => typeof term.constant === 'number' && !term.sides);
+  return terms.every(term => typeof term.constant === 'number' && !term.sides && !term.repeatCount);
 }
 
 function evaluateConstantSum(terms: ParsedTerm[]): number {
   return terms.reduce((sum, term) => sum + term.sign * (term.constant || 0), 0);
+}
+
+function totalDiceInTerms(terms: ParsedTerm[]): number {
+  return terms.reduce((sum, term) => {
+    if (term.repeatCount && term.innerTerms) {
+      return sum + term.repeatCount * totalDiceInTerms(term.innerTerms);
+    }
+    return sum + (term.count || 0);
+  }, 0);
 }
 
 function multiplyTerms(left: ParsedTerm[], right: ParsedTerm[]): ParsedTerm[] {
@@ -239,7 +291,7 @@ function multiplyTerms(left: ParsedTerm[], right: ParsedTerm[]): ParsedTerm[] {
     throw new Error('Cannot multiply two dice expressions together.');
   }
 
-  if (leftIsConst && rightIsConst && left.length === 1 && right.length === 1) {
+  if (leftIsConst && rightIsConst) {
     const val = evaluateConstantSum(left) * evaluateConstantSum(right);
     const sign: 1 | -1 = val < 0 ? -1 : 1;
     const abs = Math.abs(val);
@@ -258,6 +310,35 @@ function multiplyTerms(left: ParsedTerm[], right: ParsedTerm[]): ParsedTerm[] {
 
   const scalarSign: 1 | -1 = scalar < 0 ? -1 : 1;
   const absScalar = Math.abs(scalar);
+
+  if (target.length === 1 && target[0].repeatCount && target[0].innerTerms) {
+    const combinedCount = target[0].repeatCount * absScalar;
+    if (combinedCount * totalDiceInTerms(target[0].innerTerms) > 100) {
+      throw new Error('Dice count must be 1-100.');
+    }
+    const innerNotation = target[0].innerNotation || formatNormalizedTerms(target[0].innerTerms);
+    return [{
+      sign: (target[0].sign * scalarSign) as 1 | -1,
+      repeatCount: combinedCount,
+      innerTerms: target[0].innerTerms,
+      innerNotation,
+      notation: `${combinedCount}*(${innerNotation})`
+    }];
+  }
+
+  if (absScalar > 1 && totalDiceInTerms(target) > 0) {
+    if (absScalar * totalDiceInTerms(target) > 100) {
+      throw new Error('Dice count must be 1-100.');
+    }
+    const innerNotation = formatNormalizedTerms(target);
+    return [{
+      sign: scalarSign,
+      repeatCount: absScalar,
+      innerTerms: target,
+      innerNotation,
+      notation: `${absScalar}*(${innerNotation})`
+    }];
+  }
 
   return target.map(term => {
     const nextSign = (term.sign * scalarSign) as 1 | -1;

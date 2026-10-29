@@ -15,28 +15,45 @@ describe('dice roller', () => {
     expect(result.terms[0].dice?.map(die => die.kept)).toEqual([1, 4]);
   });
 
-  it('supports parentheses and multiplication like 3*(1d20+2*3)', () => {
-    const parsed = parseDiceExpression('3*(1d20+2*3)');
+  it('evaluates multiplied parenthesized dice expressions as repeated sub-rolls with individual sub-totals', () => {
+    const parsed = parseDiceExpression('5*(1d20+2*5)');
     expect(parsed).toEqual([
-      { sign: 1, count: 3, sides: 20, notation: '3d20' },
-      { sign: 1, constant: 18, notation: '18' }
+      {
+        sign: 1,
+        repeatCount: 5,
+        innerNotation: '1d20+10',
+        notation: '5*(1d20+10)',
+        innerTerms: [
+          { sign: 1, count: 1, sides: 20, notation: '1d20' },
+          { sign: 1, constant: 10, notation: '10' }
+        ]
+      }
     ]);
 
-    const result = rollDiceExpression('3*(1d20+2*3)', {
+    const fiveRoll = rollDiceExpression('5*(1d20+2*5)', {
+      random: sequence([0.4, 0.45, 0.5, 0.55, 0.8]) // rolls 9, 10, 11, 12, 17
+    });
+
+    expect(fiveRoll.normalized).toBe('5*(1d20+10)');
+    expect(fiveRoll.terms).toHaveLength(1);
+    expect(fiveRoll.terms[0].iterations?.map(iter => iter.total)).toEqual([19, 20, 21, 22, 27]);
+    expect(fiveRoll.total).toBe(109);
+
+    const threeRoll = rollDiceExpression('3*(1d20+2*3)', {
       mode: 'advantage',
       rerollOnes: true,
       random: sequence([
-        0, 0.4, 0.7, // die 1: rolls 1 (rerolled to 9) and 15 -> keeps 15
-        0.5, 0.2,    // die 2: rolls 11 and 5 -> keeps 11
-        0.9, 0.1     // die 3: rolls 19 and 3 -> keeps 19
+        0, 0.4, 0.7, // die 1: rolls 1 (rerolled to 9) and 15 -> keeps 15 (+6 = 21)
+        0.5, 0.2,    // die 2: rolls 11 and 5 -> keeps 11 (+6 = 17)
+        0.9, 0.1     // die 3: rolls 19 and 3 -> keeps 19 (+6 = 25)
       ])
     });
 
-    expect(result.normalized).toBe('3d20+18');
-    expect(result.terms[0].dice).toHaveLength(3);
-    expect(result.terms[0].dice?.map(die => die.kept)).toEqual([15, 11, 19]);
-    expect(result.terms[0].dice?.[0].rerolledOnes).toEqual([9]);
-    expect(result.total).toBe(15 + 11 + 19 + 18);
+    expect(threeRoll.normalized).toBe('3*(1d20+6)');
+    expect(threeRoll.terms[0].iterations?.map(iter => iter.total)).toEqual([21, 17, 25]);
+    expect(threeRoll.terms[0].dice?.map(die => die.kept)).toEqual([15, 11, 19]);
+    expect(threeRoll.terms[0].dice?.[0].rerolledOnes).toEqual([9]);
+    expect(threeRoll.total).toBe(21 + 17 + 25);
   });
 
   it('supports nested parentheses, subtraction, and right-side multiplication', () => {
@@ -44,10 +61,10 @@ describe('dice roller', () => {
       random: sequence([0.25, 0.5, 0.75, 0.9, 0.5])
     });
 
-    expect(result.normalized).toBe('4d4+2-1d6+3');
-    expect(result.terms[0].dice?.map(die => die.kept)).toEqual([2, 3, 4, 4]);
-    expect(result.terms[2].dice?.map(die => die.kept)).toEqual([4]);
-    expect(result.total).toBe((2 + 3 + 4 + 4) + 2 - 4 + 3);
+    expect(result.normalized).toBe('2*(2d4+1)-1d6+3');
+    expect(result.terms[0].iterations?.map(iter => iter.total)).toEqual([2 + 3 + 1, 4 + 4 + 1]);
+    expect(result.terms[1].dice?.map(die => die.kept)).toEqual([4]);
+    expect(result.total).toBe(6 + 9 - 4 + 3);
   });
 
   it('supports advantage, disadvantage and one-time reroll of 1s', () => {

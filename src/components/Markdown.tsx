@@ -377,10 +377,14 @@ function isValidDiceCandidate(candidate: string): boolean {
   if (!/\d*d\d+/i.test(candidate)) return false;
   try {
     const terms = parseDiceExpression(candidate);
-    return terms.some(term => typeof term.sides === 'number');
+    return termsContainDice(terms);
   } catch {
     return false;
   }
+}
+
+function termsContainDice(terms: ReturnType<typeof parseDiceExpression>): boolean {
+  return terms.some(term => typeof term.sides === 'number' || (term.innerTerms ? termsContainDice(term.innerTerms) : false));
 }
 
 function matchDiceAtTextStart(text: string): string | null {
