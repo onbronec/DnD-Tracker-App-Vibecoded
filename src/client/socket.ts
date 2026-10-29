@@ -17,6 +17,7 @@ export function connectSocket(params: {
   onError: (message: string) => void;
 }): SocketClient {
   const socket = io();
+  let currentState: GameState | null = null;
 
   socket.on('connect', () => {
     socket.emit('auth:register', { mode: params.mode, token: params.token });
@@ -27,11 +28,14 @@ export function connectSocket(params: {
   });
 
   socket.on('state:init', (state: GameState) => {
+    currentState = state;
     params.onState(state);
   });
 
-  socket.on('state:patch', (payload: { state: GameState }) => {
-    params.onState(payload.state);
+  socket.on('state:patch', (payload: { state: Partial<GameState> }) => {
+    if (!currentState) return;
+    currentState = { ...currentState, ...payload.state };
+    params.onState(currentState);
   });
 
   socket.on('history:updated', (log: ActionLogEntry[]) => {

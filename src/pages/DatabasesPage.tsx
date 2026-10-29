@@ -1,8 +1,9 @@
+import { NumberInput } from '../components/NumberInput';
 import { ChangeEvent, FormEvent, useMemo, useRef, useState } from 'react';
 import type { Character, ClientRole, GameAction, GameState, MonsterDatabaseEntry } from '../shared/types';
 import { CollapsiblePanel } from '../components/CollapsiblePanel';
 import { MarkdownEditor, MarkdownRenderer } from '../components/Markdown';
-import { parseMonsterMarkdown } from '../shared/monsterParser';
+import { parseMonsterEntries as parseEntriesText, parseMonsterMarkdown } from '../shared/monsterParser';
 import { Modal } from '../components/Modal';
 import { MonsterDetail, monsterDatabaseEntryToPreviewCharacter } from './MonstersPage';
 
@@ -12,6 +13,8 @@ interface Props {
   submitAction: (action: GameAction) => Promise<unknown>;
   onBackToCombat: () => void;
   onOpenMonsterEditor?: (monsterId: string | null) => void;
+  initialTab?: DatabaseKind;
+  onActiveTabChange?: (tab: DatabaseKind) => void;
 }
 
 type DatabaseKind = 'magic' | 'potion' | 'condition' | 'spell' | 'characters' | 'monster';
@@ -25,21 +28,24 @@ const DB_LABELS: Record<DatabaseKind, string> = {
   monster: 'Monsters'
 };
 
-export function DatabasesPage({ state, role, submitAction, onBackToCombat, onOpenMonsterEditor }: Props) {
+export function DatabasesPage({ state, role, submitAction, onBackToCombat, onOpenMonsterEditor, initialTab, onActiveTabChange }: Props) {
   const isDM = role === 'dm';
   const visibleTabs: DatabaseKind[] = isDM
     ? ['magic', 'potion', 'condition', 'spell', 'characters', 'monster']
     : ['magic', 'potion', 'condition', 'spell', 'characters'];
-  const [active, setActive] = useState<DatabaseKind>(visibleTabs[0]);
+  const [active, setActive] = useState<DatabaseKind>(() => initialTab && visibleTabs.includes(initialTab) ? initialTab : visibleTabs[0]);
   const [query, setQuery] = useState('');
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState<Record<string, unknown> | null>(null);
-  const [previewMonster, setPreviewMonster] = useState<MonsterDatabaseEntry | null>(null);
+  const [previewMonsterId, setPreviewMonsterId] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const allFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const items = itemsForKind(state, active);
+  const previewMonster = previewMonsterId
+    ? (state.monsterDatabase || []).find(monster => String(monster.id || '') === previewMonsterId) || null
+    : null;
 
   const filterOptions = useMemo(() => {
     const options: Record<string, string[]> = {};
@@ -203,7 +209,7 @@ export function DatabasesPage({ state, role, submitAction, onBackToCombat, onOpe
       <section className="section">
         <div className="database-tabs">
           {visibleTabs.map(tab => (
-            <button key={tab} className={`nav-btn ${active === tab ? 'active' : ''}`} onClick={() => { setActive(tab); setQuery(''); setFilters({}); }}>
+            <button key={tab} className={`nav-btn ${active === tab ? 'active' : ''}`} onClick={() => { setActive(tab); onActiveTabChange?.(tab); setQuery(''); setFilters({}); }}>
               {DB_LABELS[tab]}
             </button>
           ))}
@@ -355,7 +361,7 @@ export function DatabasesPage({ state, role, submitAction, onBackToCombat, onOpe
           items={filtered}
           canEdit={canEditCurrent}
           canRemove={canRemoveCurrent}
-          onView={active === 'monster' ? item => setPreviewMonster(item as unknown as MonsterDatabaseEntry) : undefined}
+          onView={active === 'monster' ? item => setPreviewMonsterId(String(item.id || '')) : undefined}
           onEdit={item => {
             if (active === 'monster' && onOpenMonsterEditor) {
               onOpenMonsterEditor(String(item.id || ''));
@@ -364,6 +370,7 @@ export function DatabasesPage({ state, role, submitAction, onBackToCombat, onOpe
             setEditing(item);
             setModalOpen(true);
           }}
+          onDuplicate={item => submitAction(upsertActionFor(active, duplicateDatabaseItem(active, item, items)))}
           onRemove={id => submitAction(removeActionFor(active, id))}
         />
       )}
@@ -394,14 +401,14 @@ export function DatabasesPage({ state, role, submitAction, onBackToCombat, onOpe
                     className="btn purple"
                     onClick={() => {
                       const monsterId = String(previewMonster.id || '');
-                      setPreviewMonster(null);
+                      setPreviewMonsterId(null);
                       onOpenMonsterEditor(monsterId);
                     }}
                   >
                     Edit
                   </button>
                 )}
-                <button className="btn" onClick={() => setPreviewMonster(null)}>Close</button>
+                <button className="btn" onClick={() => setPreviewMonsterId(null)}>Close</button>
               </div>
             </div>
             <MonsterDetail
@@ -488,6 +495,7 @@ function DatabaseGrid({
   canRemove,
   onView,
   onEdit,
+  onDuplicate,
   onRemove
 }: {
   kind: DatabaseKind;
@@ -496,6 +504,7 @@ function DatabaseGrid({
   canRemove: boolean;
   onView?: (item: Record<string, unknown>) => void;
   onEdit: (item: Record<string, unknown>) => void;
+  onDuplicate: (item: Record<string, unknown>) => void;
   onRemove: (id: string) => void;
 }) {
   return (
@@ -507,10 +516,11 @@ function DatabaseGrid({
             <h3>{String(item.name || 'Unnamed')}</h3>
             <p>{summaryFor(kind, item)}</p>
           </div>
-          {item.description || item.effect ? <MarkdownRenderer text={String(item.description || item.effect)} /> : null}
+          {kind !== 'monster' && (item.description || item.effect) ? <MarkdownRenderer text={String(item.description || item.effect)} /> : null}
           <div className="button-row">
             {onView && <button className="btn purple small" onClick={() => onView(item)}>View</button>}
             {canEdit && <button className="btn small" onClick={() => onEdit(item)}>Edit</button>}
+            {canEdit && <button className="btn small" onClick={() => onDuplicate(item)}>Duplicate</button>}
             {canRemove && <button className="btn danger small" onClick={() => onRemove(String(item.id))}>Remove</button>}
           </div>
         </article>
@@ -522,6 +532,40 @@ function DatabaseGrid({
 function databaseCardKey(kind: DatabaseKind, item: Record<string, unknown>, index: number) {
   const id = item.id || item.importKey || item.name || index;
   return `${kind}:${String(id)}:${index}`;
+}
+
+function duplicateDatabaseItem(kind: DatabaseKind, item: Record<string, unknown>, siblings: Array<Record<string, unknown>>) {
+  const copy = JSON.parse(JSON.stringify(item)) as Record<string, unknown>;
+  copy.id = makeDatabaseId(kind);
+  copy.name = duplicateName(String(item.name || 'Unnamed'), siblings);
+
+  if (kind === 'spell') {
+    copy.importKey = '';
+  }
+
+  return copy;
+}
+
+function duplicateName(name: string, siblings: Array<Record<string, unknown>>) {
+  const base = name.replace(/\s+\(copy(?: \d+)?\)$/i, '').trim() || 'Unnamed';
+  const usedNames = new Set(siblings.map(item => String(item.name || '').trim().toLowerCase()));
+  let next = `${base} (copy)`;
+  let suffix = 2;
+
+  while (usedNames.has(next.toLowerCase())) {
+    next = `${base} (copy ${suffix})`;
+    suffix += 1;
+  }
+
+  return next;
+}
+
+function makeDatabaseId(kind: DatabaseKind) {
+  const prefix = kind === 'monster' ? 'monster_db' : `${kind}_db`;
+  const random = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  return `${prefix}_${random}`;
 }
 
 function CharacterDatabase({
@@ -875,15 +919,15 @@ function DatabaseEditorModal({
                 <input type="checkbox" checked={Boolean(form.hasLevels)} onChange={event => update('hasLevels', event.target.checked)} />
                 Has levels
               </label>
-              <input value={String(form.maxLevel)} onChange={event => update('maxLevel', event.target.value)} type="number" min={0} placeholder="Max level" />
+              <NumberInput value={String(form.maxLevel)} onChange={event => update('maxLevel', event.target.value)} type="number" min={0} placeholder="Max level" />
               <label className="inline-check">
                 <input type="checkbox" checked={Boolean(form.hasDice)} onChange={event => update('hasDice', event.target.checked)} />
                 Has dice damage
               </label>
               {Boolean(form.hasDice) && (
                 <>
-                  <input value={String(form.defaultDiceCount)} onChange={event => update('defaultDiceCount', event.target.value)} type="number" min={0} placeholder="Default dice count" />
-                  <input value={String(form.defaultDiceSides)} onChange={event => update('defaultDiceSides', event.target.value)} type="number" min={0} placeholder="Default die sides" />
+                  <NumberInput value={String(form.defaultDiceCount)} onChange={event => update('defaultDiceCount', event.target.value)} type="number" min={0} placeholder="Default dice count" />
+                  <NumberInput value={String(form.defaultDiceSides)} onChange={event => update('defaultDiceSides', event.target.value)} type="number" min={0} placeholder="Default die sides" />
                   <input value={String(form.defaultDamageType)} onChange={event => update('defaultDamageType', event.target.value)} placeholder="Default damage type" />
                 </>
               )}
@@ -923,9 +967,9 @@ function DatabaseEditorModal({
                 />
                 <button type="button" className="btn purple" onClick={parsePastedMonster}>Parse statblock</button>
               </div>
-              <input value={String(form.hp)} onChange={event => update('hp', event.target.value)} type="number" min={1} placeholder="HP" />
-              <input value={String(form.ac)} onChange={event => update('ac', event.target.value)} type="number" min={1} placeholder="AC" />
-              <input value={String(form.maxReactions)} onChange={event => update('maxReactions', event.target.value)} type="number" min={0} placeholder="Reactions per round" />
+              <NumberInput value={String(form.hp)} onChange={event => update('hp', event.target.value)} type="number" min={1} placeholder="HP" />
+              <NumberInput value={String(form.ac)} onChange={event => update('ac', event.target.value)} type="number" min={1} placeholder="AC" />
+              <NumberInput value={String(form.maxReactions)} onChange={event => update('maxReactions', event.target.value)} type="number" min={0} placeholder="Reactions per round" />
               <input value={String(form.speed)} onChange={event => update('speed', event.target.value)} placeholder="Speed" />
               <input value={String(form.stats)} onChange={event => update('stats', event.target.value)} placeholder="Stats: Str 10, Dex 14, Con 12, Int 10, Wis 14, Cha 13" />
               <input value={String(form.saves)} onChange={event => update('saves', event.target.value)} placeholder="Saving throws" />
@@ -940,19 +984,19 @@ function DatabaseEditorModal({
               <input value={String(form.proficiency)} onChange={event => update('proficiency', event.target.value)} placeholder="Proficiency" />
               <input value={String(form.monsterType)} onChange={event => update('monsterType', event.target.value)} placeholder="Type" />
               <input value={String(form.size)} onChange={event => update('size', event.target.value)} placeholder="Size" />
-              <input value={String(form.initBonus)} onChange={event => update('initBonus', event.target.value)} type="number" placeholder="Initiative bonus" />
+              <NumberInput value={String(form.initBonus)} onChange={event => update('initBonus', event.target.value)} type="number" placeholder="Initiative bonus" />
               <label className="inline-check">
                 <input type="checkbox" checked={Boolean(form.powerEnabled)} onChange={event => update('powerEnabled', event.target.checked)} />
                 Power resource
               </label>
-              <input value={String(form.maxPower)} onChange={event => update('maxPower', event.target.value)} type="number" min={0} placeholder="Max power" />
-              <input value={String(form.currentPower)} onChange={event => update('currentPower', event.target.value)} type="number" min={0} placeholder="Starting power" />
+              <NumberInput value={String(form.maxPower)} onChange={event => update('maxPower', event.target.value)} type="number" min={0} placeholder="Max power" />
+              <NumberInput value={String(form.currentPower)} onChange={event => update('currentPower', event.target.value)} type="number" min={0} placeholder="Starting power" />
               <input value={String(form.powerName)} onChange={event => update('powerName', event.target.value)} placeholder="Power name" />
               <label className="inline-check">
                 <input type="checkbox" checked={Boolean(form.legendaryEnabled)} onChange={event => update('legendaryEnabled', event.target.checked)} />
                 Legendary actions
               </label>
-              <input value={String(form.legendaryMax)} onChange={event => update('legendaryMax', event.target.value)} type="number" min={0} placeholder="Legendary actions per round" />
+              <NumberInput value={String(form.legendaryMax)} onChange={event => update('legendaryMax', event.target.value)} type="number" min={0} placeholder="Legendary actions per round" />
               <label className="inline-check">
                 <input type="checkbox" checked={Boolean(form.hasLairActions)} onChange={event => update('hasLairActions', event.target.checked)} />
                 Has lair actions
@@ -1022,18 +1066,6 @@ function entriesToText(value: unknown) {
     })
     .filter(Boolean)
     .join('\n\n');
-}
-
-function parseEntriesText(value: string) {
-  return value
-    .split(/\n{2,}/)
-    .map(block => block.trim())
-    .filter(Boolean)
-    .map(block => {
-      const titleMatch = block.match(/^\*\*([^*]+?)\.?\*\*/);
-      const name = titleMatch?.[1]?.trim() || block.split('\n')[0].replace(/^#+\s*/, '').replace(/\*\*/g, '').trim();
-      return { name: name || 'Entry', description: block };
-    });
 }
 
 function statsToText(value: unknown) {
@@ -1168,7 +1200,7 @@ function summaryFor(kind: DatabaseKind, item: Record<string, unknown>) {
     return `${item.kind || 'neutral'}${item.hasLevels ? ` · levels 1-${item.maxLevel || 6}` : ''}${dice}`;
   }
   if (kind === 'spell') return `${item.levelLabel || 'Spell'} · ${item.school || 'Unknown school'} · ${Array.isArray(item.classes) ? item.classes.join(', ') : item.classes || 'No classes'}${item.isCounterspell ? ' · Counterspell' : ''}`;
-  return `HP ${item.hp || item.maxHp || '-'} · AC ${item.ac || '-'} · Init ${item.initBonus || 0}`;
+  return `HP ${item.hp || item.maxHp || '-'} · ${Number(item.encounterPoints) || 0.1} pt${item.dpr ? ` · DPR ${item.dpr}` : ''}${item.group ? ` · ${item.group}` : ''}`;
 }
 
 function inventoryCount(character: Character) {

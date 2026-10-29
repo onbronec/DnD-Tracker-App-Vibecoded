@@ -9,14 +9,130 @@ import { DatabaseReferenceProvider } from '../../src/components/DatabaseReferenc
 import { MarkdownEditor, MarkdownRenderer } from '../../src/components/Markdown';
 import { SearchPicker } from '../../src/components/SearchPicker';
 import { Toolbelt } from '../../src/components/Toolbelt';
+import { NumberInput } from '../../src/components/NumberInput';
 import { CombatPage } from '../../src/pages/CombatPage';
 import { DatabasesPage } from '../../src/pages/DatabasesPage';
 import { InventoryPage } from '../../src/pages/InventoryPage';
 import { SpellsPage } from '../../src/pages/SpellsPage';
 import type { Character, GameAction, GameState } from '../../src/shared/types';
-import { abilityCheckBonus, adjustedAbilityScores, armorClass, initiativeBonus, saveBonus, skillBonus, spellAttackBonus, spellSaveDc } from '../../src/shared/characterSheet';
+import { abilityCheckBonus, adjustedAbilityScores, armorClass, effectiveMaxHp, initiativeBonus, saveBonus, skillBonus, spellAttackBonus, spellSaveDc } from '../../src/shared/characterSheet';
 
 describe('visual UX helpers', () => {
+  it('keeps number drafts empty through server patches and commits once on blur or Enter', () => {
+    const commit = vi.fn();
+    const { rerender } = render(<NumberInput value={11} onCommit={commit} aria-label="Vitae" />);
+    const input = screen.getByLabelText('Vitae');
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: '' } });
+    rerender(<NumberInput value={12} onCommit={commit} aria-label="Vitae" />);
+    expect(input).toHaveValue(null);
+    expect(commit).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: '47' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    fireEvent.blur(input);
+    expect(commit).toHaveBeenCalledExactlyOnceWith(47);
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: '' } });
+    fireEvent.blur(input);
+    expect(input).toHaveValue(0);
+    expect(commit).toHaveBeenLastCalledWith(0);
+  });
+
+  it('keeps quick HP, effects and reactions available on collapsed player and monster cards', () => {
+    const state = gameState({ characters: [character({ effects: [{ name: 'Blessed' }] }), character({ id: 'orc', name: 'Orc', type: 'monster', maxHp: 100, currentHp: 50, maxReactions: 3, currentReactions: 1, effects: [{ name: 'Stunned' }] })] });
+    const props = { state, submitAction: vi.fn(async () => undefined), onOpenSpells: vi.fn(), onOpenInventory: vi.fn(), onOpenMonsters: vi.fn() };
+    const { rerender } = render(<CombatPage {...props} role="dm" />);
+    const hero = within(screen.getByTestId('character-Ayla'));
+    expect(hero.getByRole('button', { name: 'input' })).toHaveAttribute('aria-expanded', 'false');
+    expect(hero.getByRole('button', { name: /^HP -10$/ })).toBeVisible();
+    expect(hero.getByRole('button', { name: 'Blessed' })).toBeVisible();
+    expect(hero.getByRole('button', { name: 'Ayla reaction 1' })).toBeVisible();
+    expect(hero.queryByPlaceholderText('Damage')).not.toBeInTheDocument();
+    fireEvent.click(hero.getByRole('button', { name: 'input' }));
+    expect(hero.getByPlaceholderText('Damage')).toBeVisible();
+    fireEvent.click(hero.getByRole('button', { name: 'input' }));
+    expect(within(screen.getByTestId('character-Orc')).getByRole('button', { name: /^HP \+10$/ })).toBeVisible();
+    rerender(<CombatPage {...props} role="player" />);
+    const orc = within(screen.getByTestId('character-Orc'));
+    expect(orc.getByText('Bloodied').closest('.stat')).toHaveClass('health-medium');
+    expect(orc.getByRole('button', { name: 'Stunned' })).toBeVisible();
+    expect(orc.getByRole('button', { name: 'Orc reaction 1' })).toBeDisabled();
+    expect(orc.getByRole('button', { name: 'Orc reaction 1' })).toHaveAttribute('aria-pressed', 'true');
+    expect(orc.getByRole('button', { name: 'Orc reaction 3' })).toHaveAttribute('aria-pressed', 'false');
+    state.characters[1].currentHp = 20;
+    rerender(<CombatPage {...props} role="player" />);
+    expect(orc.getByText('Critical').closest('.stat')).toHaveClass('health-low');
+  });
+
+  it('adds non-monster objects with fixed initiative and notes', () => {
+    const submitAction = vi.fn(async () => undefined);
+    render(<CombatPage state={gameState()} role="dm" submitAction={submitAction} onOpenSpells={vi.fn()} onOpenInventory={vi.fn()} onOpenMonsters={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /Add character \/ monster \/ object/ }));
+    const form = screen.getByTestId('add-character-form');
+    fireEvent.change(within(form).getByLabelText('Combatant type'), { target: { value: 'nonMonster' } });
+    fireEvent.change(within(form).getByPlaceholderText('Name'), { target: { value: 'Falling rocks' } });
+    fireEvent.change(within(form).getByPlaceholderText('Fixed initiative'), { target: { value: '12' } });
+    fireEvent.submit(form);
+    expect(submitAction).toHaveBeenCalledWith(expect.objectContaining({ type: 'character.add', payload: expect.objectContaining({ isNonMonster: true, hasHpAc: false, fixedInitiative: 12, maxReactions: 0 }) }));
+  });
+
+  it('offers database objects through the shared picker and preserves their fixed initiative', () => {
+    const submitAction = vi.fn(async () => undefined);
+    const state = gameState({ monsterDatabase: [
+      { id: 'orc', name: 'Orc', hp: 20, ac: 12, initBonus: 1 },
+      { id: 'hazard', name: 'Falling rocks', entityKind: 'nonMonster', fixedInitiative: 0, hasHpAc: false, maxReactions: 0, hp: 0, ac: 0, initBonus: 0 }
+    ] });
+    render(<CombatPage state={state} role="dm" submitAction={submitAction} onOpenSpells={vi.fn()} onOpenInventory={vi.fn()} onOpenMonsters={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /Add monster \/ object from database/ }));
+    fireEvent.change(screen.getByLabelText('Database entity type'), { target: { value: 'objects' } });
+    expect(screen.queryByRole('option', { name: /^Orc/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('option', { name: /Falling rocks/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add to combat' }));
+    expect(submitAction).toHaveBeenCalledWith(expect.objectContaining({ type: 'character.add', payload: expect.objectContaining({ name: 'Falling rocks', isNonMonster: true, hasHpAc: false, fixedInitiative: 0, initiative: 0, maxReactions: 0 }) }));
+  });
+
+  it('previews AOE damage and cumulative conditions without submitting until global Apply', async () => {
+    const submitAction = vi.fn(async () => ({ ok: true }));
+    const state = gameState({ characters: [character({ effects: [{ name: 'Exhaustion', level: 2 }] }), character({ id: 'borin', name: 'Borin' })], conditionDatabase: [{ id: 'exhaustion', name: 'Exhaustion', hasLevels: true, maxLevel: 6 }] });
+    render(<Toolbelt role="dm" state={state} submitAction={submitAction} />);
+    fireEvent.click(screen.getByRole('button', { name: 'AOE Resolver' }));
+    expect(screen.queryByText('Chance')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Damage total'), { target: { value: '31' } });
+    fireEvent.click(screen.getByText('Applied conditions (0)'));
+    fireEvent.click(screen.getByRole('option', { name: /Exhaustion/ }));
+    fireEvent.change(screen.getByLabelText('Levels to add'), { target: { value: '2' } });
+    fireEvent.change(screen.getByLabelText('Ayla save total'), { target: { value: '10' } });
+    fireEvent.change(screen.getByLabelText('Borin save total'), { target: { value: '20' } });
+    const ayla = within(screen.getByRole('article', { name: 'Ayla AOE target' }));
+    const borin = within(screen.getByRole('article', { name: 'Borin AOE target' }));
+    fireEvent.click(borin.getByLabelText('Half damage'));
+    expect(ayla.getByText('Failure · Damage 31')).toBeVisible();
+    expect(ayla.getByText('Exhaustion 2 → 4')).toBeVisible();
+    expect(borin.getByText('Success · Damage 7')).toBeVisible();
+    expect(borin.getByText('No conditions')).toBeVisible();
+    fireEvent.click(borin.getByLabelText('Include Borin'));
+    expect(borin.getByText('Excluded — no changes')).toBeVisible();
+    expect(submitAction).not.toHaveBeenCalled();
+    expect(state.characters[0].effects[0].level).toBe(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Apply to 1 target' }));
+    await screen.findByRole('button', { name: 'Applied' });
+    expect(submitAction).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ type: 'combat.aoe.apply', page: 'combat', payload: expect.objectContaining({ damageTotal: 31, conditions: [{ conditionId: 'exhaustion', level: 2 }], targets: [{ characterId: 'ayla', saveTotal: 10, natural: null, halfDamage: false }] }) }));
+    expect(screen.getByRole('button', { name: 'Applied' })).toBeDisabled();
+  });
+
+  it('rolls monster saves in the AOE preview without changing server state', () => {
+    const submitAction = vi.fn(async () => undefined);
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    render(<Toolbelt role="dm" state={gameState({ characters: [character({ id: 'mage', name: 'Mage', type: 'monster', monsterData: { saves: 'Dex +9', stats: { dexterity: 18 } } })] })} submitAction={submitAction} />);
+    fireEvent.click(screen.getByRole('button', { name: 'AOE Resolver' }));
+    fireEvent.change(screen.getByLabelText('Targets'), { target: { value: 'enemies' } });
+    expect(screen.getByText('DEX save +9')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Roll save' }));
+    expect(screen.getByLabelText('Mage save total')).toHaveValue(20);
+    expect(submitAction).not.toHaveBeenCalled();
+    random.mockRestore();
+  });
+
   it('keeps collapsible panels closed by default and opens on demand', () => {
     render(
       <CollapsiblePanel title="Add item" summary="Create records.">
@@ -30,6 +146,50 @@ describe('visual UX helpers', () => {
     expect(screen.getByLabelText('Hidden field')).toBeInTheDocument();
   });
 
+  it('shows optional duration as a compact number on a condition', () => {
+    render(<CombatPage state={gameState({ characters: [character({ effects: [{ name: 'Hasted', remainingRounds: 2 }, { name: 'Blessed' }] })] })} role="dm" submitAction={vi.fn(async () => undefined)} onOpenSpells={vi.fn()} onOpenInventory={vi.fn()} onOpenMonsters={vi.fn()} />);
+    expect(screen.getByTitle('2 rounds remaining; expires at round end')).toHaveTextContent('2');
+    expect(screen.getByRole('button', { name: 'Blessed' }).querySelector('.effect-duration')).toBeNull();
+  });
+
+  it('shares feature usage and editable descriptions across Actions and Custom Features', () => {
+    const submitAction = vi.fn(async () => undefined);
+    const hero = character({ customFeatures: [{ id: 'breath', name: 'Breath', maxUses: 3, used: 0, isAction: true, description: '**Shared rules**' }] });
+    const props = { role: 'dm' as const, submitAction, onSelectCharacter: vi.fn(), onBackToCombat: vi.fn() };
+    const { rerender } = render(<SpellsPage {...props} state={gameState({ characters: [hero] })} />);
+    const actions = within(document.getElementById('sheet-actions')!);
+    const features = within(document.getElementById('sheet-features')!);
+    expect(actions.getByRole('button', { name: 'Breath use 1' })).toBeInTheDocument();
+    expect(features.getByRole('button', { name: 'Breath use 1' })).toBeInTheDocument();
+    fireEvent.click(actions.getByText('Description'));
+    expect(actions.getByText('Shared rules')).toBeVisible();
+    fireEvent.click(actions.getByRole('button', { name: 'Breath use 1' }));
+    expect(submitAction).toHaveBeenCalledWith(expect.objectContaining({ type: 'spell.feature.uses', payload: expect.objectContaining({ featureId: 'breath', used: 1 }) }));
+    fireEvent.click(actions.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByLabelText('Feature description'), { target: { value: '**New draft**' } });
+    rerender(<SpellsPage {...props} state={gameState({ characters: [{ ...hero, customFeatures: [{ ...hero.customFeatures[0], used: 1 }] }] })} />);
+    expect(screen.getByLabelText('Feature description')).toHaveValue('**New draft**');
+    expect(screen.getByLabelText('Show in Actions / Attacks')).toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: 'Save feature' }));
+    expect(submitAction).toHaveBeenCalledWith(expect.objectContaining({ type: 'spell.feature.update', payload: expect.objectContaining({ featureId: 'breath', description: '**New draft**', isAction: true }) }));
+  });
+
+  it('keeps live spell resource controls available in a spell detail', () => {
+    const submitAction = vi.fn(async () => undefined);
+    const hero = character({ spellSlots: { '1': { max: 2, used: 0 } }, spellbook: { knownSpellIds: ['flame'], preparedSpellIds: [], preparesSpells: false, preparedNonEpicMax: 0, preparedEpicMax: 0 } });
+    const state = gameState({ characters: [hero], spellDatabase: [spell({ id: 'flame', name: 'Flame', levelKey: '1', levelLabel: 'Level 1' })] });
+    const props = { role: 'player' as const, submitAction, onSelectCharacter: vi.fn(), onBackToCombat: vi.fn() };
+    const { rerender } = render(<SpellsPage {...props} state={state} />);
+    fireEvent.click(screen.getByTestId('spell-Flame'));
+    expect(within(screen.getByRole('dialog')).getByLabelText('Casting resources')).toHaveTextContent('2/2');
+    fireEvent.click(screen.getByRole('button', { name: 'Cast Flame' }));
+    expect(submitAction).toHaveBeenCalledWith({ type: 'spell.cast', payload: { characterId: hero.id, spellId: 'flame', level: '1' } });
+    hero.spellSlots['1'].used = 2;
+    rerender(<SpellsPage {...props} state={{ ...state }} />);
+    expect(within(screen.getByRole('dialog')).getByLabelText('Casting resources')).toHaveTextContent('0/2');
+    expect(screen.getByRole('button', { name: 'Cast Flame' })).toBeDisabled();
+  });
+
   it('renders Markdown without turning unsafe HTML into DOM', () => {
     render(<MarkdownRenderer text={'## Treasure\n\n**Bold** and *italic*\n\n<script>alert(1)</script>'} />);
 
@@ -38,6 +198,23 @@ describe('visual UX helpers', () => {
     expect(screen.getByText('italic')).toBeInTheDocument();
     expect(document.querySelector('script')).toBeNull();
     expect(screen.getByText('<script>alert(1)</script>')).toBeInTheDocument();
+  });
+
+  it('renders pipe tables as table elements', () => {
+    render(<MarkdownRenderer text={'| Name | Uses |\n| --- | --- |\n| Fire Breath | 1/day |\n| Shield | at will |'} />);
+
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Name' })).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: 'Fire Breath' })).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: 'at will' })).toBeInTheDocument();
+  });
+
+  it('renders pipe tables after explicit Markdown line breaks', () => {
+    render(<MarkdownRenderer text={'[br]\n| Crystalization Level | Effect |\n| --- | --- |\n| 1 | Glow |'} />);
+
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Crystalization Level' })).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: 'Glow' })).toBeInTheDocument();
   });
 
   it('renders clickable database references for conditions, spells and monsters', () => {
@@ -98,6 +275,31 @@ describe('visual UX helpers', () => {
     expect(screen.getByRole('button', { name: 'Invisibility' })).toBeInTheDocument();
   });
 
+  it('automatically highlights dice expressions in Markdown and opens the Dice Roller with that expression on click', () => {
+    const state = gameState();
+    render(
+      <DatabaseReferenceProvider state={state}>
+        <MarkdownRenderer text={'Melee Attack: 1d20+6 to hit. Hit: 13 (3*(1d20+2*3)) slashing damage plus 2d6 + 4 fire damage.'} />
+        <Toolbelt role="player" state={state} submitAction={vi.fn(async () => undefined)} />
+      </DatabaseReferenceProvider>
+    );
+
+    const attackDice = screen.getByRole('button', { name: '1d20+6' });
+    const complexDice = screen.getByRole('button', { name: '3*(1d20+2*3)' });
+    const fireDice = screen.getByRole('button', { name: '2d6 + 4' });
+
+    expect(attackDice).toHaveClass('markdown-reference-dice');
+    expect(complexDice).toHaveClass('markdown-reference-dice');
+    expect(fireDice).toHaveClass('markdown-reference-dice');
+
+    fireEvent.click(attackDice);
+    expect(screen.getByRole('heading', { name: 'Dice Roller' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Dice expression')).toHaveValue('1d20+6');
+
+    fireEvent.click(complexDice);
+    expect(screen.getByLabelText('Dice expression')).toHaveValue('3*(1d20+2*3)');
+  });
+
   it('opens only one horizontal expander panel at a time', () => {
     render(
       <CollapsiblePanelGroup
@@ -121,9 +323,20 @@ describe('visual UX helpers', () => {
     expect(screen.getByRole('button', { name: 'Bold' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Italic' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Header' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Table' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reference' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Preview' })).toHaveClass('markdown-preview-toggle');
     expect(screen.getByRole('button', { name: 'Pop out' })).toHaveClass('markdown-popout');
+  });
+
+  it('inserts a starter table from the Markdown toolbar', () => {
+    const onChange = vi.fn();
+    render(<MarkdownEditor value="" onChange={onChange} label="Item notes" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Table' }));
+
+    expect(onChange).toHaveBeenCalledWith(expect.stringContaining('| Column 1 | Column 2 | Column 3 |'));
+    expect(onChange).toHaveBeenCalledWith(expect.stringContaining('| --- | --- | --- |'));
   });
 
   it('renders search as dynamic result cards instead of a select-only picker', () => {
@@ -518,15 +731,32 @@ describe('page visual behavior', () => {
   });
 
   it('recalculates stealth pass/fail when Pass without Trace toggles', () => {
-    const state = gameState({ characters: [character({ skillProficiencies: [] })] });
+    const state = gameState({ characters: [character({ skillProficiencies: [] })], toolbelt: { ...gameState().toolbelt, partyChecks: { 'skill:stealth': { ayla: { total: 10, natural: null, detail: 'Manual result' } } } } });
     render(<Toolbelt role="dm" state={state} submitAction={vi.fn(async (_action: GameAction) => undefined)} />);
 
+    fireEvent.click(screen.getByRole('button', { name: 'Party Checks' }));
     fireEvent.click(screen.getByRole('button', { name: 'Stealth' }));
-    fireEvent.change(screen.getByLabelText('Stealth DC'), { target: { value: '15' } });
-    fireEvent.change(screen.getByLabelText('Ayla stealth'), { target: { value: '10' } });
+    fireEvent.change(screen.getByLabelText('Difficulty class'), { target: { value: '15' } });
     expect(screen.getByText('Successes 0 / Failures 1')).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText('Pass without Trace +10'));
     expect(screen.getByText('Successes 1 / Failures 0')).toBeInTheDocument();
+  });
+
+  it('rolls inspiration with advantage for checks and normally for saves', () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const submitAction = vi.fn(async (_action: GameAction) => undefined);
+    render(<Toolbelt role="dm" state={gameState({ characters: [character({ abilityScores: { strength: 10, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: 10 }, savingThrowProficiencies: [] })] })} submitAction={submitAction} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Party Checks' }));
+    fireEvent.change(screen.getByDisplayValue('Saving throw'), { target: { value: 'ability' } });
+    fireEvent.click(screen.getByLabelText('d12'));
+    fireEvent.click(screen.getByRole('button', { name: 'Roll all' }));
+    expect(random).toHaveBeenCalledTimes(3);
+    expect(submitAction).toHaveBeenLastCalledWith(expect.objectContaining({ payload: expect.objectContaining({ checkKey: 'ability:strength', results: [expect.objectContaining({ total: 18, natural: 11, detail: expect.stringContaining('(7/7)') })] }) }));
+    random.mockClear();
+    fireEvent.change(screen.getByDisplayValue('Ability check'), { target: { value: 'save' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Roll all' }));
+    expect(random).toHaveBeenCalledTimes(2);
+    random.mockRestore();
   });
 
   it('shows a calendar month grid and submits edited day events', () => {
@@ -752,7 +982,7 @@ describe('character sheet math', () => {
       proficiencyBonus: 4,
       abilityScores: { strength: 10, dexterity: 14, constitution: 10, intelligence: 18, wisdom: 10, charisma: 10 },
       sheetGeneral: { spellcastingAbility: 'intelligence', speeds: { walk: 30, fly: 0, hover: 0, swim: 0, climb: 0, burrow: 0 } },
-      effects: [{ name: 'Armor Class Increased', value: 2 }],
+      effects: [{ name: 'Armor Class Increased', value: 2 }, { name: 'AC Buff', value: 2 }, { name: 'AC Debuff', value: 1 }, { name: 'Innate Sorcery' }],
       sheetBonuses: [
         { targetType: 'ac', valueMode: 'flat', value: 1, source: 'Shield' },
         { targetType: 'initiative', valueMode: 'flat', value: 3, source: 'Alert' },
@@ -762,10 +992,24 @@ describe('character sheet math', () => {
     });
 
     const adjusted = adjustedAbilityScores(hero);
-    expect(armorClass(hero)).toBe(20);
+    expect(armorClass(hero)).toBe(21);
     expect(initiativeBonus(hero, adjusted.scores) + (hero.initBonus || 0)).toBe(6);
     expect(spellAttackBonus(hero, adjusted.scores)).toBe(10);
-    expect(spellSaveDc(hero, adjusted.scores)).toBe(17);
+    expect(spellSaveDc(hero, adjusted.scores)).toBe(18);
+  });
+
+  it('applies temporary max HP condition effects without changing base max HP', () => {
+    const hero = character({
+      maxHp: 50,
+      currentHp: 45,
+      effects: [
+        { name: 'Max HP Increased', level: 10 },
+        { name: 'Max HP Reduced', level: 5 }
+      ]
+    });
+
+    expect(hero.maxHp).toBe(50);
+    expect(effectiveMaxHp(hero)).toBe(55);
   });
 });
 

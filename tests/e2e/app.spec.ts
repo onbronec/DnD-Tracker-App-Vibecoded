@@ -15,6 +15,17 @@ test('DM and player can work without destroying local drafts', async ({ browser 
   await player.goto('/?mode=player');
 
   await expect(dm.getByText('DM View')).toBeVisible();
+  const historyToggle = dm.getByRole('button', { name: 'History', exact: true });
+  await expect(historyToggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(dm.locator('.history-panel')).toHaveCount(0);
+  expect(await dm.locator('.workspace').getAttribute('class')).not.toContain('with-history');
+  await historyToggle.click();
+  await expect(historyToggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(dm.getByText(/Undo\/redo applies to/)).toHaveCount(0);
+  await expect(dm.getByText(/Last 30 days, up to 500 actions/)).toHaveCount(0);
+  await dm.getByRole('button', { name: 'Collapse history', exact: true }).click();
+  await expect(dm.locator('.history-panel')).toHaveCount(0);
+  await historyToggle.click();
   await dm.getByRole('button', { name: 'Autosave' }).click();
   await expect(dm.getByText('Autosave ulozen.')).toBeVisible();
   await dm.getByRole('button', { name: /Add character \/ monster/i }).click();
@@ -40,6 +51,7 @@ test('DM and player can work without destroying local drafts', async ({ browser 
   await dm.keyboard.press('Shift+Backspace');
   await expect(dm.locator('.history-label').filter({ hasText: 'Redo: Dalsi tah' })).toHaveCount(2);
 
+  await player.getByTestId('character-Ayla').getByRole('button', { name: 'input', exact: true }).click();
   await player.getByTestId('heal-Ayla').fill('42');
   await dm.getByTestId('character-Ayla').getByRole('button', { name: 'HP -1', exact: true }).click();
   await expect(player.getByTestId('heal-Ayla')).toHaveValue('42');
@@ -65,13 +77,13 @@ test('DM and player can work without destroying local drafts', async ({ browser 
   await player.getByRole('button', { name: /Database actions/i }).click();
   await player.getByRole('button', { name: 'Add Condition' }).click();
   await player.getByPlaceholder('Name').fill('Dazed');
-  await player.getByRole('combobox').selectOption('debuff');
+  await player.getByRole('dialog').getByRole('combobox').selectOption('debuff');
   await player.getByPlaceholder('Description / statblock / notes').fill('Cannot take reactions.');
   await player.getByRole('button', { name: 'Save' }).click();
   await expect(player.getByRole('heading', { name: 'Dazed' })).toBeVisible();
 
   await player.getByRole('button', { name: 'Combat', exact: true }).click();
-  await player.getByTestId('character-Ayla').getByRole('button', { name: 'Ayla' }).click();
+  await player.getByTestId('character-Ayla').getByRole('button', { name: 'Ayla', exact: true }).click();
   await player.getByPlaceholder('Search conditions').fill('Dazed');
   await player.getByRole('button', { name: 'Add selected' }).click();
   await expect(player.getByTestId('character-Ayla').getByRole('button', { name: 'Dazed' })).toBeVisible();
@@ -81,7 +93,7 @@ test('DM and player can work without destroying local drafts', async ({ browser 
   await player.getByRole('button', { name: 'Conditions' }).click();
   await player.getByRole('heading', { name: 'Exhaustion' }).scrollIntoViewIfNeeded();
   await player.getByRole('button', { name: 'Combat', exact: true }).click();
-  await player.getByTestId('character-Ayla').getByRole('button', { name: 'Ayla' }).click();
+  await player.getByTestId('character-Ayla').getByRole('button', { name: 'Ayla', exact: true }).click();
   await player.getByPlaceholder('Search conditions').fill('Exhaustion');
   await player.getByTestId('condition-level-input').fill('2');
   await player.getByRole('button', { name: 'Add selected' }).click();

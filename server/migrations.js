@@ -1,6 +1,7 @@
 const { createEmptyInventory, createInitialState, PAGE_SCOPES } = require('./defaults');
 const { DEFAULT_CONDITIONS } = require('./conditionPresets');
-const { clone, makeId } = require('./utils');
+const { clone, makeId, toNumber } = require('./utils');
+const { normalizeFeatures, normalizeActionSettings, normalizeCasting } = require('./casting');
 
 function normalizeEffect(effect) {
     if (!effect) return null;
@@ -9,6 +10,7 @@ function normalizeEffect(effect) {
         name: String(effect.name || ''),
         level: effect.level ?? null
     };
+    if (Number.isInteger(Number(effect.remainingRounds)) && Number(effect.remainingRounds) > 0) normalized.remainingRounds = Number(effect.remainingRounds);
     const ability = normalizeAbilityKey(effect.ability);
     if (ability) normalized.ability = ability;
     if (effect.value !== undefined && effect.value !== null) normalized.value = Number(effect.value) || 0;
@@ -93,6 +95,10 @@ function normalizeCharacterAbility(ability) {
     };
 }
 
+function normalizeCharacterAction(action) {
+    return { ...normalizeCharacterAbility(action), ...normalizeActionSettings(action || {}) };
+}
+
 function normalizeSheetBonus(bonus) {
     const source = bonus || {};
     const targetTypes = ['save', 'skill', 'abilityCheck', 'allSaves', 'allSkills', 'allAbilityChecks', 'ac', 'initiative', 'spellAttack', 'spellDc'];
@@ -148,18 +154,21 @@ function normalizeTags(tags) {
 
 function normalizeCharacter(char) {
     const type = char.type === 'monster' ? 'monster' : 'player';
-    return {
+    const isNonMonster = type === 'monster' && Boolean(char.isNonMonster || char.monsterData?.entityKind === 'nonMonster');
+    const hasHpAc = !isNonMonster || Boolean(char.hasHpAc ?? char.monsterData?.hasHpAc);
+    const fixedInitiative = isNonMonster ? Number(char.fixedInitiative ?? char.monsterData?.fixedInitiative ?? 20) : undefined;
+    const character = {
         id: String(char.id || makeId(type)),
         name: char.name || (type === 'monster' ? 'Monstrum' : 'Postava'),
         type,
-        maxHp: Number(char.maxHp) || 1,
-        currentHp: Number.isFinite(Number(char.currentHp)) ? Number(char.currentHp) : (Number(char.maxHp) || 1),
+        maxHp: hasHpAc ? (Number(char.maxHp) || 1) : 0,
+        currentHp: hasHpAc ? (Number.isFinite(Number(char.currentHp)) ? Number(char.currentHp) : (Number(char.maxHp) || 1)) : 0,
         tempHp: Number(char.tempHp) || 0,
-        ac: Number(char.ac) || 10,
+        ac: hasHpAc ? (Number(char.ac) || 10) : 0,
         initBonus: Number(char.initBonus) || 0,
-        initiative: char.initiative === null || char.initiative === undefined || char.initiative === ''
+        initiative: isNonMonster ? fixedInitiative : (char.initiative === null || char.initiative === undefined || char.initiative === ''
             ? null
-            : Number(char.initiative),
+            : Number(char.initiative)),
         maxReactions: Math.max(0, Number(char.maxReactions) || 1),
         currentReactions: Math.max(0, Math.min(Math.max(0, Number(char.maxReactions) || 1), Number.isFinite(Number(char.currentReactions)) ? Number(char.currentReactions) : (Number(char.maxReactions) || 1))),
         maxPower: Number(char.maxPower) || 0,
@@ -176,9 +185,9 @@ function normalizeCharacter(char) {
         monsterAbilities: type === 'monster' ? normalizeMonsterAbilities(char.monsterAbilities, char) : (char.monsterAbilities ? clone(char.monsterAbilities) : undefined),
         spellcasterLevel: Number(char.spellcasterLevel) || 0,
         spellSlots: char.spellSlots && typeof char.spellSlots === 'object' ? clone(char.spellSlots) : {},
-        customFeatures: Array.isArray(char.customFeatures) ? clone(char.customFeatures) : [],
+        customFeatures: normalizeFeatures(char.customFeatures),
         characterAbilities: Array.isArray(char.characterAbilities) ? char.characterAbilities.map(normalizeCharacterAbility) : [],
-        characterActions: Array.isArray(char.characterActions) ? char.characterActions.map(normalizeCharacterAbility) : [],
+        characterActions: Array.isArray(char.characterActions) ? char.characterActions.map(normalizeCharacterAction) : [],
         hitDice: char.hitDice && typeof char.hitDice === 'object'
             ? { max: Number(char.hitDice.max) || 0, current: Number(char.hitDice.current) || 0 }
             : { max: 0, current: 0 },
@@ -193,8 +202,14 @@ function normalizeCharacter(char) {
         inventory: normalizeInventory(char.inventory),
         spellbook: normalizeSpellbook(char.spellbook),
         hasMultipleTurns: char.hasMultipleTurns !== undefined ? Boolean(char.hasMultipleTurns) : (char.monsterData ? Boolean(char.monsterData.hasMultipleTurns) : false),
+        isNonMonster,
+        hasHpAc,
+        fixedInitiative,
+        associatedObjectKind: ['lair', 'mythic'].includes(String(char.associatedObjectKind || '')) ? char.associatedObjectKind : undefined,
         group: char.group !== undefined ? String(char.group).trim() : (char.monsterData ? String(char.monsterData.group || '').trim() : '')
     };
+    character.casting = normalizeCasting(char.casting, character);
+    return character;
 }
 
 function normalizeSpell(spell) {
@@ -272,12 +287,15 @@ function normalizeMonsterAbilities(abilities, source = {}) {
     const spellSlots = current.spellSlots || spellcasting.spellSlots || {};
     const perDaySpells = current.perDaySpells || spellcasting.perDaySpells || [];
     const power = current.power || {};
-    const maxPower = Number(source.maxPower ?? power.max) || 0;
+    const powerExplicitlyConfigured = Object.prototype.hasOwnProperty.call(power, 'enabled');
+    const powerExplicitlyDisabled = powerExplicitlyConfigured && !power.enabled;
+    const maxPowerSource = powerExplicitlyDisabled && source.maxPower === undefined ? 0 : source.maxPower ?? power.max;
+    const maxPower = Number(maxPowerSource) || 0;
     return {
         ...clone(current),
         enabled: Boolean(current.enabled || maxPower || current.legendaryActions?.enabled || current.epicActions?.enabled || Object.keys(spellSlots).length || perDaySpells.length || current.customFeatures?.length),
         power: {
-            enabled: Boolean(power.enabled || maxPower),
+            enabled: powerExplicitlyConfigured ? Boolean(power.enabled) : Boolean(maxPower),
             name: String(power.name || source.powerName || 'Power'),
             max: maxPower,
             current: Math.max(0, Math.min(maxPower, Number(power.current ?? source.currentPower ?? maxPower) || 0))
@@ -343,16 +361,21 @@ function slugify(value) {
 function normalizeMonsterDbItem(monster) {
     const source = monster || {};
     const stats = normalizeMonsterStats(source.stats || source.abilityScores);
-    const maxPower = Number(source.maxPower ?? source.monsterAbilities?.power?.max) || 0;
+    const power = source.monsterAbilities?.power || {};
+    const powerExplicitlyDisabled = Object.prototype.hasOwnProperty.call(power, 'enabled') && !power.enabled;
+    const maxPowerSource = powerExplicitlyDisabled && source.maxPower === undefined ? 0 : source.maxPower ?? power.max;
+    const maxPower = Number(maxPowerSource) || 0;
     const powerName = source.powerName || source.monsterAbilities?.power?.name || 'Power';
+    const entityKind = source.entityKind === 'nonMonster' ? 'nonMonster' : 'monster';
+    const hasHpAc = entityKind === 'monster' || Boolean(source.hasHpAc);
     return {
         ...clone(source),
         id: String(source.id || makeId('monster_db')),
         name: String(source.name || 'Monster'),
-        hp: Number(source.hp || source.maxHp) || 1,
-        maxHp: Number(source.maxHp || source.hp) || 1,
-        ac: Number(source.ac) || 10,
-        maxReactions: Math.max(0, Number(source.maxReactions) || 1),
+        hp: hasHpAc ? (Number(source.hp || source.maxHp) || 1) : 0,
+        maxHp: hasHpAc ? (Number(source.maxHp || source.hp) || 1) : 0,
+        ac: hasHpAc ? (Number(source.ac) || 10) : 0,
+        maxReactions: Math.max(0, toNumber(source.maxReactions ?? (entityKind === 'nonMonster' ? 0 : 1), 1)),
         initBonus: Number.isFinite(Number(source.initBonus)) ? Number(source.initBonus) : Math.floor(((stats.dexterity || 10) - 10) / 2),
         speed: String(source.speed || ''),
         stats,
@@ -385,8 +408,42 @@ function normalizeMonsterDbItem(monster) {
         damageResistances: String(source.damageResistances || ''),
         damageImmunities: String(source.damageImmunities || ''),
         conditionImmunities: String(source.conditionImmunities || ''),
-        damageVulnerabilities: String(source.damageVulnerabilities || '')
+        damageVulnerabilities: String(source.damageVulnerabilities || ''),
+        encounterPoints: Math.max(0.1, Math.min(20, Number(source.encounterPoints) || 0.1)),
+        dpr: Math.max(0, Number(source.dpr) || 0),
+        entityKind,
+        hasHpAc,
+        fixedInitiative: Math.round(toNumber(source.fixedInitiative ?? 20, 20)),
+        lairActionInitiative: Math.round(Number(source.lairActionInitiative) || 20),
+        mythicActionInitiative: Math.round(Number(source.mythicActionInitiative) || 20)
     };
+}
+
+function normalizeEncounterEntry(entry) {
+    const source = entry || {};
+    return {
+        id: String(source.id || makeId('encounter_entry')),
+        monsterId: String(source.monsterId || ''),
+        quantity: Math.max(1, Math.min(99, Number(source.quantity) || 1))
+    };
+}
+
+function normalizeEncounter(encounter) {
+    const source = encounter || {};
+    return {
+        id: String(source.id || makeId('encounter')),
+        name: String(source.name || 'Untitled encounter'),
+        groupId: source.groupId ? String(source.groupId) : null,
+        notes: String(source.notes || ''),
+        monsters: (Array.isArray(source.monsters) ? source.monsters : []).map(normalizeEncounterEntry).filter(entry => entry.monsterId),
+        reserve: (Array.isArray(source.reserve) ? source.reserve : []).map(normalizeEncounterEntry).filter(entry => entry.monsterId),
+        updatedAt: String(source.updatedAt || new Date().toISOString())
+    };
+}
+
+function normalizeEncounterGroup(group) {
+    const source = group || {};
+    return { id: String(source.id || makeId('encounter_group')), name: String(source.name || 'Story arc') };
 }
 
 function normalizeMagicItem(item) {
@@ -535,6 +592,7 @@ function normalizeToolbelt(toolbelt) {
     const calendarYear = Number(calendar.year) || 502;
     return {
         diceRolls: normalizeDiceRolls(source.diceRolls),
+        partyChecks: source.partyChecks && typeof source.partyChecks === 'object' ? clone(source.partyChecks) : {},
         improvNames: Array.isArray(source.improvNames) ? source.improvNames.slice(0, 5) : [],
         calendar: {
             weekday: String(calendar.weekday || 'Tuesday'),
@@ -576,6 +634,11 @@ function migrateAutosave(rawData) {
         : Array.isArray(data.monsters)
             ? data.monsters.map(normalizeMonsterDbItem)
             : [];
+    state.encounters = Array.isArray(data.encounters) ? data.encounters.map(normalizeEncounter) : [];
+    state.encounterGroups = Array.isArray(data.encounterGroups) ? data.encounterGroups.map(normalizeEncounterGroup) : [];
+    state.activeEncounterId = state.encounters.some(encounter => encounter.id === data.activeEncounterId)
+        ? data.activeEncounterId
+        : null;
 
     const legacyItems = Array.isArray(data.itemDatabase) ? data.itemDatabase : [];
     const splitItems = splitLegacyItems(legacyItems);
@@ -606,12 +669,15 @@ module.exports = {
     normalizeCharacter,
     normalizeInventory,
     normalizeMonsterDbItem,
+    normalizeEncounter,
+    normalizeEncounterGroup,
     normalizeMagicItem,
     normalizePotion,
     normalizeCondition,
     normalizeSpell,
     normalizeSpellbook,
     normalizeCharacterAbility,
+    normalizeCharacterAction,
     seedConditions,
     migrateAutosave
 };

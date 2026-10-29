@@ -1,8 +1,9 @@
 export type ClientRole = 'dm' | 'player';
-export type PageScope = 'combat' | 'spells' | 'monsters' | 'inventory' | 'databases' | 'toolbelt' | 'monster-editor';
+export type PageScope = 'combat' | 'spells' | 'monsters' | 'inventory' | 'databases' | 'encounters' | 'toolbelt' | 'monster-editor';
 
 export interface Effect {
   name: string;
+  remainingRounds?: number;
   level?: number | null;
   ability?: AbilityKey | null;
   value?: number | null;
@@ -60,6 +61,7 @@ export interface Character {
   monsterData?: Record<string, unknown>;
   monsterAbilities?: MonsterAbilities;
   spellcasterLevel: number;
+  casting?: CharacterCasting;
   spellSlots: Record<string, { max: number; used: number }>;
   customFeatures: CustomFeature[];
   characterAbilities: CharacterAbility[];
@@ -76,6 +78,11 @@ export interface Character {
   inventory: Inventory;
   spellbook: CharacterSpellbook;
   hasMultipleTurns?: boolean;
+  /** Encounter object without creature defenses, saves, or ability scores. */
+  isNonMonster?: boolean;
+  fixedInitiative?: number;
+  hasHpAc?: boolean;
+  associatedObjectKind?: 'lair' | 'mythic';
   group?: string;
 }
 
@@ -92,7 +99,11 @@ export interface CharacterAbility {
   name: string;
   description: string;
   source?: string;
+  actionType?: ActionType;
+  consumesReaction?: boolean;
 }
+
+export type ActionType = 'action' | 'bonus' | 'reaction';
 
 export interface CharacterSheetGeneral {
   spellcastingAbility?: AbilityKey;
@@ -131,6 +142,12 @@ export interface SpellDatabaseEntry {
 }
 
 export interface CustomFeature {
+  id?: string;
+  description?: string;
+  isAction?: boolean;
+  actions?: CustomFeatureAction[];
+  actionType?: ActionType;
+  consumesReaction?: boolean;
   name: string;
   maxUses: number;
   used: number;
@@ -148,6 +165,21 @@ export interface CustomFeature {
   costAmount?: number;
   costSpellLevel?: string;
   rechargeAttempted?: boolean;
+}
+
+export interface CustomFeatureAction {
+  id: string;
+  name: string;
+  description: string;
+  actionType?: ActionType;
+  consumesReaction?: boolean;
+}
+
+export interface CharacterCasting {
+  type: 'standard' | 'warlock' | 'divineSpark';
+  featureByLevel: Record<string, string>;
+  sparkFeatureId?: string;
+  sparkCondition?: string;
 }
 
 export interface MonsterTextEntry {
@@ -234,9 +266,51 @@ export interface MonsterDatabaseEntry {
   damageImmunities?: string;
   conditionImmunities?: string;
   damageVulnerabilities?: string;
+  /** Encounter difficulty: one point is roughly 150 HP and 80–100 DPR. */
+  encounterPoints?: number;
+  /** Expected damage per round used for encounter planning. */
+  dpr?: number;
+  entityKind?: 'monster' | 'nonMonster';
+  /** Non-monsters do not show combat HP/AC unless this is explicitly enabled. */
+  hasHpAc?: boolean;
+  fixedInitiative?: number;
+  lairActionInitiative?: number;
+  mythicActionInitiative?: number;
+}
+
+export interface EncounterMonsterEntry {
+  id: string;
+  monsterId: string;
+  quantity: number;
+}
+
+export interface EncounterGroup {
+  id: string;
+  name: string;
+}
+
+export interface EncounterDifficultySettings {
+  easyMax: number;
+  mediumMax: number;
+  hardMin: number;
+  barMaximum: number;
+  hpPerPoint: number;
+  dprPerPointMin: number;
+  dprPerPointMax: number;
+}
+
+export interface Encounter {
+  id: string;
+  name: string;
+  groupId?: string | null;
+  notes: string;
+  monsters: EncounterMonsterEntry[];
+  reserve: EncounterMonsterEntry[];
+  updatedAt: string;
 }
 
 export interface CombatState {
+  durationRound?: number;
   active: boolean;
   currentTurn: number;
   round: number;
@@ -263,6 +337,10 @@ export interface GameState {
   characters: Character[];
   combatState: CombatState;
   monsterDatabase: MonsterDatabaseEntry[];
+  encounters: Encounter[];
+  encounterGroups: EncounterGroup[];
+  activeEncounterId?: string | null;
+  encounterDifficulty: EncounterDifficultySettings;
   magicItemDatabase: Array<Record<string, unknown>>;
   potionDatabase: Array<Record<string, unknown>>;
   conditionDatabase: Array<Record<string, unknown>>;
@@ -281,10 +359,17 @@ export interface GameAction<TPayload = Record<string, unknown>> {
 }
 
 export interface ToolbeltState {
+  partyChecks?: Record<string, Record<string, PartyCheckResult>>;
   diceRolls: Record<string, DiceHistoryEntry[]>;
   improvNames: ImprovNameEntry[];
   calendar: WorldCalendarState;
   notes: ToolbeltNote[];
+}
+
+export interface PartyCheckResult {
+  total: number;
+  natural: number | null;
+  detail: string;
 }
 
 export interface DiceHistoryEntry {

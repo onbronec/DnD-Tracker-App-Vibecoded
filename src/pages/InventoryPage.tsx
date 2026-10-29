@@ -1,3 +1,4 @@
+import { NumberInput } from '../components/NumberInput';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import type { Character, ClientRole, GameAction, GameState } from '../shared/types';
 import { CollapsiblePanelGroup } from '../components/CollapsiblePanel';
@@ -111,11 +112,11 @@ function InventoryDetail({
     return currencyDrafts[key] ?? String(inventory.currency[key] || 0);
   }
 
-  function commitCurrency(key: keyof Character['inventory']['currency']) {
-    submitAction({
+  function commitCurrency(key: keyof Character['inventory']['currency'], value: number) {
+    return submitAction({
       type: 'inventory.currency.set',
-      payload: { characterId: character.id, currency: key, value: Number(currencyValue(key)) || 0 }
-    }).then(() => setCurrencyDrafts(current => ({ ...current, [key]: '' })));
+      payload: { characterId: character.id, currency: key, value }
+    }).then(() => setCurrencyDrafts(current => { const next = { ...current }; delete next[key]; return next; }));
   }
 
   return (
@@ -131,11 +132,11 @@ function InventoryDetail({
                 {(['manaCoins', 'platinum', 'gold', 'silver', 'copper'] as const).map(key => (
                   <label key={key} className="field-card">
                     <span>{key}</span>
-                    <input
+                    <NumberInput
                       value={currencyValue(key)}
                       type="number"
                       onChange={event => setCurrencyDrafts(current => ({ ...current, [key]: event.target.value }))}
-                      onBlur={() => commitCurrency(key)}
+                      onCommit={value => commitCurrency(key, value)}
                     />
                   </label>
                 ))}
@@ -229,8 +230,8 @@ function AddItemForm({
             <option value="value">Track gold value</option>
           </select>
         )}
-        {(kind !== 'component' || trackingType === 'count') && <input value={quantity} onChange={event => setQuantity(event.target.value)} type="number" placeholder="Quantity" />}
-        {kind === 'component' && trackingType === 'value' && <input value={goldValue} onChange={event => setGoldValue(event.target.value)} type="number" placeholder="Gold value" />}
+        {(kind !== 'component' || trackingType === 'count') && <NumberInput value={quantity} onChange={event => setQuantity(event.target.value)} type="number" placeholder="Quantity" />}
+        {kind === 'component' && trackingType === 'value' && <NumberInput value={goldValue} onChange={event => setGoldValue(event.target.value)} type="number" placeholder="Gold value" />}
         <div className="form-wide">
           <MarkdownEditor value={description} onChange={setDescription} placeholder="Description / notes" label="Item notes" />
         </div>
@@ -403,7 +404,7 @@ function InventoryRow({
                     </select>
                   )}
                   {(collection === 'spellComponents' || 'quantity' in Object(item)) && (
-                    <input value={draftQuantity} onChange={event => setDraftQuantity(event.target.value)} type="number" min={0} placeholder={collection === 'spellComponents' && draftTrackingType === 'value' ? 'Gold value' : 'Quantity'} />
+                    <NumberInput value={draftQuantity} onChange={event => setDraftQuantity(event.target.value)} type="number" min={0} placeholder={collection === 'spellComponents' && draftTrackingType === 'value' ? 'Gold value' : 'Quantity'} />
                   )}
                   <div className="form-wide">
                     <MarkdownEditor value={draftDescription} onChange={setDraftDescription} placeholder="Description / notes" label={`${name} notes`} />
@@ -423,19 +424,19 @@ function InventoryRow({
               {(collection === 'spellComponents' || 'quantity' in Object(item)) && (
                 <label className="field-card">
                   <span>{collection === 'spellComponents' && item.trackingType === 'value' ? 'Gold value' : 'Quantity'}</span>
-                  <input
+                  <NumberInput
                     value={quantity}
                     type="number"
                     onChange={event => setQuantity(event.target.value)}
-                    onBlur={() => {
+                    onCommit={value => {
                       if (collection === 'spellComponents') {
                         const updated = {
                           ...(typeof item === 'string' ? {} : item),
-                          [item.trackingType === 'value' ? 'goldValue' : 'count']: Number(quantity) || 0
+                          [item.trackingType === 'value' ? 'goldValue' : 'count']: value
                         };
                         submitAction({ type: 'inventory.item.update', payload: { characterId: character.id, collection, index, item: updated } });
                       } else {
-                        submitAction({ type: 'inventory.item.quantity', payload: { characterId: character.id, collection, index, quantity: Number(quantity) || 0 } });
+                        submitAction({ type: 'inventory.item.quantity', payload: { characterId: character.id, collection, index, quantity: value } });
                       }
                     }}
                   />

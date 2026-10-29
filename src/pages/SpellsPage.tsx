@@ -1,5 +1,10 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
-import type { AbilityKey, Character, CharacterAbility, CharacterSpellbook, ClientRole, CustomFeature, GameAction, GameState, SpellDatabaseEntry } from '../shared/types';
+import { CastingResources, CastingSettings, SpellCastControl } from '../components/CastingResources';
+import { NumberInput } from '../components/NumberInput';
+import { SheetSearch } from '../components/SheetSearch';
+import { ReactionUsage } from '../components/ReactionUsage';
+import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react';
+import type { AbilityKey, ActionType, Character, CharacterAbility, CharacterSpellbook, ClientRole, CustomFeature, CustomFeatureAction, GameAction, GameState, SpellDatabaseEntry } from '../shared/types';
+import { ACTION_TYPES, actionTypeLabel, availableReactions, requiresReaction } from '../shared/actions';
 import { CollapsiblePanelGroup } from '../components/CollapsiblePanel';
 import { Modal } from '../components/Modal';
 import { MarkdownEditor, MarkdownRenderer } from '../components/Markdown';
@@ -16,6 +21,7 @@ import {
   adjustedAbilityScores,
   clampAbilityScore,
   clampProficiencyBonus,
+  effectiveMaxHp,
   saveBonus,
   skillAbility,
   signed,
@@ -84,7 +90,8 @@ export function SpellsPage({ state, role, submitAction, selectedCharacterId, onS
   }, [selected?.id]);
 
   function scrollToSection(id: string) {
-    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const element = document.getElementById(id);
+    if (element) window.scrollBy({ top: element.getBoundingClientRect().top - (document.getElementById('sheet-top')?.getBoundingClientRect().height || 0) - 12, behavior: 'auto' });
   }
 
   if (!selected) {
@@ -105,6 +112,7 @@ export function SpellsPage({ state, role, submitAction, selectedCharacterId, onS
     <div className="sheet-page-layout">
       <aside className="sheet-index" aria-label="Character sheet sections">
         <h3>Index</h3>
+        <select className="sheet-mobile-index" aria-label="Go to sheet section" value={activeSection} onChange={event => scrollToSection(event.target.value)}>{SHEET_NAV_LINKS.map(link => <option key={link.id} value={link.id}>{link.label}</option>)}</select>
         {SHEET_NAV_LINKS.map(link => (
           <button
             key={link.id}
@@ -116,11 +124,10 @@ export function SpellsPage({ state, role, submitAction, selectedCharacterId, onS
         ))}
       </aside>
       <div className="stack sheet-main">
-        <section id="sheet-top" className="section page-sticky-section">
+        <section id="sheet-top" className="section page-sticky-section sheet-header">
           <div className="section-title-row">
             <div>
               <h2>Character Sheets</h2>
-              <p>Player-safe tracking for sheets, slots, hit dice and features.</p>
             </div>
             <div className="button-row">
               <select data-testid="spell-character-select" value={String(selected.id)} onChange={event => selectCharacter(event.target.value)}>
@@ -129,6 +136,7 @@ export function SpellsPage({ state, role, submitAction, selectedCharacterId, onS
               <button className="btn" onClick={onBackToCombat}>Back to Combat</button>
             </div>
           </div>
+          <SheetSearch key={selected.id} character={selected} spells={state.spellDatabase || []} conditions={state.conditionDatabase || []} sections={SHEET_NAV_LINKS} />
         </section>
         <HealthConditionsPanel character={selected} role={role} conditions={state.conditionDatabase || []} submitAction={submitAction} />
         <CharacterGeneral character={selected} submitAction={submitAction} />
@@ -169,7 +177,7 @@ const SHEET_SECTION_LINKS = [
   { id: 'sheet-core', label: 'Scores, Saves & Skills' },
   { id: 'sheet-tools', label: 'Setup & Features' },
   { id: 'sheet-spell-slots', label: 'Spell Slots' },
-  { id: 'sheet-actions', label: 'Actions & Attacks' },
+  { id: 'sheet-actions', label: 'Actions, Bonus & Reactions' },
   { id: 'sheet-spells-known', label: 'Spells Known' },
   { id: 'sheet-hit-dice', label: 'Hit Dice' },
   { id: 'sheet-features', label: 'Custom Features' },
@@ -191,7 +199,8 @@ function HealthConditionsPanel({
 }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [drafts, setDrafts] = useState({ damage: '', healing: '', tempHp: '' });
-  const hpPercent = useMemo(() => Math.max(0, Math.min(100, (character.currentHp / character.maxHp) * 100)), [character.currentHp, character.maxHp]);
+  const maxHp = effectiveMaxHp(character);
+  const hpPercent = useMemo(() => Math.max(0, Math.min(100, (character.currentHp / maxHp) * 100)), [character.currentHp, maxHp]);
 
   function setDraft(key: 'damage' | 'healing' | 'tempHp', value: string) {
     setDrafts(current => ({ ...current, [key]: value }));
@@ -215,14 +224,14 @@ function HealthConditionsPanel({
       </div>
 
       <div className="stats-grid">
-        <div className="stat"><span>HP</span><strong>{character.currentHp}/{character.maxHp}</strong></div>
+        <div className="stat"><span>HP</span><strong>{character.currentHp}/{maxHp}</strong></div>
         <div className="stat"><span>Temp</span><strong>{character.tempHp || 0}</strong></div>
         <div className="stat"><span>AC</span><strong>{character.ac || 10}</strong></div>
         <div className="stat"><span>Conditions</span><strong>{character.effects.length}</strong></div>
       </div>
 
       <div className="hp-bar">
-        <div className={`hp-fill ${hpClass(character.currentHp, character.maxHp)}`} style={{ width: `${hpPercent}%` }} />
+        <div className={`hp-fill ${hpClass(character.currentHp, maxHp)}`} style={{ width: `${hpPercent}%` }} />
       </div>
 
       <div className="effect-row">
@@ -234,6 +243,7 @@ function HealthConditionsPanel({
           return (
             <button
               key={`${effectToString(effect)}-${index}`}
+              data-sheet-entry={`effect-${index}`}
               className={`effect-tag ${conditionKindClass(condition)}`}
               title={tooltip}
               data-tooltip={tooltip}
@@ -246,6 +256,7 @@ function HealthConditionsPanel({
               }}
             >
               {effectToString(effect)}
+              {typeof effect !== 'string' && effect.remainingRounds && <span className="effect-duration" title={`${effect.remainingRounds} rounds remaining; expires at round end`}>{effect.remainingRounds}</span>}
             </button>
           );
         })}
@@ -276,13 +287,13 @@ function HealthConditionsPanel({
           })}
         </div>
         <div className="input-action-row">
-          <input value={drafts.damage} onChange={event => setDraft('damage', event.target.value)} type="number" placeholder="Damage" data-testid={`sheet-damage-${character.name}`} />
+          <NumberInput value={drafts.damage} onChange={event => setDraft('damage', event.target.value)} type="number" placeholder="Damage" data-testid={`sheet-damage-${character.name}`} />
           <button className="btn danger small" onClick={() => applyHp('damage')}>Apply</button>
-          <input value={drafts.healing} onChange={event => setDraft('healing', event.target.value)} type="number" placeholder="Heal" data-testid={`sheet-heal-${character.name}`} />
+          <NumberInput value={drafts.healing} onChange={event => setDraft('healing', event.target.value)} type="number" placeholder="Heal" data-testid={`sheet-heal-${character.name}`} />
           <button className="btn success small" onClick={() => applyHp('healing')}>Apply</button>
         </div>
         <div className="input-action-row two-column-actions">
-          <input value={drafts.tempHp} onChange={event => setDraft('tempHp', event.target.value)} type="number" placeholder="Temp HP" />
+          <NumberInput value={drafts.tempHp} onChange={event => setDraft('tempHp', event.target.value)} type="number" placeholder="Temp HP" />
           <button className="btn warning small" onClick={() => submitAction({ type: 'character.setTempHp', payload: { characterId: character.id, value: Number(drafts.tempHp) || 0 } }).then(() => setDraft('tempHp', ''))}>Set</button>
         </div>
       </div>
@@ -535,23 +546,23 @@ function SheetEditorModal({ character, onClose, onSave }: { character: Character
         <div className="form-grid">
           <label className="field-card">
             <span>Max HP</span>
-            <input value={maxHp} onChange={event => setMaxHp(event.target.value)} type="number" min={1} />
+            <NumberInput value={maxHp} onChange={event => setMaxHp(event.target.value)} type="number" min={1} />
           </label>
           <label className="field-card">
             <span>Proficiency Bonus</span>
-            <input value={proficiencyBonus} onChange={event => setProficiencyBonus(event.target.value)} type="number" min={0} max={10} />
+            <NumberInput value={proficiencyBonus} onChange={event => setProficiencyBonus(event.target.value)} type="number" min={0} max={10} />
           </label>
           <label className="field-card">
             <span>Base AC</span>
-            <input value={baseAc} onChange={event => setBaseAc(event.target.value)} type="number" min={0} />
+            <NumberInput value={baseAc} onChange={event => setBaseAc(event.target.value)} type="number" min={0} />
           </label>
           <label className="field-card">
             <span>Initiative Bonus</span>
-            <input value={baseInitBonus} onChange={event => setBaseInitBonus(event.target.value)} type="number" />
+            <NumberInput value={baseInitBonus} onChange={event => setBaseInitBonus(event.target.value)} type="number" />
           </label>
           <label className="field-card">
             <span>Reactions</span>
-            <input value={maxReactions} onChange={event => setMaxReactions(event.target.value)} type="number" min={0} />
+            <NumberInput value={maxReactions} onChange={event => setMaxReactions(event.target.value)} type="number" min={0} />
           </label>
           <label className="field-card">
             <span>Spellcasting Ability</span>
@@ -562,13 +573,13 @@ function SheetEditorModal({ character, onClose, onSave }: { character: Character
           {Object.keys(speeds).map(speed => (
             <label className="field-card" key={speed}>
               <span>{speed}</span>
-              <input value={speeds[speed]} onChange={event => setSpeeds(current => ({ ...current, [speed]: event.target.value }))} type="number" min={0} />
+              <NumberInput value={speeds[speed]} onChange={event => setSpeeds(current => ({ ...current, [speed]: event.target.value }))} type="number" min={0} />
             </label>
           ))}
           {ABILITIES.map(ability => (
             <label className="field-card" key={ability.key}>
               <span>{ability.label}</span>
-              <input
+              <NumberInput
                 value={scores[ability.key]}
                 onChange={event => setScores(current => ({ ...current, [ability.key]: event.target.value }))}
                 type="number"
@@ -666,7 +677,7 @@ function SheetEditorModal({ character, onClose, onSave }: { character: Character
                 <option value="halfProficiency">Half proficiency</option>
               </select>
               {bonus.valueMode !== 'halfProficiency' && (
-                <input value={String(bonus.value ?? 0)} onChange={event => updateBonus(index, { value: Number(event.target.value) || 0 })} type="number" placeholder="Bonus" />
+                <NumberInput value={String(bonus.value ?? 0)} onChange={event => updateBonus(index, { value: Number(event.target.value) || 0 })} type="number" placeholder="Bonus" />
               )}
               <select value={bonus.condition || 'always'} onChange={event => updateBonus(index, { condition: event.target.value })}>
                 <option value="always">Always</option>
@@ -713,10 +724,11 @@ function SpellEditor({ character, submitAction }: { character: Character; submit
   return (
     <>
       <form className="form-grid" onSubmit={submit}>
-        <input value={level} onChange={event => setLevel(event.target.value)} type="number" placeholder="Spellcaster level" />
-        <input value={hitDiceMax} onChange={event => setHitDiceMax(event.target.value)} type="number" placeholder="Hit dice max" />
+        <NumberInput value={level} onChange={event => setLevel(event.target.value)} type="number" placeholder="Spellcaster level" />
+        <NumberInput value={hitDiceMax} onChange={event => setHitDiceMax(event.target.value)} type="number" placeholder="Hit dice max" />
         <button className="btn success">Save setup</button>
       </form>
+      <CastingSettings key={character.id} character={character} submitAction={submitAction} />
       <div className="button-row rest-row">
         <button className="btn warning" onClick={() => submitAction({ type: 'spell.rest.character', payload: { characterId: character.id, restType: 'short' } })}>Short Rest</button>
         <button className="btn success" onClick={() => submitAction({ type: 'spell.rest.character', payload: { characterId: character.id, restType: 'long' } })}>Long Rest</button>
@@ -732,6 +744,13 @@ function FeatureSetup({ character, submitAction }: { character: Character; submi
       onSubmit={feature => submitAction({ type: 'spell.feature.add', payload: { characterId: character.id, ...feature } })}
     />
   );
+}
+
+function ActionTypeFields({ type, consumesReaction, onChange, label = 'Action type' }: { type: ActionType; consumesReaction: boolean; onChange: (type: ActionType, consumesReaction: boolean) => void; label?: string }) {
+  return <div className="action-type-fields">
+    <label>{label}<select aria-label={label} value={type} onChange={event => onChange(event.target.value as ActionType, true)}>{ACTION_TYPES.map(option => <option value={option.value} key={option.value}>{option.label}</option>)}</select></label>
+    {type === 'reaction' && <label className="inline-check"><input type="checkbox" checked={consumesReaction} onChange={event => onChange(type, event.target.checked)} />Spend a reaction when used</label>}
+  </div>;
 }
 
 function FeatureForm({
@@ -750,12 +769,22 @@ function FeatureForm({
   const [longRestRegainType, setLongRestRegainType] = useState<RestRegainType>((initial?.longRestRegainType as RestRegainType) || 'all');
   const [longRestRegainAmount, setLongRestRegainAmount] = useState(String(initial?.longRestRegainAmount || 0));
   const [statusName, setStatusName] = useState(initial?.statusName || '');
+  const [description, setDescription] = useState(initial?.description || '');
+  const [isAction, setIsAction] = useState(Boolean(initial?.isAction));
+  const [actionType, setActionType] = useState<ActionType>(initial?.actionType || 'action');
+  const [consumesReaction, setConsumesReaction] = useState(initial?.consumesReaction !== false);
+  const [actions, setActions] = useState<CustomFeatureAction[]>(initial?.actions || []);
+
+  function updateAction(id: string, fields: Partial<CustomFeatureAction>) {
+    setActions(current => current.map(action => action.id === id ? { ...action, ...fields } : action));
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!name.trim()) return;
     await onSubmit({
       name: name.trim(),
+      description, isAction, actions, actionType, consumesReaction,
       maxUses: Number(maxUses) || 1,
       shortRestRegainType,
       shortRestRegainAmount: Number(shortRestRegainAmount) || 0,
@@ -772,40 +801,62 @@ function FeatureForm({
       setLongRestRegainType('all');
       setLongRestRegainAmount('0');
       setStatusName('');
+      setDescription('');
+      setIsAction(false);
+      setActions([]);
+      setActionType('action');
+      setConsumesReaction(true);
     }
   }
 
   return (
     <form className="form-grid" onSubmit={submit}>
       <input value={name} onChange={event => setName(event.target.value)} placeholder="Feature name" />
-      <input value={maxUses} onChange={event => setMaxUses(event.target.value)} type="number" min={1} placeholder="Max uses" />
+      <NumberInput value={maxUses} onChange={event => setMaxUses(event.target.value)} type="number" min={1} placeholder="Max uses" />
       <select value={shortRestRegainType} onChange={event => setShortRestRegainType(event.target.value as RestRegainType)}>
         <option value="none">No short rest regain</option>
         <option value="all">All on short rest</option>
         <option value="fixed">Fixed amount on short rest</option>
         <option value="input">Prompt-style amount on short rest</option>
       </select>
-      <input value={shortRestRegainAmount} onChange={event => setShortRestRegainAmount(event.target.value)} type="number" min={0} placeholder="Short rest amount" />
+      <NumberInput value={shortRestRegainAmount} onChange={event => setShortRestRegainAmount(event.target.value)} type="number" min={0} placeholder="Short rest amount" />
       <select value={longRestRegainType} onChange={event => setLongRestRegainType(event.target.value as RestRegainType)}>
         <option value="none">No long rest regain</option>
         <option value="all">All on long rest</option>
         <option value="fixed">Fixed amount on long rest</option>
         <option value="input">Prompt-style amount on long rest</option>
       </select>
-      <input value={longRestRegainAmount} onChange={event => setLongRestRegainAmount(event.target.value)} type="number" min={0} placeholder="Long rest amount" />
-      <input value={statusName} onChange={event => setStatusName(event.target.value)} placeholder="Optional status effect" />
+      <NumberInput value={longRestRegainAmount} onChange={event => setLongRestRegainAmount(event.target.value)} type="number" min={0} placeholder="Long rest amount" />
+      <input value={statusName} onChange={event => setStatusName(event.target.value)} placeholder="Condition while active, e.g. Innate Sorcery" />
+      <label className="inline-check"><input type="checkbox" checked={isAction} onChange={event => setIsAction(event.target.checked)} />Show in Actions / Attacks</label>
+      {isAction && <ActionTypeFields type={actionType} consumesReaction={consumesReaction} onChange={(type, consumes) => { setActionType(type); setConsumesReaction(consumes); }} label={actions.length ? 'Default type for new actions' : 'Feature action type'} />}
+      <div className="form-wide"><MarkdownEditor value={description} onChange={setDescription} label="Feature description" placeholder="What this feature does, rules and Markdown references" /></div>
+      <details className="form-wide feature-actions-editor">
+        <summary>Actions sharing this resource ({actions.length})</summary>
+        <p>Each action spends one use of this feature. Uses and rest recovery are shared.</p>
+        {actions.map((action, index) => <div className="feature-action-editor" key={action.id}>
+          <div className="feature-action-heading">
+            <label>Action {index + 1} name<input required aria-label={`Action ${index + 1} name`} value={action.name} onChange={event => updateAction(action.id, { name: event.target.value })} placeholder="e.g. Turn Undead" /></label>
+            <button type="button" className="btn danger small" aria-label={`Remove action ${index + 1}`} onClick={() => setActions(current => current.filter(item => item.id !== action.id))}>Remove action</button>
+          </div>
+          <ActionTypeFields type={action.actionType || 'action'} consumesReaction={action.consumesReaction !== false} onChange={(actionType, consumesReaction) => updateAction(action.id, { actionType, consumesReaction })} label={`Action ${index + 1} type`} />
+          <MarkdownEditor value={action.description} onChange={description => updateAction(action.id, { description })} label={`Action ${index + 1} description`} placeholder="Rules for this action" />
+        </div>)}
+        <button type="button" className="btn purple small" onClick={() => { setActions(current => [...current, { id: `feature-action-${Date.now()}-${Math.random().toString(36).slice(2)}`, name: '', description: '', actionType, consumesReaction }]); setIsAction(true); }}>Add action</button>
+      </details>
       <button className="btn success">{submitLabel}</button>
     </form>
   );
 }
 
 function SpellSlots({ character, submitAction }: { character: Character; submitAction: Props['submitAction'] }) {
-  const levels = Object.entries(character.spellSlots || {}).filter(([, slots]) => slots.max > 0);
+  const levels = Object.entries(character.spellSlots || {}).filter(([level, slots]) => slots.max > 0 && !(character.casting?.type === 'warlock' && character.casting.featureByLevel[level]) && !(character.casting?.type === 'divineSpark' && level.startsWith('epic')));
 
   return (
     <section id="sheet-spell-slots" className="section sheet-section-anchor">
       <h2>Spell slots</h2>
-      {levels.length === 0 && <p className="empty">No spell slots configured.</p>}
+      {character.casting?.type !== 'standard' && character.casting && <CastingResources character={character} submitAction={submitAction} />}
+      {levels.length === 0 && (!character.casting || character.casting.type === 'standard') && <p className="empty">No spell slots configured.</p>}
       <div className="spell-slot-grid">
         {levels.map(([level, slots]) => (
           <div key={level} className="spell-level">
@@ -868,6 +919,7 @@ function SpellbookSection({
         </div>
       </div>
 
+      <CastingResources character={character} submitAction={submitAction} sticky />
       {knownSpells.length === 0 && <p className="empty">No known spells yet.</p>}
       <div className="spellbook-groups">
         {knownCounterspells.length > 0 && (
@@ -882,6 +934,7 @@ function SpellbookSection({
                     className={`spell-card ${active ? '' : 'unprepared'}`}
                     onClick={() => setDetailSpell(spell)}
                     data-testid={`spell-${spell.name}`}
+                    data-sheet-entry={`spell-${spell.id}`}
                   >
                     <strong>{spell.name}</strong>
                     <span>{spell.levelLabel || 'Spell'} · {spell.school || 'Unknown school'} · {spell.castingTime || 'Casting time unknown'}</span>
@@ -895,6 +948,7 @@ function SpellbookSection({
         {groupedSpells(knownOtherSpells).map(group => (
           <div className="spellbook-group" key={group.key}>
             <h3>{group.label}</h3>
+            <CastingResources character={character} submitAction={submitAction} levels={[group.key]} />
             <div className="spellbook-list">
               {group.spells.map(spell => {
                 const active = spellIsActive(spell, spellbook);
@@ -904,6 +958,7 @@ function SpellbookSection({
                     className={`spell-card ${active ? '' : 'unprepared'}`}
                     onClick={() => setDetailSpell(spell)}
                     data-testid={`spell-${spell.name}`}
+                    data-sheet-entry={`spell-${spell.id}`}
                   >
                     <strong>{spell.name}</strong>
                     <span>{spell.school || 'Unknown school'} · {spell.castingTime || 'Casting time unknown'}</span>
@@ -916,7 +971,7 @@ function SpellbookSection({
         ))}
       </div>
 
-      {detailSpell && <SpellDetailModal spell={detailSpell} onClose={() => setDetailSpell(null)} />}
+      {detailSpell && <SpellDetailModal key={detailSpell.id} character={character} submitAction={submitAction} spell={detailSpell} onClose={() => setDetailSpell(null)} />}
       {editing && (
         <SpellbookEditorModal
           character={character}
@@ -985,6 +1040,7 @@ function SpellbookEditorModal({
           <button className="btn" onClick={onClose}>Close</button>
         </div>
 
+        <CastingResources character={character} submitAction={submitAction} />
         <div className="stack compact-stack">
           <SearchPicker
             items={available}
@@ -1013,8 +1069,8 @@ function SpellbookEditorModal({
               <input type="checkbox" checked={preparesSpells} onChange={event => setPreparesSpells(event.target.checked)} />
               Prepares spells
             </label>
-            <input value={preparedNonEpicMax} onChange={event => setPreparedNonEpicMax(event.target.value)} type="number" min={0} placeholder="Prepared non-epic max" />
-            <input value={preparedEpicMax} onChange={event => setPreparedEpicMax(event.target.value)} type="number" min={0} placeholder="Prepared epic max" />
+            <NumberInput value={preparedNonEpicMax} onChange={event => setPreparedNonEpicMax(event.target.value)} type="number" min={0} placeholder="Prepared non-epic max" />
+            <NumberInput value={preparedEpicMax} onChange={event => setPreparedEpicMax(event.target.value)} type="number" min={0} placeholder="Prepared epic max" />
             <button className="btn success" onClick={saveSettings}>Save spellcasting settings</button>
           </div>
 
@@ -1069,6 +1125,7 @@ function PreparedSpellsModal({
           <button className="btn" onClick={onClose}>Close</button>
         </div>
 
+        <CastingResources character={character} submitAction={submitAction} />
         <div className="spellbook-groups">
           {groupedSpells(spells.filter(spell => !isCantrip(spell))).map(group => (
             <div className="spellbook-group" key={group.key}>
@@ -1101,10 +1158,10 @@ function PreparedSpellsModal({
   );
 }
 
-function SpellDetailModal({ spell, onClose }: { spell: SpellDatabaseEntry; onClose: () => void }) {
+function SpellDetailModal({ spell, character, submitAction, onClose }: { spell: SpellDatabaseEntry; character: Character; submitAction: Props['submitAction']; onClose: () => void }) {
   return (
     <Modal className="item-modal-backdrop">
-      <div className="modal-card item-modal-card">
+      <div className="modal-card item-modal-card spell-detail-modal">
         <div className="section-title-row">
           <div>
             <h2>{spell.name}</h2>
@@ -1112,6 +1169,7 @@ function SpellDetailModal({ spell, onClose }: { spell: SpellDatabaseEntry; onClo
           </div>
           <button className="btn" onClick={onClose}>Close</button>
         </div>
+        <SpellCastControl character={character} spell={spell} submitAction={submitAction} />
         <div className="stats-grid">
           <div className="stat"><span>Casting</span><strong>{spell.castingTime || '-'}</strong></div>
           <div className="stat"><span>Range</span><strong>{spell.range || '-'}</strong></div>
@@ -1176,58 +1234,33 @@ function HitDice({ character, submitAction }: { character: Character; submitActi
   );
 }
 
-function Features({ character, submitAction }: { character: Character; submitAction: Props['submitAction'] }) {
-  const [editingIndex, setEditingIndex] = useState<number | null>(null);
-  const editingFeature = editingIndex === null ? null : character.customFeatures[editingIndex];
-
+function Features({ character, submitAction, actionOnly = false }: { character: Character; submitAction: Props['submitAction']; actionOnly?: boolean }) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const editingIndex = character.customFeatures.findIndex((feature, index) => (feature.id || String(index)) === editingId);
+  const editingFeature = character.customFeatures[editingIndex];
+  const visible = character.customFeatures.map((feature, index) => ({ feature, index })).filter(({ feature }) => !actionOnly || feature.isAction);
   return (
-    <section id="sheet-features" className="section sheet-section-anchor">
-      <h2>Custom Features & Abilities</h2>
-      {character.customFeatures.length === 0 && <p className="empty">No custom features configured.</p>}
-      <div className="feature-list">
-        {character.customFeatures.map((feature, index) => (
-          <FeatureRow
-            key={`${feature.name}-${index}`}
-            characterId={character.id}
-            feature={feature}
-            index={index}
-            submitAction={submitAction}
-            onEdit={() => setEditingIndex(index)}
-          />
-        ))}
+    <section id={actionOnly ? undefined : 'sheet-features'} className={actionOnly ? 'tracked-actions' : 'section sheet-section-anchor'}>
+      <div className="section-title-row">
+        {!actionOnly && <h2>Custom Features & Abilities</h2>}
+        {actionOnly && <button className="btn purple small" onClick={() => setAdding(true)}>Add tracked action</button>}
       </div>
-      {editingFeature && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true">
-          <div className="modal-card">
-            <div className="section-title-row">
-              <div>
-                <h2>Edit {editingFeature.name}</h2>
-                <p>Changes are saved as a server action and can be undone from spell history.</p>
-              </div>
-              <button className="btn" onClick={() => setEditingIndex(null)}>Close</button>
-            </div>
-            <FeatureForm
-              initial={editingFeature}
-              submitLabel="Save feature"
-              onSubmit={async feature => {
-                await submitAction({ type: 'spell.feature.update', payload: { characterId: character.id, index: editingIndex, ...feature } });
-                setEditingIndex(null);
-              }}
-            />
-            <div className="button-row rest-row">
-              <button
-                className="btn danger"
-                onClick={async () => {
-                  await submitAction({ type: 'spell.feature.remove', payload: { characterId: character.id, index: editingIndex } });
-                  setEditingIndex(null);
-                }}
-              >
-                Remove feature
-              </button>
-            </div>
-          </div>
+      {visible.length === 0 && !actionOnly && <p className="empty">No custom features configured.</p>}
+      <div className="feature-list">
+        {visible.map(({ feature, index }) => <FeatureRow key={feature.id || index} character={character} feature={feature} index={index} submitAction={submitAction} onEdit={() => setEditingId(feature.id || String(index))} />)}
+      </div>
+      {(editingFeature || adding) && <Modal>
+        <div className="modal-card">
+          <div className="section-title-row"><h2>{editingFeature ? `Edit ${editingFeature.name}` : 'Add tracked action'}</h2><button className="btn" onClick={() => { setEditingId(null); setAdding(false); }}>Close</button></div>
+          <FeatureForm key={editingId || 'new'} initial={editingFeature || { isAction: true }} submitLabel={editingFeature ? 'Save feature' : 'Add feature'} onSubmit={async feature => {
+            const result = await submitAction({ type: editingFeature ? 'spell.feature.update' : 'spell.feature.add', payload: { characterId: character.id, ...(editingFeature ? { featureId: editingFeature.id, index: editingIndex } : {}), ...feature } });
+            if (result && (result as { ok?: boolean }).ok === false) return;
+            setEditingId(null); setAdding(false);
+          }} />
+          {editingFeature && <div className="button-row rest-row"><button className="btn danger" onClick={async () => { await submitAction({ type: 'spell.feature.remove', payload: { characterId: character.id, featureId: editingFeature.id, index: editingIndex } }); setEditingId(null); }}>Remove feature</button></div>}
         </div>
-      )}
+      </Modal>}
     </section>
   );
 }
@@ -1256,6 +1289,7 @@ function AbilitiesWiki({ character, submitAction }: { character: Character; subm
             className="ability-wiki-card"
             onClick={() => setDetail(ability)}
             data-testid={`ability-${ability.name}`}
+            data-sheet-entry={`ability-${ability.id}`}
           >
             <strong>{ability.name}</strong>
             {ability.source && <span>{ability.source}</span>}
@@ -1291,33 +1325,40 @@ function AbilitiesWiki({ character, submitAction }: { character: Character; subm
 
 function ActionsWiki({ character, submitAction }: { character: Character; submitAction: Props['submitAction'] }) {
   const actions = character.characterActions || [];
+  const trackedCount = character.customFeatures.filter(feature => feature.isAction).length;
   const [detail, setDetail] = useState<CharacterAbility | null>(null);
   const [editing, setEditing] = useState(false);
   const [editingTarget, setEditingTarget] = useState<CharacterAbility | null>(null);
+  function reactionControl(action: CharacterAbility) {
+    return action.actionType === 'reaction' ? <span className="action-use-control"><button className="btn purple small" disabled={requiresReaction(action) && availableReactions(character) < 1} aria-label={`Use ${action.name}`} title={requiresReaction(action) ? 'Spend 1 reaction' : 'Record use without spending a reaction'} onClick={() => submitAction({ type: 'spell.action.use', payload: { characterId: character.id, id: action.id } })}>Use{requiresReaction(action) ? ' R' : ''}</button><ReactionUsage character={character} /></span> : null;
+  }
 
   return (
     <section id="sheet-actions" className="section sheet-section-anchor">
       <div className="section-title-row">
         <div>
           <h2>Actions / Attacks</h2>
-          <p>{actions.length === 0 ? 'Attacks, common actions and combat reminders.' : `${actions.length} action entr${actions.length === 1 ? 'y' : 'ies'}.`}</p>
         </div>
-        <button className="btn" onClick={() => setEditing(true)}>Edit actions</button>
+        <div className="button-row"><ReactionUsage character={character} /><button className="btn small" onClick={() => setEditing(true)}>Edit actions</button></div>
       </div>
 
-      {actions.length === 0 && <p className="empty">No actions recorded yet.</p>}
-      <div className="ability-wiki-grid">
-        {actions.map(action => (
-          <button key={action.id} className="ability-wiki-card" onClick={() => setDetail(action)} data-testid={`action-${action.name}`}>
-            <strong>{action.name}</strong>
-            {action.source && <span>{action.source}</span>}
-          </button>
-        ))}
-      </div>
+      {actions.length === 0 && trackedCount === 0 && <p className="empty">No actions recorded yet.</p>}
+      {ACTION_TYPES.map(type => {
+        const group = actions.filter(action => (action.actionType || 'action') === type.value);
+        return group.length > 0 && <div className="sheet-action-group" key={type.value}>
+          <h3>{type.plural}</h3>
+          <div className="sheet-action-list">{group.map(action => <div className="sheet-action-row" key={action.id}>
+            <button className="sheet-action-name" onClick={() => setDetail(action)} data-testid={`action-${action.name}`} data-sheet-entry={`action-${action.id}`}><strong>{action.name}</strong>{action.source && <small>{action.source}</small>}</button>
+            {reactionControl(action)}
+          </div>)}</div>
+        </div>;
+      })}
 
+      <Features character={character} submitAction={submitAction} actionOnly />
       {detail && (
         <AbilityDetailModal
           ability={detail}
+          footer={reactionControl(detail)}
           onClose={() => setDetail(null)}
           onEdit={() => {
             setEditingTarget(detail);
@@ -1377,7 +1418,7 @@ function ActionEditorModal({
               <div className="spellbook-known-row" key={action.id}>
                 <div>
                   <strong>{action.name}</strong>
-                  <span>{action.source || 'Action / attack'}</span>
+                  <span>{actionTypeLabel(action.actionType)}{action.source ? ` · ${action.source}` : ''}</span>
                 </div>
                 <div className="button-row">
                   <button className="btn small" onClick={() => setEditingAction(action)}>Edit</button>
@@ -1391,6 +1432,7 @@ function ActionEditorModal({
             initial={editingAction}
             submitLabel={editingAction ? 'Save action' : 'Add action'}
             onSubmit={saveAction}
+            actionForm
           />
         </div>
       </div>
@@ -1398,7 +1440,7 @@ function ActionEditorModal({
   );
 }
 
-function AbilityDetailModal({ ability, onClose, onEdit }: { ability: CharacterAbility; onClose: () => void; onEdit: () => void }) {
+function AbilityDetailModal({ ability, onClose, onEdit, footer }: { ability: CharacterAbility; onClose: () => void; onEdit: () => void; footer?: ReactNode }) {
   return (
     <Modal className="item-modal-backdrop">
       <div className="modal-card item-modal-card">
@@ -1409,6 +1451,7 @@ function AbilityDetailModal({ ability, onClose, onEdit }: { ability: CharacterAb
           </div>
           <div className="button-row">
             <button className="btn" onClick={onEdit}>Edit</button>
+            {footer}
             <button className="btn" onClick={onClose}>Close</button>
           </div>
         </div>
@@ -1493,15 +1536,19 @@ function AbilityEditorModal({
 function AbilityForm({
   initial,
   submitLabel,
-  onSubmit
+  onSubmit,
+  actionForm = false
 }: {
   initial: CharacterAbility | null;
   submitLabel: string;
   onSubmit: (ability: Partial<CharacterAbility>) => Promise<unknown>;
+  actionForm?: boolean;
 }) {
   const [name, setName] = useState(initial?.name || '');
   const [source, setSource] = useState(initial?.source || '');
   const [description, setDescription] = useState(initial?.description || '');
+  const [actionType, setActionType] = useState<ActionType>(initial?.actionType || 'action');
+  const [consumesReaction, setConsumesReaction] = useState(initial?.consumesReaction !== false);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -1510,12 +1557,15 @@ function AbilityForm({
       id: initial?.id,
       name: name.trim(),
       source: source.trim(),
-      description
+      description,
+      ...(actionForm ? { actionType, consumesReaction } : {})
     });
     if (!initial) {
       setName('');
       setSource('');
       setDescription('');
+      setActionType('action');
+      setConsumesReaction(true);
     }
   }
 
@@ -1523,6 +1573,7 @@ function AbilityForm({
     <form className="form-grid" onSubmit={submit}>
       <input value={name} onChange={event => setName(event.target.value)} placeholder="Ability heading" />
       <input value={source} onChange={event => setSource(event.target.value)} placeholder="Optional source, item or feature" />
+      {actionForm && <ActionTypeFields type={actionType} consumesReaction={consumesReaction} onChange={(type, consumes) => { setActionType(type); setConsumesReaction(consumes); }} />}
       <div className="form-wide">
         <MarkdownEditor
           value={description}
@@ -1537,33 +1588,37 @@ function AbilityForm({
 }
 
 function FeatureRow({
-  characterId,
+  character,
   feature,
   index,
   submitAction,
   onEdit
 }: {
-  characterId: string;
+  character: Character;
   feature: CustomFeature;
   index: number;
   submitAction: Props['submitAction'];
   onEdit: () => void;
 }) {
   const used = Math.max(0, Math.min(feature.maxUses || 0, feature.used || 0));
+  const characterId = character.id;
   const maxUses = Math.max(1, feature.maxUses || 1);
   const remaining = Math.max(0, maxUses - used);
 
   function setUsed(value: number) {
-    submitAction({ type: 'spell.feature.uses', payload: { characterId, index, used: value } });
+    return submitAction({ type: 'spell.feature.uses', payload: { characterId, featureId: feature.id, index, used: value } });
   }
 
   return (
-    <div className="feature-row">
+    <div className="feature-row" data-sheet-entry={`feature-${feature.id || index}`}>
       <div className="feature-info">
         <strong>{feature.name}</strong>
-        <p>{used}/{maxUses} used, {remaining} available · {recoveryLabel(feature)}{feature.statusName ? ` · Status: ${feature.statusName}` : ''}</p>
+        {feature.isAction && !feature.actions?.length && <span className="action-kind">{actionTypeLabel(feature.actionType)}</span>}
+        <span className="feature-count" title={`${used}/${maxUses} used, ${remaining} available · ${recoveryLabel(feature)}${feature.statusName ? ` · Status: ${feature.statusName}` : ''}`}>{remaining}/{maxUses}<span className="sr-only"> · {used}/{maxUses} used, {remaining} available</span></span>
+        {feature.description && <details className="feature-description feature-main-description"><summary>Description</summary><MarkdownRenderer text={feature.description} /></details>}
       </div>
       <div className="feature-controls">
+        {feature.isAction && !feature.actions?.length && <span className="action-use-control"><button className="btn purple small" aria-label={`Use ${feature.name}`} disabled={remaining === 0 || (requiresReaction(feature) && availableReactions(character) < 1)} title={requiresReaction(feature) ? 'Spend 1 feature use and 1 reaction' : 'Spend 1 feature use'} onClick={() => submitAction({ type: 'spell.feature.use', payload: { characterId, featureId: feature.id, index } })}>Use{requiresReaction(feature) ? ' + R' : ''}</button>{feature.actionType === 'reaction' && <ReactionUsage character={character} />}</span>}
         {maxUses <= 10 ? (
           <div className="feature-box-row">
             {Array.from({ length: maxUses }, (_, boxIndex) => (
@@ -1577,23 +1632,30 @@ function FeatureRow({
           </div>
         ) : (
           <div className="feature-bar-controls">
-            <button className="btn success small" onClick={() => setUsed(Math.max(0, used - 1))}>-1</button>
+            <button className="btn success small" onClick={() => submitAction({ type: 'spell.feature.uses', payload: { characterId, featureId: feature.id, index, delta: -1 } })}>-1</button>
             <div className="feature-bar" aria-label={`${feature.name} usage`}>
               <div className="feature-bar-fill" style={{ width: `${(used / maxUses) * 100}%` }} />
             </div>
-            <input
+            <NumberInput
               className="small-input"
               type="number"
               min={0}
               max={maxUses}
               value={used}
-              onChange={event => setUsed(Number(event.target.value) || 0)}
+              onCommit={setUsed}
+              aria-label={`${feature.name} used`}
             />
-            <button className="btn danger small" onClick={() => setUsed(used + 1)}>+1</button>
+            <button className="btn danger small" onClick={() => submitAction({ type: 'spell.feature.uses', payload: { characterId, featureId: feature.id, index, delta: 1 } })}>+1</button>
           </div>
         )}
         <button className="btn small" onClick={onEdit}>Edit</button>
       </div>
+      {!!feature.actions?.length && <div className="feature-action-list" aria-label={`${feature.name} actions`}>
+        {feature.actions.map(action => <div className="feature-action" key={action.id}>
+          <details className="feature-description" data-sheet-entry={`feature-${feature.id || index}-${action.id}`}><summary><span>{action.name}</span><span className="action-kind">{actionTypeLabel(action.actionType)}</span></summary><MarkdownRenderer text={action.description} /></details>
+          <span className="action-use-control"><button className="btn purple small" disabled={remaining === 0 || (requiresReaction(action) && availableReactions(character) < 1)} aria-label={`Use ${action.name}`} title={requiresReaction(action) ? `Spend 1 ${feature.name} use and 1 reaction` : `Spend 1 ${feature.name} use`} onClick={() => submitAction({ type: 'spell.feature.action.use', payload: { characterId, featureId: feature.id, index, actionId: action.id } })}>Use{requiresReaction(action) ? ' + R' : ''}</button>{action.actionType === 'reaction' && <ReactionUsage character={character} />}</span>
+        </div>)}
+      </div>}
     </div>
   );
 }

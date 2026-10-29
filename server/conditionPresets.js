@@ -34,6 +34,7 @@ const DEFAULT_CONDITIONS = [
     { name: 'Tensor_Transformation', kind: 'buff', description: 'Super-powered wizard transformation.', source: 'homebrew' },
     { name: 'Retaliation_Aura', kind: 'buff', description: 'Punch back.', source: 'homebrew' },
     { name: 'Foresight', kind: 'buff', description: 'Broad advantage from foresight magic.', source: 'homebrew' },
+    { name: 'Innate Sorcery', kind: 'buff', description: "PHB'24 p140. For 1 minute, the spell save DC of Sorcerer spells increases by 1, and Sorcerer spell attack rolls have advantage. Usable twice per long rest.", source: "PHB'24" },
     { name: 'Elder_Champion', kind: 'buff', description: 'Spells as bonus actions, recurring healing, and stronger saves against spells.', source: 'homebrew' },
     { name: 'Celestial_Revelation', kind: 'buff', description: 'Flight, damage aura, or fear aura.', source: 'homebrew' },
     { name: 'Power_of_Mercy', kind: 'buff', description: 'Resistance to everything and radiant retaliation.', source: 'homebrew' },
@@ -48,7 +49,11 @@ const DEFAULT_CONDITIONS = [
     { name: 'Ability Score Increased', kind: 'buff', description: 'Temporarily increases one ability score by a chosen amount. This affects Character Sheets until removed.', hasLevels: true, maxLevel: 30, statAdjustmentType: 'increase', source: 'sheet' },
     { name: 'Ability Score Reduced', kind: 'debuff', description: 'Temporarily reduces one ability score by a chosen amount. This affects Character Sheets until removed.', hasLevels: true, maxLevel: 30, statAdjustmentType: 'decrease', source: 'sheet' },
     { name: 'Armor Class Increased', kind: 'buff', description: 'Temporarily increases AC by the tracked level/value.', hasLevels: true, maxLevel: 30, source: 'sheet' },
-    { name: 'Armor Class Reduced', kind: 'debuff', description: 'Temporarily reduces AC by the tracked level/value.', hasLevels: true, maxLevel: 30, source: 'sheet' }
+    { name: 'Armor Class Reduced', kind: 'debuff', description: 'Temporarily reduces AC by the tracked level/value.', hasLevels: true, maxLevel: 30, source: 'sheet' },
+    { name: 'AC Buff', kind: 'buff', description: 'Temporarily increases AC by the tracked level/value. Short alias for Armor Class Increased.', hasLevels: true, maxLevel: 30, source: 'sheet' },
+    { name: 'AC Debuff', kind: 'debuff', description: 'Temporarily reduces AC by the tracked level/value. Short alias for Armor Class Reduced.', hasLevels: true, maxLevel: 30, source: 'sheet' },
+    { name: 'Max HP Increased', kind: 'buff', description: 'Temporarily increases maximum HP by the tracked level/value. Base max HP stays unchanged.', hasLevels: true, maxLevel: 500, source: 'sheet' },
+    { name: 'Max HP Reduced', kind: 'debuff', description: 'Temporarily reduces maximum HP by the tracked level/value. Current HP is clamped to the effective maximum.', hasLevels: true, maxLevel: 500, source: 'sheet' }
 ];
 
 module.exports = {

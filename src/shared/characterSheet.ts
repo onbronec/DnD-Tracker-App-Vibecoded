@@ -107,7 +107,7 @@ export function spellcastingAbility(character: Character): AbilityKey {
 
 export function spellSaveDc(character: Character, adjustedScores = adjustedAbilityScores(character).scores) {
   const ability = spellcastingAbility(character);
-  return 8 + (character.proficiencyBonus || 0) + abilityModifier(adjustedScores[ability]) + bonusTotal(character, 'spellDc', 'spellDc', { proficient: false, expert: false });
+  return 8 + (character.proficiencyBonus || 0) + abilityModifier(adjustedScores[ability]) + bonusTotal(character, 'spellDc', 'spellDc', { proficient: false, expert: false }) + spellDcEffectBonus(character);
 }
 
 export function spellAttackBonus(character: Character, adjustedScores = adjustedAbilityScores(character).scores) {
@@ -117,6 +117,10 @@ export function spellAttackBonus(character: Character, adjustedScores = adjusted
 
 export function armorClass(character: Character) {
   return (character.ac || 10) + bonusTotal(character, 'ac', 'ac', { proficient: false, expert: false }) + acEffectBonus(character);
+}
+
+export function effectiveMaxHp(character: Character) {
+  return Math.max(1, (Number(character.maxHp) || 1) + maxHpEffectBonus(character));
 }
 
 export function initiativeBonus(character: Character, adjustedScores = adjustedAbilityScores(character).scores) {
@@ -160,8 +164,27 @@ function acEffectBonus(character: Character) {
     const current = normalizeEffectLike(effect);
     const value = Number(current.value ?? current.level ?? 0);
     if (!Number.isFinite(value)) return sum;
-    if (current.name === 'Armor Class Increased') return sum + value;
-    if (current.name === 'Armor Class Reduced') return sum - value;
+    if (current.name === 'Armor Class Increased' || current.name === 'AC Buff') return sum + value;
+    if (current.name === 'Armor Class Reduced' || current.name === 'AC Debuff') return sum - value;
+    return sum;
+  }, 0);
+}
+
+function maxHpEffectBonus(character: Character) {
+  return (character.effects || []).reduce((sum, effect) => {
+    const current = normalizeEffectLike(effect);
+    const value = Number(current.value ?? current.level ?? 0);
+    if (!Number.isFinite(value)) return sum;
+    if (current.name === 'Max HP Increased') return sum + value;
+    if (current.name === 'Max HP Reduced') return sum - value;
+    return sum;
+  }, 0);
+}
+
+function spellDcEffectBonus(character: Character) {
+  return (character.effects || []).reduce((sum, effect) => {
+    const current = normalizeEffectLike(effect);
+    if (current.name === 'Innate Sorcery') return sum + 1;
     return sum;
   }, 0);
 }

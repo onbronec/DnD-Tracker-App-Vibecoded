@@ -1,9 +1,11 @@
 const { applyGameAction, redoPage, undoPage } = require('./actions');
 const { authorizeAction, canUseHistory } = require('./permissions');
 const { filterHistoryForPlayer, filterStateForClient, stripHistorySnapshots } = require('./visibility');
+const { isDeepStrictEqual } = require('util');
 
 function createSocketHandlers({ io, stateRef, dmToken, saveState }) {
     const clients = new Map();
+    const lastStates = new Map();
 
     function clientFor(socket) {
         return clients.get(socket.id) || { id: socket.id, role: 'player' };
@@ -11,25 +13,26 @@ function createSocketHandlers({ io, stateRef, dmToken, saveState }) {
 
     function emitStateTo(socket) {
         const client = clientFor(socket);
-        socket.emit('state:init', filterStateForClient(stateRef.current, client.role));
+        const state = filterStateForClient(stateRef.current, client.role);
+        lastStates.set(client.role, state);
+        socket.emit('state:init', state);
     }
 
     function broadcastPatch(entry) {
+        const patches = new Map();
         io.sockets.sockets.forEach(socket => {
             const client = clientFor(socket);
+            if (!patches.has(client.role)) {
+                const next = filterStateForClient(stateRef.current, client.role);
+                const previous = lastStates.get(client.role) || {};
+                const patch = Object.fromEntries(Object.entries(next).filter(([key, value]) => !isDeepStrictEqual(value, previous[key])));
+                lastStates.set(client.role, next);
+                patches.set(client.role, patch);
+            }
             socket.emit('state:patch', {
-                state: filterStateForClient(stateRef.current, client.role),
+                state: patches.get(client.role),
                 entry: sanitizeEntry(entry, client.role)
             });
-        });
-    }
-
-    function broadcastHistory() {
-        io.sockets.sockets.forEach(socket => {
-            const client = clientFor(socket);
-            socket.emit('history:updated', client.role === 'dm'
-                ? stripHistorySnapshots(stateRef.current.actionLog)
-                : filterHistoryForPlayer(stateRef.current.actionLog));
         });
     }
 
@@ -52,10 +55,9 @@ function createSocketHandlers({ io, stateRef, dmToken, saveState }) {
                 if (!permission.ok) throw new Error(permission.reason);
                 const { entry } = applyGameAction(stateRef.current, action, client);
                 saveState();
-                if (typeof ack === 'function') ack({ ok: true, entry: sanitizeEntry(entry, client.role) });
                 socket.emit('action:accepted', sanitizeEntry(entry, client.role));
                 broadcastPatch(entry);
-                broadcastHistory();
+                if (typeof ack === 'function') ack({ ok: true, entry: sanitizeEntry(entry, client.role) });
             } catch (error) {
                 const message = error.message || 'Akce selhala.';
                 if (typeof ack === 'function') ack({ ok: false, error: message });
@@ -80,7 +82,6 @@ function createSocketHandlers({ io, stateRef, dmToken, saveState }) {
                 saveState();
                 if (typeof ack === 'function') ack({ ok: true, entry: sanitizeEntry(entry, client.role) });
                 broadcastPatch(entry);
-                broadcastHistory();
             } catch (error) {
                 const message = error.message || 'Undo selhalo.';
                 if (typeof ack === 'function') ack({ ok: false, error: message });
@@ -97,7 +98,6 @@ function createSocketHandlers({ io, stateRef, dmToken, saveState }) {
                 saveState();
                 if (typeof ack === 'function') ack({ ok: true, entry: sanitizeEntry(entry, client.role) });
                 broadcastPatch(entry);
-                broadcastHistory();
             } catch (error) {
                 const message = error.message || 'Redo selhalo.';
                 if (typeof ack === 'function') ack({ ok: false, error: message });

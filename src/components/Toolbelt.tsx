@@ -1,7 +1,9 @@
-import { FormEvent, useMemo, useState } from 'react';
+import { NumberInput } from './NumberInput';
+import { AoeResolver } from './AoeResolver';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Modal } from './Modal';
 import { MarkdownEditor, MarkdownRenderer } from './Markdown';
-import type { AbilityKey, CalendarRecord, ClientRole, GameAction, GameState, ToolbeltNote } from '../shared/types';
+import type { AbilityKey, CalendarRecord, ClientRole, GameAction, GameState, PartyCheckResult, ToolbeltNote } from '../shared/types';
 import {
   ABILITIES,
   SKILLS,
@@ -14,19 +16,44 @@ import {
 } from '../shared/characterSheet';
 import { type DiceRollMode, type DiceRollResult, rollDiceExpression } from '../shared/dice';
 
+export interface DiceRollRequest {
+  expression: string;
+  key?: number;
+}
+
 interface Props {
   role: ClientRole;
   state: GameState;
   submitAction: (action: GameAction) => Promise<unknown>;
+  diceRequest?: DiceRollRequest | null;
 }
 
 const NAME_POOL = ['Kael Voss', 'Mira Thorn', 'Orin Vale', 'Selka Reed', 'Dain Crowmere', 'Astra Nyx', 'Tovin Glass', 'Lysa Marrow', 'Bram Ashford', 'Nera Quill'];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
-export function Toolbelt({ role, state, submitAction }: Props) {
+export function Toolbelt({ role, state, submitAction, diceRequest }: Props) {
   const [openTool, setOpenTool] = useState<string | null>(null);
+  const [diceExpression, setDiceExpression] = useState('1d20');
   const isDM = role === 'dm';
+
+  useEffect(() => {
+    if (!diceRequest?.expression) return;
+    setDiceExpression(diceRequest.expression);
+    setOpenTool('dice');
+  }, [diceRequest?.expression, diceRequest?.key]);
+
+  useEffect(() => {
+    function handleOpenDice(event: Event) {
+      const detail = (event as CustomEvent<{ expression?: string }>).detail;
+      if (detail?.expression) {
+        setDiceExpression(detail.expression);
+      }
+      setOpenTool('dice');
+    }
+    window.addEventListener('dnd:open-dice-roller', handleOpenDice);
+    return () => window.removeEventListener('dnd:open-dice-roller', handleOpenDice);
+  }, []);
 
   return (
     <>
@@ -34,16 +61,16 @@ export function Toolbelt({ role, state, submitAction }: Props) {
         <div className="toolbelt-inner">
           {isDM && <button className="toolbelt-btn tool-party" onClick={() => setOpenTool('party')}>Party Checks</button>}
           <button className="toolbelt-btn tool-dice" onClick={() => setOpenTool('dice')}>Dice Roller</button>
+          {isDM && <button className="toolbelt-btn tool-aoe" onClick={() => setOpenTool('aoe')}>AOE Resolver</button>}
           {isDM && <button className="toolbelt-btn tool-improv" onClick={() => setOpenTool('improv')}>Improv</button>}
-          {isDM && <button className="toolbelt-btn tool-stealth" onClick={() => setOpenTool('stealth')}>Stealth</button>}
           {isDM && <button className="toolbelt-btn tool-calendar" onClick={() => setOpenTool('calendar')}>Calendar</button>}
           {isDM && <button className="toolbelt-btn tool-notes" onClick={() => setOpenTool('notes')}>Notepad</button>}
         </div>
       </div>
-      {openTool === 'party' && isDM && <PartyChecksModal state={state} onClose={() => setOpenTool(null)} />}
-      {openTool === 'dice' && <DiceRollerModal state={state} submitAction={submitAction} onClose={() => setOpenTool(null)} />}
+      {openTool === 'party' && isDM && <PartyChecksModal state={state} submitAction={submitAction} onClose={() => setOpenTool(null)} />}
+      {openTool === 'dice' && <DiceRollerModal state={state} submitAction={submitAction} initialExpression={diceExpression} onExpressionChange={setDiceExpression} onClose={() => setOpenTool(null)} />}
+      {openTool === 'aoe' && isDM && <AoeResolver state={state} submitAction={submitAction} onClose={() => setOpenTool(null)} />}
       {openTool === 'improv' && isDM && <ImprovModal state={state} submitAction={submitAction} onClose={() => setOpenTool(null)} />}
-      {openTool === 'stealth' && isDM && <StealthModal state={state} onClose={() => setOpenTool(null)} />}
       {openTool === 'calendar' && isDM && <CalendarModal state={state} submitAction={submitAction} onClose={() => setOpenTool(null)} />}
       {openTool === 'notes' && isDM && <NotepadModal state={state} submitAction={submitAction} onClose={() => setOpenTool(null)} />}
     </>
@@ -54,7 +81,7 @@ function combatPlayers(state: GameState) {
   return state.characters.filter(character => character.type === 'player' && character.activeInCombat !== false);
 }
 
-function PartyChecksModal({ state, onClose }: { state: GameState; onClose: () => void }) {
+function PartyChecksModal({ state, submitAction, onClose }: { state: GameState; submitAction: Props['submitAction']; onClose: () => void }) {
   const [mode, setMode] = useState<'save' | 'ability' | 'skill'>('save');
   const [ability, setAbility] = useState<AbilityKey>('strength');
   const [skill, setSkill] = useState('perception');
@@ -63,10 +90,15 @@ function PartyChecksModal({ state, onClose }: { state: GameState; onClose: () =>
   const [includeAstria, setIncludeAstria] = useState(false);
   const [rollMode, setRollMode] = useState<DiceRollMode>('normal');
   const [inspirations, setInspirations] = useState<Record<string, 'none' | 'd12' | 'd20'>>({});
+  const [passWithoutTrace, setPassWithoutTrace] = useState(false);
+  const isStealth = mode === 'skill' && skill === 'stealth';
+  const checkKey = `${mode}:${mode === 'skill' ? skill : ability}`;
+  const results = state.toolbelt?.partyChecks?.[checkKey] || {};
   const characters = combatPlayers(state);
   const crowBonus = auraBonus(state, 'crow', 'wisdom');
   const astriaBonus = auraBonus(state, 'astria', 'intelligence');
   const aura = (includeCrow ? crowBonus : 0) + (includeAstria ? astriaBonus : 0);
+  const globalBonus = aura + (isStealth && passWithoutTrace ? 10 : 0);
   const dcNumber = Number(dc);
 
   const rows = characters.map(character => {
@@ -76,16 +108,39 @@ function PartyChecksModal({ state, onClose }: { state: GameState; onClose: () =>
       : mode === 'ability'
         ? abilityCheckBonus(character, ability, adjusted.scores)
         : skillBonus(character, skill, adjusted.scores);
-    const value = base + aura;
+    const value = base + globalBonus;
     const inspiration = inspirations[character.id] || 'none';
     return {
       character,
       value,
       base,
       inspiration,
+      result: results[character.id],
       chance: dc ? partySuccessChancePercent(dcNumber, value, rollMode, inspiration, mode !== 'save') : null
     };
   }).sort((a, b) => b.value - a.value);
+
+  function record(entries: Array<PartyCheckResult & { characterId: string }>) {
+    return submitAction({ type: 'toolbelt.partyCheck.record', page: 'toolbelt', payload: { checkKey, results: entries } });
+  }
+
+  function rolled(row: typeof rows[number]) {
+    const d20 = rollDiceExpression('1d20', { mode: rollMode });
+    const inspiration = row.inspiration === 'none' ? null : rollDiceExpression(`1${row.inspiration}`, { mode: mode === 'save' ? 'normal' : 'advantage' });
+    return {
+      characterId: row.character.id, total: d20.total + row.base + (inspiration?.total || 0), natural: d20.total,
+      detail: `${describeDiceResult(d20)}; base ${signed(row.base)}${inspiration ? `; inspiration ${describeDiceResult(inspiration)}` : ''}`
+    };
+  }
+
+  function passed(result?: PartyCheckResult) {
+    if (!result || dc === '') return null;
+    if (result.natural === 1) return false;
+    if (result.natural === 20) return true;
+    return result.total + globalBonus >= dcNumber;
+  }
+  const successes = rows.filter(row => passed(row.result) === true).length;
+  const failures = rows.filter(row => passed(row.result) === false).length;
 
   function setInspiration(characterId: string, die: 'd12' | 'd20', checked: boolean) {
     setInspirations(current => ({ ...current, [characterId]: checked ? die : 'none' }));
@@ -103,7 +158,7 @@ function PartyChecksModal({ state, onClose }: { state: GameState; onClose: () =>
         <div className="section-title-row">
           <div>
             <h2>Party Checks</h2>
-            <p>Active combat characters only.</p>
+            <p>Active combat characters only. Enter totals including the character bonus and inspiration, before auras / Pass without Trace. Rolls are saved automatically.</p>
           </div>
           <button className="btn" onClick={onClose}>Close</button>
         </div>
@@ -123,7 +178,7 @@ function PartyChecksModal({ state, onClose }: { state: GameState; onClose: () =>
               {SKILLS.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}
             </select>
           )}
-          <input value={dc} onChange={event => setDc(event.target.value)} type="number" min={1} max={50} placeholder="DC" aria-label="Difficulty class" />
+          <NumberInput value={dc} onChange={event => setDc(event.target.value)} type="number" min={1} max={50} placeholder="DC" aria-label="Difficulty class" />
           <select value={rollMode} onChange={event => setRollMode(event.target.value as DiceRollMode)} aria-label="Party check roll mode">
             <option value="normal">Normal</option>
             <option value="advantage">Advantage</option>
@@ -131,7 +186,16 @@ function PartyChecksModal({ state, onClose }: { state: GameState; onClose: () =>
           </select>
           <label className="inline-check"><input type="checkbox" checked={includeCrow} onChange={event => setIncludeCrow(event.target.checked)} /> Crow aura {signed(crowBonus)}</label>
           <label className="inline-check"><input type="checkbox" checked={includeAstria} onChange={event => setIncludeAstria(event.target.checked)} /> Astria aura {signed(astriaBonus)}</label>
+          {isStealth && <label className="inline-check"><input type="checkbox" checked={passWithoutTrace} onChange={event => setPassWithoutTrace(event.target.checked)} /> Pass without Trace +10</label>}
         </div>
+
+        <div className="button-row">
+          <button className="btn purple" onClick={() => { setMode('skill'); setSkill('stealth'); }}>Stealth</button>
+          <button className="btn success" onClick={() => record(rows.map(rolled))}>Roll all</button>
+          <button className="btn" onClick={() => record(rows.filter(row => !row.result).map(rolled))}>Roll empty</button>
+          <button className="btn danger" onClick={() => submitAction({ type: 'toolbelt.partyCheck.clear', page: 'toolbelt', payload: { checkKey } })}>Clear results</button>
+        </div>
+        <div className="stealth-summary">Successes {successes} / Failures {failures}</div>
 
         <div className="party-check-table">
           <div className="party-check-header">
@@ -139,14 +203,17 @@ function PartyChecksModal({ state, onClose }: { state: GameState; onClose: () =>
             <span>{title}</span>
             <span>Inspiration</span>
             <span>Chance</span>
+            <span>Result</span>
           </div>
-          {rows.map(({ character, value, base, inspiration, chance }) => (
-            <div className="party-check-row" key={character.id}>
+          {rows.map((row) => {
+            const { character, value, base, inspiration, chance, result } = row;
+            const success = passed(result);
+            return <div className={`party-check-row ${success === null ? '' : success ? 'passed' : 'failed'}`} key={character.id}>
               <div>
                 <strong>{character.name}</strong>
                 <span>{[
                   `base ${signed(base)}`,
-                  aura ? `aura ${signed(aura)}` : ''
+                  globalBonus ? `global ${signed(globalBonus)}` : ''
                 ].filter(Boolean).join(', ') || `PB ${signed(character.proficiencyBonus || 0)}`}</span>
               </div>
               <b>{signed(value)}</b>
@@ -161,20 +228,49 @@ function PartyChecksModal({ state, onClose }: { state: GameState; onClose: () =>
                 </label>
               </div>
               <b>{chance === null ? '-' : `${chance}%`}</b>
-            </div>
-          ))}
+              <div className="party-result">
+                <NumberInput key={`${checkKey}:${character.id}`} className="small-input" value={result?.total ?? ''}
+                  aria-label={`${character.name} check result`}
+                  onCommit={total => record([{ characterId: character.id, total, natural: null, detail: 'Manual result' }])} />
+                <button className="btn small" onClick={() => record([rolled(row)])}>Roll</button>
+                <span title={result?.detail}>{result ? `${result.total + globalBonus}${success === null ? '' : success ? ' · Success' : ' · Failure'}` : 'Unrecorded'}</span>
+                {result && <span>{result.detail}</span>}
+              </div>
+            </div>;
+          })}
         </div>
       </div>
     </Modal>
   );
 }
 
-function DiceRollerModal({ state, submitAction, onClose }: { state: GameState; submitAction: Props['submitAction']; onClose: () => void }) {
-  const [expression, setExpression] = useState('1d20');
+function DiceRollerModal({
+  state,
+  submitAction,
+  initialExpression = '1d20',
+  onExpressionChange,
+  onClose
+}: {
+  state: GameState;
+  submitAction: Props['submitAction'];
+  initialExpression?: string;
+  onExpressionChange?: (expression: string) => void;
+  onClose: () => void;
+}) {
+  const [expression, setExpression] = useState(initialExpression);
   const [mode, setMode] = useState<DiceRollMode>('normal');
   const [rerollOnes, setRerollOnes] = useState(false);
   const [error, setError] = useState('');
   const entries = useMemo(() => Object.values(state.toolbelt?.diceRolls || {}).flat().sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp))), [state.toolbelt?.diceRolls]);
+
+  useEffect(() => {
+    setExpression(initialExpression);
+  }, [initialExpression]);
+
+  function updateExpression(next: string) {
+    setExpression(next);
+    onExpressionChange?.(next);
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -203,13 +299,13 @@ function DiceRollerModal({ state, submitAction, onClose }: { state: GameState; s
         <div className="section-title-row">
           <div>
             <h2>Dice Roller</h2>
-            <p>Roll expressions like 4d4+7d6+10.</p>
+            <p>Roll expressions like 4d4+7d6+10 or 3*(1d20+2*3).</p>
           </div>
           <button className="btn" onClick={onClose}>Close</button>
         </div>
 
         <form className="dice-form" onSubmit={submit}>
-          <input value={expression} onChange={event => setExpression(event.target.value)} aria-label="Dice expression" />
+          <input value={expression} onChange={event => updateExpression(event.target.value)} aria-label="Dice expression" />
           <select value={mode} onChange={event => setMode(event.target.value as DiceRollMode)} aria-label="Roll mode">
             <option value="normal">Normal</option>
             <option value="advantage">Advantage</option>
@@ -257,69 +353,6 @@ function ImprovModal({ state, submitAction, onClose }: { state: GameState; submi
         <button className="btn success" onClick={generate}>Generate Name</button>
         <div className="tool-list">
           {(state.toolbelt?.improvNames || []).map(entry => <div key={entry.id} className="tool-list-row"><strong>{entry.name}</strong><span>{new Date(entry.timestamp).toLocaleTimeString()}</span></div>)}
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-function StealthModal({ state, onClose }: { state: GameState; onClose: () => void }) {
-  const characters = combatPlayers(state);
-  const [dc, setDc] = useState('15');
-  const [mode, setMode] = useState<DiceRollMode>('normal');
-  const [passWithoutTrace, setPassWithoutTrace] = useState(false);
-  const [values, setValues] = useState<Record<string, string>>({});
-  const dcNumber = Number(dc) || 0;
-
-  function bonus(character: Character) {
-    return skillBonus(character, 'stealth', adjustedAbilityScores(character).scores);
-  }
-
-  function finalValue(character: Character, value: string) {
-    return Number(value) + (passWithoutTrace ? 10 : 0);
-  }
-
-  function roll(character: Character) {
-    const total = rollD20(mode) + bonus(character);
-    setValues(current => ({ ...current, [character.id]: String(total) }));
-  }
-
-  const filled = characters.map(character => ({ character, value: finalValue(character, values[character.id] || '0'), filled: values[character.id] !== undefined && values[character.id] !== '' }));
-  const successes = filled.filter(item => item.filled && item.value >= dcNumber).length;
-  const failures = filled.filter(item => item.filled && item.value < dcNumber).length;
-
-  return (
-    <Modal>
-      <div className="modal-card tool-modal">
-        <div className="section-title-row">
-          <div><h2>Stealth Check</h2><p>Group stealth for active combat characters.</p></div>
-          <button className="btn" onClick={onClose}>Close</button>
-        </div>
-        <div className="party-check-controls expanded">
-          <input value={dc} onChange={event => setDc(event.target.value)} type="number" aria-label="Stealth DC" placeholder="DC" />
-          <select value={mode} onChange={event => setMode(event.target.value as DiceRollMode)} aria-label="Stealth roll mode">
-            <option value="normal">Normal</option>
-            <option value="advantage">Advantage</option>
-            <option value="disadvantage">Disadvantage</option>
-          </select>
-          <label className="inline-check"><input type="checkbox" checked={passWithoutTrace} onChange={event => setPassWithoutTrace(event.target.checked)} /> Pass without Trace +10</label>
-          <button className="btn success" onClick={() => characters.filter(character => !values[character.id]).forEach(roll)}>Roll Empty</button>
-        </div>
-        <div className="stealth-summary">Successes {successes} / Failures {failures}</div>
-        <div className="tool-list">
-          {characters.map(character => {
-            const value = values[character.id] || '';
-            const total = value !== '' ? finalValue(character, value) : null;
-            const passed = total !== null && total >= dcNumber;
-            return (
-              <div className={`tool-list-row ${value ? (passed ? 'passed' : 'failed') : ''}`} key={character.id}>
-                <strong>{character.name} <span>{signed(bonus(character))}{passWithoutTrace ? ' +10' : ''}</span></strong>
-                <input value={value} onChange={event => setValues(current => ({ ...current, [character.id]: event.target.value }))} type="number" aria-label={`${character.name} stealth`} />
-                <span>{total === null ? '-' : total}</span>
-                <button className="btn small" onClick={() => roll(character)}>Roll</button>
-              </div>
-            );
-          })}
         </div>
       </div>
     </Modal>
@@ -600,11 +633,4 @@ function describeDiceResult(result: DiceRollResult) {
     if (!term.dice) return `${term.sign < 0 ? '-' : '+'}${term.notation}: ${term.constant}`;
     return `${term.sign < 0 ? '-' : '+'}${term.notation}: ${term.dice.map(die => `${die.kept}${die.rolls.length > 1 ? ` (${die.rolls.join('/')})` : ''}${die.rerolledOnes.length ? ` rerolled to ${die.rerolledOnes.join('/')}` : ''}`).join(', ')}`;
   }).join(' | ').replace(/^\+/, '');
-}
-
-function rollD20(mode: DiceRollMode) {
-  const first = Math.floor(Math.random() * 20) + 1;
-  if (mode === 'normal') return first;
-  const second = Math.floor(Math.random() * 20) + 1;
-  return mode === 'advantage' ? Math.max(first, second) : Math.min(first, second);
 }

@@ -60,6 +60,42 @@ function monster(name = 'Orc') {
     };
 }
 
+describe('monster instance numbers', () => {
+    it('renumbers one monster and its second turn without changing resources or initiative', () => {
+        const state = createInitialState();
+        const dm = { id: 'dm', role: 'dm' };
+        applyGameAction(state, { type: 'character.add', payload: { ...monster('Orc 1'), id: 'orc1', monsterData: { name: 'Orc', hp: 50, ac: 15, initBonus: 2 }, hasMultipleTurns: true, initiative: 18 } }, dm);
+        const id = state.characters[0].id;
+        const ids = state.characters.map(item => item.id);
+        const resources = state.characters.map(item => ({ hp: item.currentHp, effects: item.effects, init: item.initiative }));
+        const action = { type: 'character.setMonsterNumber', payload: { characterId: `${id}_turn2`, value: 7 } };
+        expect(authorizeAction(state, action, { role: 'player' }).ok).toBe(false);
+        applyGameAction(state, action, dm);
+        expect(state.characters.map(item => item.name)).toEqual(['Orc 7', 'Orc 7 (Turn 2)']);
+        expect(state.characters.map(item => item.id)).toEqual(ids);
+        expect(state.characters.map(item => ({ hp: item.currentHp, effects: item.effects, init: item.initiative }))).toEqual(resources);
+        expect(migrateAutosave(JSON.parse(JSON.stringify(state))).characters.map(item => item.name)).toEqual(['Orc 7', 'Orc 7 (Turn 2)']);
+        undoPage(state, 'combat', dm);
+        expect(state.characters.map(item => item.name)).toEqual(['Orc 1', 'Orc 1 (Turn 2)']);
+        redoPage(state, 'combat', dm);
+        applyGameAction(state, { ...action, payload: { characterId: id, value: 0 } }, dm);
+        expect(state.characters.map(item => item.name)).toEqual(['Orc', 'Orc (Turn 2)']);
+        for (const value of [-1, 1.5, 'not a number']) expect(() => applyGameAction(state, { ...action, payload: { characterId: id, value } }, dm)).toThrow();
+    });
+
+    it('preserves numbers that belong to a database base name and rejects player targets', () => {
+        const state = createInitialState();
+        const dm = { id: 'dm', role: 'dm' };
+        applyGameAction(state, { type: 'character.add', payload: { ...monster('Unit 7'), monsterData: { name: 'Unit 7', hp: 50, ac: 15, initBonus: 2 } } }, dm);
+        const id = state.characters[0].id;
+        applyGameAction(state, { type: 'character.setMonsterNumber', payload: { characterId: id, value: 2 } }, dm);
+        expect(state.characters[0].name).toBe('Unit 7 2');
+        state.characters.push(player('Hero'));
+        expect(() => applyGameAction(state, { type: 'character.setMonsterNumber', payload: { characterId: 'hero', value: 2 } }, dm)).toThrow();
+        expect(state.characters[1].name).toBe('Hero');
+    });
+});
+
 describe('permissions', () => {
     it('blocks player combat flow actions', () => {
         const state = createInitialState();
@@ -137,6 +173,46 @@ describe('actions and history', () => {
         expect(state.characters[0].currentHp).toBe(25);
         redoPage(state, 'combat', { id: 'dm', role: 'dm' });
         expect(state.characters[0].currentHp).toBe(35);
+    });
+
+    it('applies temporary max HP effects to healing clamps without changing base max HP', () => {
+        const state = createInitialState();
+        state.characters.push(player());
+        state.characters[0].currentHp = 45;
+
+        applyGameAction(state, { type: 'effect.add', payload: { characterId: 'nif', name: 'Max HP Reduced', level: 20 } }, { id: 'dm', role: 'dm' });
+        expect(state.characters[0].maxHp).toBe(50);
+        expect(state.characters[0].currentHp).toBe(30);
+
+        applyGameAction(state, { type: 'character.adjustHp', payload: { characterId: 'nif', amount: 50 } }, { id: 'dm', role: 'dm' });
+        expect(state.characters[0].currentHp).toBe(30);
+
+        applyGameAction(state, { type: 'effect.level.set', payload: { characterId: 'nif', index: 0, level: 10, maxLevel: 500 } }, { id: 'dm', role: 'dm' });
+        applyGameAction(state, { type: 'character.adjustHp', payload: { characterId: 'nif', amount: 50 } }, { id: 'dm', role: 'dm' });
+        expect(state.characters[0].currentHp).toBe(40);
+
+        applyGameAction(state, { type: 'effect.add', payload: { characterId: 'nif', name: 'Max HP Increased', level: 15 } }, { id: 'dm', role: 'dm' });
+        applyGameAction(state, { type: 'character.adjustHp', payload: { characterId: 'nif', amount: 50 } }, { id: 'dm', role: 'dm' });
+        expect(state.characters[0].currentHp).toBe(55);
+    });
+
+    it('syncs custom feature usage to a named status condition', () => {
+        const state = createInitialState();
+        state.characters.push(player());
+        state.characters[0].customFeatures = [
+            { name: 'Innate Sorcery', maxUses: 2, used: 0, longRestRegainType: 'all', statusName: 'Innate Sorcery', statusEffect: true }
+        ];
+
+        applyGameAction(state, { type: 'spell.feature.uses', payload: { characterId: 'nif', index: 0, used: 1 } }, { id: 'dm', role: 'dm' });
+        expect(state.characters[0].effects).toEqual(expect.arrayContaining([
+            expect.objectContaining({ name: 'Innate Sorcery' })
+        ]));
+
+        applyGameAction(state, { type: 'spell.feature.uses', payload: { characterId: 'nif', index: 0, used: 2 } }, { id: 'dm', role: 'dm' });
+        expect(state.characters[0].effects.filter(effect => effect.name === 'Innate Sorcery')).toHaveLength(1);
+
+        applyGameAction(state, { type: 'spell.feature.uses', payload: { characterId: 'nif', index: 0, used: 0 } }, { id: 'dm', role: 'dm' });
+        expect(state.characters[0].effects.some(effect => effect.name === 'Innate Sorcery')).toBe(false);
     });
 
     it('undo on inventory ignores later combat actions', () => {
@@ -280,6 +356,52 @@ describe('actions and history', () => {
         expect(state.characters[0].activeInCombat).toBe(true);
         expect(state.magicItemDatabase).toHaveLength(1);
         expect(state.potionDatabase).toHaveLength(1);
+    });
+
+    it('updates monster database power tracking and defensive features', () => {
+        const state = createInitialState();
+        applyGameAction(state, {
+            type: 'database.monster.upsert',
+            payload: {
+                monster: {
+                    id: 'crusader',
+                    name: 'Crusader',
+                    hp: 50,
+                    ac: 20,
+                    defensiveFeatures: [{ name: 'Divine Protection', description: '**Divine Protection.** Old text' }],
+                    monsterAbilities: {
+                        enabled: true,
+                        power: { enabled: true, name: 'Divine Protection', max: 2, current: 2 }
+                    }
+                }
+            }
+        }, { id: 'dm', role: 'dm' });
+
+        applyGameAction(state, {
+            type: 'database.monster.upsert',
+            payload: {
+                monster: {
+                    id: 'crusader',
+                    name: 'Crusader',
+                    hp: 50,
+                    ac: 20,
+                    defensiveFeatures: [{ name: 'Magic Resistance', description: '**Magic Resistance.** New text' }],
+                    maxPower: 0,
+                    currentPower: 0,
+                    monsterAbilities: {
+                        enabled: true,
+                        power: { enabled: false, name: 'Divine Protection', max: 0, current: 0 }
+                    }
+                }
+            }
+        }, { id: 'dm', role: 'dm' });
+
+        expect(state.monsterDatabase).toHaveLength(1);
+        expect(state.monsterDatabase[0].monsterAbilities.power.enabled).toBe(false);
+        expect(state.monsterDatabase[0].maxPower).toBe(0);
+        expect(state.monsterDatabase[0].defensiveFeatures).toEqual([
+            expect.objectContaining({ name: 'Magic Resistance', description: '**Magic Resistance.** New text' })
+        ]);
     });
 
     it('permanently deletes saved players as an undoable database action', () => {

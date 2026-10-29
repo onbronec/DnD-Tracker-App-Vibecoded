@@ -23,8 +23,8 @@ export function parseMonsterMarkdown(text: string, spellDatabase?: any[]) {
   const legendaryActionEntries = parseSection(source, 'Legendary Actions');
   const mythicActions = parseSection(source, 'Mythic Actions');
   const lairActions = parseSection(source, 'Lair Actions');
-  const spellcastingBlock = [...features, ...actions].find(entry => /spellcasting/i.test(entry.description));
-  const spellcasting = parseSpellcasting(spellcastingBlock?.description || '', spellDatabase);
+  const spellcastingBlock = [...features, ...actions].find(entry => /^(?:innate\s+)?spellcasting\b/i.test(entry.name));
+  const spellcasting = parseMonsterSpellcasting(spellcastingBlock?.description || '', spellDatabase);
 
   const allFeatures = [
     ...defensiveFeatures,
@@ -36,12 +36,22 @@ export function parseMonsterMarkdown(text: string, spellDatabase?: any[]) {
     ...mythicActions,
     ...lairActions
   ];
+  const entityKind = /\*\*Entity Type:\*\*\s*non-?monster|\*\*Non-Monster:\*\*\s*(?:yes|true)/i.test(source) ? 'nonMonster' : 'monster';
+  const hasHpAc = entityKind === 'monster' || /\*\*Has HP\/AC:\*\*\s*(?:yes|true)/i.test(source);
+  const fixedInitiative = numberAfter(source, /\*\*Fixed Initiative:\*\*\s*(-?\d+)/i, 20);
 
   return {
     name,
     ac: numberAfter(source, /\*\*Armor Class:\*\*\s*(\d+)/i, 10),
     hp: numberAfter(source, /\*\*Hit Points:\*\*\s*(\d+)/i, 10),
     maxHp: numberAfter(source, /\*\*Hit Points:\*\*\s*(\d+)/i, 10),
+    encounterPoints: numberAfter(source, /\*\*Encounter Points:\*\*\s*(\d+(?:\.\d+)?)/i, 0.1),
+    dpr: numberAfter(source, /\*\*(?:Expected )?DPR:\*\*\s*(\d+(?:\.\d+)?)/i, 0),
+    entityKind,
+    hasHpAc,
+    fixedInitiative,
+    lairActionInitiative: numberAfter(source, /\*\*Lair Action Initiative:\*\*\s*(-?\d+)/i, 20),
+    mythicActionInitiative: numberAfter(source, /\*\*Mythic Action Initiative:\*\*\s*(-?\d+)/i, 20),
     speed: textAfter(source, /\*\*Speed:\*\*\s*([^\n]+)/i),
     stats,
     saves: textAfter(source, /\*\*Saving Throws:\*\*\s*([^\n]+)/i),
@@ -85,12 +95,20 @@ function parseSection(source: string, heading: string) {
   const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const match = source.match(new RegExp(`^#+\\s+${escaped}\\s*\\n([\\s\\S]*?)(?=^#+\\s+|^---\\s*$|(?![\\s\\S]))`, 'im'));
   if (!match) return [];
-  return match[1]
-    .split(/(?=^\*\*[^*\n]+?\.\*\*)/m)
+  return parseMonsterEntries(match[1]);
+}
+
+export function parseMonsterEntries(text: string) {
+  // Keep lists and continuation paragraphs with their named trait/action.
+  const hasNamedEntries = /^\*\*[^*\n]+?\.\*\*|^\*\*(?:Innate\s+)?Spellcasting\b[^*\n]*\*\*/im.test(text);
+  const blocks = hasNamedEntries ? text
+    .split(/(?=^\*\*[^*\n]+?\.\*\*|^\*\*(?:Innate\s+)?Spellcasting\b[^*\n]*\*\*)/im)
+    : text.split(/\r?\n\s*\r?\n/);
+  return blocks
     .map(block => block.trim())
     .filter(Boolean)
     .map(block => {
-      const titleMatch = block.match(/^\*\*([^*]+?)\.\*\*\s*([\s\S]*)$/);
+      const titleMatch = block.match(/^\*\*([^*]+?)\.?\*\*\s*([\s\S]*)$/);
       return {
         name: titleMatch?.[1]?.trim() || block.split('\n')[0].replace(/\*\*/g, '').trim(),
         description: block
@@ -99,7 +117,7 @@ function parseSection(source: string, heading: string) {
 }
 
 function extractSpellsFromLine(lineText: string, spellDatabase?: { name: string }[]): string[] {
-  let cleaned = lineText.replace(/\*+/g, '').trim();
+  let cleaned = lineText.replace(/\*+/g, '').trim().replace(/\.$/, '');
   if (!cleaned) return [];
 
   // If there are commas, use them as absolute separators
@@ -158,7 +176,7 @@ function extractSpellsFromLine(lineText: string, spellDatabase?: { name: string 
     .filter(Boolean);
 }
 
-function parseSpellcasting(text: string, spellDatabase?: any[]) {
+export function parseMonsterSpellcasting(text: string, spellDatabase?: any[]) {
   const spellSlots: Record<string, { max: number; used: number; atWill?: boolean; spells?: string[] }> = {};
   const perDaySpells: Array<{ name: string; maxUses: number; used: number }> = [];
   const atWillSpells: string[] = [];
@@ -177,17 +195,10 @@ function parseSpellcasting(text: string, spellDatabase?: any[]) {
     };
   }
 
-  // Determine spellcasting type
-  const hasSlots = /(\d+)(?:st|nd|rd|th)\s+level\s*\([^)]+\)|\bEpic\s+Tier\b/i.test(textTrimmed);
   const isCasterLevel = /(\d+)(?:st|nd|rd|th)[-\s]+level spellcaster/i.test(textTrimmed);
-  let spellcastingType = 'none';
-  if (hasSlots) {
-    spellcastingType = isCasterLevel ? 'caster-level' : 'custom-slots';
-  } else if (/at\s+will|(\d+)\/day/i.test(textTrimmed)) {
-    spellcastingType = 'per-day';
-  }
-
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const lines = text.split('\n')
+    .map(line => line.trim().replace(/^[-+*]\s+/, '').replace(/\*\*/g, ''))
+    .filter(Boolean);
   lines.forEach(line => {
     // 1. Counterspells line, e.g. "Counterspells: The Classic The Feint"
     const counterspellMatch = line.match(/^Counterspells\s*:?\s*(.+)$/i);
@@ -276,8 +287,13 @@ function parseSpellcasting(text: string, spellDatabase?: any[]) {
     }
   });
 
+  // Infer the mode from parsed resources; an inline Epic Tier annotation is not a slot pool.
+  const spellcastingType = Object.keys(spellSlots).length > 0
+    ? (isCasterLevel ? 'caster-level' : 'custom-slots')
+    : (atWillSpells.length > 0 || perDaySpells.length > 0 || counterspells.length > 0 ? 'per-day' : 'none');
+
   return {
-    enabled: true,
+    enabled: spellcastingType !== 'none',
     spellcastingType,
     spellcastingLevel: numberAfter(text, /(\d+)(?:st|nd|rd|th)[-\s]+level spellcaster/i, 0),
     spellSlots,
@@ -394,7 +410,7 @@ function findSpellInString(str: string, spellDatabase?: { name: string }[]): str
     }
   }
   // Fallback: strip parentheses and their content, and return the remainder
-  return cleaned.replace(/\([^)]+\)/g, '').trim();
+  return cleaned.replace(/\([^)]+\)/g, '').trim().replace(/\.$/, '').trim();
 }
 
 function isCounterspell(name: string, spellDatabase?: { name: string; source?: string }[]): boolean {

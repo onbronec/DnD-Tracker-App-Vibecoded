@@ -58,7 +58,7 @@ async function startHarness() {
 function connect(url, auth) {
     const socket = Client(url, { reconnection: false });
     return new Promise(resolve => {
-        socket.on('state:init', () => {
+        socket.once('state:init', () => {
             socket.emit('auth:register', auth);
         });
         socket.on('auth:registered', payload => resolve({ socket, payload }));
@@ -106,6 +106,31 @@ describe('socket roles and actions', () => {
         expect(historyResult.actionLog[0].after).toBeUndefined();
 
         dm.socket.disconnect();
+        harness.io.close();
+        await new Promise(resolve => harness.httpServer.close(resolve));
+    });
+
+    it('sends only changed fields and shares reaction state without granting monster control', async () => {
+        const harness = await startHarness();
+        harness.stateRef.current.spellDatabase = [{ id: 'spell', name: 'Secret fixture' }];
+        harness.stateRef.current.characters.push({ ...player(), id: 'orc', name: 'Orc', type: 'monster', revealedToPlayers: true, maxReactions: 3, currentReactions: 2 });
+        const dm = await connect(harness.url, { mode: 'dm', token: 'secret' });
+        const playerClient = await connect(harness.url, { mode: 'player' });
+        const patch = new Promise(resolve => playerClient.socket.once('state:patch', resolve));
+        const result = await new Promise(resolve => dm.socket.emit('action:submit', { type: 'character.reaction.set', payload: { characterId: 'orc', value: 1 } }, resolve));
+        expect(result.ok).toBe(true);
+        const payload = await patch;
+        expect(payload.state.characters.find(item => item.id === 'orc').currentReactions).toBe(1);
+        expect(payload.state.spellDatabase).toBeUndefined();
+        expect(payload.state.conditionDatabase).toBeUndefined();
+        expect(payload.entry.before).toBeUndefined();
+        const rejected = await new Promise(resolve => playerClient.socket.emit('action:submit', { type: 'character.reaction.set', payload: { characterId: 'orc', value: 2 } }, resolve));
+        expect(rejected.ok).toBe(false);
+        const cleared = await new Promise(resolve => dm.socket.emit('action:submit', { type: 'history.clear' }, resolve));
+        expect(cleared.ok).toBe(true);
+        expect(harness.stateRef.current.actionLog).toEqual([]);
+        dm.socket.disconnect();
+        playerClient.socket.disconnect();
         harness.io.close();
         await new Promise(resolve => harness.httpServer.close(resolve));
     });

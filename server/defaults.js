@@ -1,6 +1,7 @@
 const { DEFAULT_CONDITIONS } = require('./conditionPresets');
+const { ENCOUNTER_DIFFICULTY } = require('./encounterSettings');
 
-const PAGE_SCOPES = ['combat', 'spells', 'monsters', 'inventory', 'databases', 'toolbelt'];
+const PAGE_SCOPES = ['combat', 'spells', 'monsters', 'inventory', 'databases', 'encounters', 'toolbelt'];
 
 function createEmptyInventory() {
     return {
@@ -24,6 +25,10 @@ function createInitialState() {
             playedThisRound: []
         },
         monsterDatabase: [],
+        encounters: [],
+        encounterGroups: [],
+        activeEncounterId: null,
+        encounterDifficulty: { ...ENCOUNTER_DIFFICULTY },
         magicItemDatabase: [],
         potionDatabase: [],
         conditionDatabase: DEFAULT_CONDITIONS.map((condition, index) => ({
@@ -34,6 +39,7 @@ function createInitialState() {
         spellDatabase: [],
         itemDatabase: [],
         toolbelt: {
+            partyChecks: {},
             diceRolls: {},
             improvNames: [],
             calendar: {

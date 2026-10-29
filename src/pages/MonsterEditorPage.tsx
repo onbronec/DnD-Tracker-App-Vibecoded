@@ -1,8 +1,9 @@
+import { NumberInput } from '../components/NumberInput';
 import { useState, useEffect, useMemo } from 'react';
 import type { GameState, GameAction, AbilityKey, CustomFeature, MonsterDatabaseEntry } from '../shared/types';
 import { MarkdownEditor } from '../components/Markdown';
 import { Modal } from '../components/Modal';
-import { parseMonsterMarkdown } from '../shared/monsterParser';
+import { parseMonsterEntries as parseEntriesText, parseMonsterMarkdown, parseMonsterSpellcasting } from '../shared/monsterParser';
 import { SPELL_SLOTS_TABLE } from '../shared/defaults';
 import { MonsterDetail, monsterDatabaseEntryToPreviewCharacter } from './MonstersPage';
 
@@ -122,6 +123,13 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
   // Form states
   const [name, setName] = useState('');
   const [hp, setHp] = useState(10);
+  const [encounterPoints, setEncounterPoints] = useState(0.1);
+  const [dpr, setDpr] = useState(0);
+  const [entityKind, setEntityKind] = useState<'monster' | 'nonMonster'>('monster');
+  const [hasHpAc, setHasHpAc] = useState(false);
+  const [fixedInitiative, setFixedInitiative] = useState(20);
+  const [lairActionInitiative, setLairActionInitiative] = useState(20);
+  const [mythicActionInitiative, setMythicActionInitiative] = useState(20);
   const [ac, setAc] = useState(10);
   const [maxReactions, setMaxReactions] = useState(1);
   const [speed, setSpeed] = useState('');
@@ -197,6 +205,7 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
   const [atWillSpells, setAtWillSpells] = useState<string[]>([]);
   const [counterspells, setCounterspells] = useState<string[]>([]);
   const [perDaySpells, setPerDaySpells] = useState<Array<{ name: string; maxUses: number; used: number }>>([]);
+  const [spellcastingImportMessage, setSpellcastingImportMessage] = useState('');
 
   // Tracked features config state
   const [customFeatures, setCustomFeatures] = useState<CustomFeature[]>([]);
@@ -216,6 +225,13 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
       if (monster) {
         setName(monster.name || '');
         setHp(monster.hp || monster.maxHp || 10);
+        setEncounterPoints(monster.encounterPoints || 0.1);
+        setDpr(monster.dpr || 0);
+        setEntityKind(monster.entityKind || 'monster');
+        setHasHpAc(Boolean(monster.hasHpAc));
+        setFixedInitiative(monster.fixedInitiative ?? 20);
+        setLairActionInitiative(monster.lairActionInitiative ?? 20);
+        setMythicActionInitiative(monster.mythicActionInitiative ?? 20);
         setAc(monster.ac || 10);
         setMaxReactions(monster.maxReactions || 1);
         setSpeed(monster.speed || '');
@@ -260,10 +276,10 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
         // Load monster abilities
         const ma = monster.monsterAbilities;
         if (ma) {
-          setPowerEnabled(Boolean(ma.power?.enabled || monster.maxPower));
+          setPowerEnabled(ma.power ? Boolean(ma.power.enabled) : Boolean(monster.maxPower));
           setPowerName(ma.power?.name || monster.powerName || 'Power');
-          setMaxPower(ma.power?.max || monster.maxPower || 0);
-          setCurrentPower(ma.power?.current || 0);
+          setMaxPower(Number(ma.power?.max ?? monster.maxPower ?? 0) || 0);
+          setCurrentPower(Number(ma.power?.current ?? 0) || 0);
 
           setLegendaryEnabled(Boolean(ma.legendaryActions?.enabled || monster.legendaryActionEntries?.length));
           setLegendaryMax(ma.legendaryActions?.max || 3);
@@ -300,6 +316,11 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
       // Reset all fields for new monster
       setHasMultipleTurns(false);
       setGroup('');
+      setEntityKind('monster');
+      setHasHpAc(false);
+      setFixedInitiative(20);
+      setLairActionInitiative(20);
+      setMythicActionInitiative(20);
     }
   }, [editingMonsterId, state.monsterDatabase]);
 
@@ -359,12 +380,47 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
   }
 
   // Parse Markdown statblock
+  function applySpellcasting(sc: ReturnType<typeof parseMonsterSpellcasting>) {
+    setSpellcastingType(sc.spellcastingType as typeof spellcastingType);
+    setSpellcastingLevel(sc.spellcastingLevel || 1);
+    setSpellSlots(sc.spellSlots);
+    setAtWillSpells(sc.atWillSpells);
+    setCounterspells(sc.counterspells);
+    setPerDaySpells(sc.perDaySpells);
+    setSpellcastingImportMessage(sc.enabled
+      ? `Imported ${sc.atWillSpells.length} at-will spells, ${sc.perDaySpells.length} per-day spells, ${Object.keys(sc.spellSlots).length} slot levels and ${sc.counterspells.length} counterspells. Review before saving.`
+      : 'No spell lists found. Use At Will:, 3/Day Each:, or 1st level (4 slots): followed by spell names.');
+  }
+
+  function importSpellcastingFromText() {
+    const sources = [
+      [features, actions, bonusActions, reactions].join('\n\n'),
+      statblockPaste,
+      description
+    ];
+    for (const source of sources) {
+      const parsed = parseMonsterSpellcasting(source, spellDatabase);
+      if (parsed.enabled) {
+        applySpellcasting(parsed);
+        return;
+      }
+    }
+    setSpellcastingImportMessage('No spell lists found. Existing spellcasting settings were kept. Use At Will:, 3/Day Each:, or 1st level (4 slots): followed by spell names.');
+  }
+
   function handleParse() {
     if (!statblockPaste.trim()) return;
     try {
       const parsed = parseMonsterMarkdown(statblockPaste, spellDatabase);
       setName(parsed.name);
       setHp(parsed.hp);
+      setEncounterPoints(parsed.encounterPoints || 0.1);
+      setDpr(parsed.dpr || 0);
+      setEntityKind(parsed.entityKind || 'monster');
+      setHasHpAc(Boolean(parsed.hasHpAc));
+      setFixedInitiative(parsed.fixedInitiative ?? 20);
+      setLairActionInitiative(parsed.lairActionInitiative ?? 20);
+      setMythicActionInitiative(parsed.mythicActionInitiative ?? 20);
       setAc(parsed.ac);
       setSpeed(parsed.speed);
       if (parsed.stats) setStats(parsed.stats);
@@ -406,12 +462,7 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
 
         const sc = ma.spellcasting;
         if (sc) {
-          setSpellcastingType((sc.spellcastingType as any) || (sc.enabled ? 'caster-level' : 'none'));
-          setSpellcastingLevel(sc.spellcastingLevel || 1);
-          setSpellSlots(sc.spellSlots || {});
-          setAtWillSpells(sc.atWillSpells || []);
-          setCounterspells(sc.counterspells || []);
-          setPerDaySpells(sc.perDaySpells || []);
+          applySpellcasting(sc);
         }
 
         setCustomFeatures(ma.customFeatures || []);
@@ -475,11 +526,21 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
       });
     }
 
+    const finalMaxPower = powerEnabled ? maxPower : 0;
+    const finalCurrentPower = powerEnabled ? Math.min(currentPower, finalMaxPower) : 0;
+
     const payload = {
       id: editingMonsterId || undefined,
       name: name.trim(),
       hp,
       maxHp: hp,
+      encounterPoints: Math.max(0.1, Math.min(20, encounterPoints || 0.1)),
+      dpr: Math.max(0, dpr || 0),
+      entityKind,
+      hasHpAc: entityKind === 'monster' || hasHpAc,
+      fixedInitiative: entityKind === 'nonMonster' ? fixedInitiative : undefined,
+      lairActionInitiative,
+      mythicActionInitiative,
       ac,
       maxReactions,
       speed,
@@ -510,13 +571,16 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
       damageVulnerabilities,
       hasMultipleTurns,
       group: group.trim(),
+      maxPower: finalMaxPower,
+      currentPower: finalCurrentPower,
+      powerName: powerName || 'Power',
       monsterAbilities: {
         enabled: true,
         power: {
-          enabled: powerEnabled || maxPower > 0,
+          enabled: powerEnabled,
           name: powerName || 'Power',
-          max: maxPower,
-          current: currentPower
+          max: finalMaxPower,
+          current: finalCurrentPower
         },
         spellcasting: {
           enabled: spellcastingType !== 'none',
@@ -588,11 +652,21 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
       });
     }
 
+    const finalMaxPower = powerEnabled ? maxPower : 0;
+    const finalCurrentPower = powerEnabled ? Math.min(currentPower, finalMaxPower) : 0;
+
     return {
       id: editingMonsterId || 'editor-preview',
       name: name.trim() || 'Unsaved Monster',
       hp,
       maxHp: hp,
+      encounterPoints: Math.max(0.1, Math.min(20, encounterPoints || 0.1)),
+      dpr: Math.max(0, dpr || 0),
+      entityKind,
+      hasHpAc: entityKind === 'monster' || hasHpAc,
+      fixedInitiative: entityKind === 'nonMonster' ? fixedInitiative : undefined,
+      lairActionInitiative,
+      mythicActionInitiative,
       ac,
       maxReactions,
       speed,
@@ -623,15 +697,16 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
       damageVulnerabilities,
       hasMultipleTurns,
       group: group.trim(),
-      maxPower,
-      powerName,
+      maxPower: finalMaxPower,
+      currentPower: finalCurrentPower,
+      powerName: powerName || 'Power',
       monsterAbilities: {
         enabled: true,
         power: {
-          enabled: powerEnabled || maxPower > 0,
+          enabled: powerEnabled,
           name: powerName || 'Power',
-          max: maxPower,
-          current: currentPower
+          max: finalMaxPower,
+          current: finalCurrentPower
         },
         spellcasting: {
           enabled: spellcastingType !== 'none',
@@ -745,6 +820,7 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
             <button className="btn success" onClick={handleParse}>Parse Statblock</button>
           </div>
         )}
+        {spellcastingImportMessage && <p role="status">{spellcastingImportMessage}</p>}
       </section>
 
       {/* Main Grid */}
@@ -762,16 +838,35 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
                 <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Ancient Red Dragon" title="Monster name" />
               </div>
               <div>
+                <label>Entry type:</label>
+                <select value={entityKind} onChange={e => setEntityKind(e.target.value as 'monster' | 'nonMonster')}>
+                  <option value="monster">Monster</option>
+                  <option value="nonMonster">Non-monster object</option>
+                </select>
+              </div>
+              {(entityKind === 'monster' || hasHpAc) && <div>
                 <label>AC (Armor Class):</label>
-                <input type="number" value={ac} onChange={e => setAc(Number(e.target.value) || 10)} title="Armor class" />
+                <NumberInput type="number" value={ac} onChange={e => setAc(Number(e.target.value))} title="Armor class" />
+              </div>}
+              {(entityKind === 'monster' || hasHpAc) && <div>
+                <label>HP (Hit Points):</label>
+                <NumberInput type="number" value={hp} onChange={e => setHp(Number(e.target.value))} title="Maximum HP" />
+              </div>}
+              {entityKind === 'nonMonster' && <>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><input type="checkbox" checked={hasHpAc} onChange={e => setHasHpAc(e.target.checked)} /> Destructible: track HP and AC</label>
+                <div><label>Fixed Initiative:</label><NumberInput type="number" value={fixedInitiative} onChange={e => setFixedInitiative(Number(e.target.value))} title="This object never rolls initiative" /></div>
+              </>}
+              <div>
+                <label>Encounter points (0.1–20):</label>
+                <NumberInput type="number" min="0.1" max="20" step="0.1" value={encounterPoints} onChange={e => setEncounterPoints(Number(e.target.value))} title="Difficulty points for encounter planning" />
               </div>
               <div>
-                <label>HP (Hit Points):</label>
-                <input type="number" value={hp} onChange={e => setHp(Number(e.target.value) || 10)} title="Maximum HP" />
+                <label>Expected DPR:</label>
+                <NumberInput type="number" min="0" value={dpr} onChange={e => setDpr(Number(e.target.value) || 0)} title="Expected damage per round for encounter planning" />
               </div>
               <div>
                 <label>Max Reactions per Turn:</label>
-                <input type="number" value={maxReactions} onChange={e => setMaxReactions(Number(e.target.value) || 1)} title="Max reactions" />
+                <NumberInput type="number" value={maxReactions} onChange={e => setMaxReactions(Number(e.target.value))} title="Max reactions" />
               </div>
               <div>
                 <label>Speed:</label>
@@ -785,10 +880,10 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
                 <label>Proficiency Bonus:</label>
                 <input type="text" value={proficiency} onChange={e => setProficiency(e.target.value)} placeholder="e.g. +6" title="Proficiency bonus" />
               </div>
-              <div>
+              {entityKind === 'monster' && <div>
                 <label>Initiative Modifier:</label>
-                <input type="number" value={initBonus} onChange={e => setInitBonus(Number(e.target.value) || 0)} title="Initiative modifier" />
-              </div>
+                <NumberInput type="number" value={initBonus} onChange={e => setInitBonus(Number(e.target.value) || 0)} title="Initiative modifier" />
+              </div>}
               <div>
                 <label>Monster Type:</label>
                 <input type="text" value={monsterType} onChange={e => setMonsterType(e.target.value)} placeholder="e.g. dragon, fiend" title="Monster subtype/type" />
@@ -818,6 +913,7 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
             </div>
           </fieldset>
 
+          {entityKind === 'monster' && <>
           {/* Ability Scores */}
           <fieldset style={{ background: '#1e1e24', border: '1px solid #2a2a35', borderRadius: '6px', padding: '20px' }}>
             <legend style={{ padding: '0 10px', color: '#60a5fa', fontWeight: 'bold' }}>Ability Scores</legend>
@@ -825,11 +921,11 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
               {ABILITY_KEYS.map(key => (
                 <div key={key} style={{ textAlign: 'center' }}>
                   <label style={{ textTransform: 'capitalize', fontSize: '0.85em' }}>{key.substring(0, 3)}</label>
-                  <input
+                  <NumberInput
                     type="number"
                     style={{ textAlign: 'center' }}
                     value={stats[key]}
-                    onChange={e => setStats(prev => ({ ...prev, [key]: Number(e.target.value) || 10 }))}
+                    onChange={e => setStats(prev => ({ ...prev, [key]: Number(e.target.value) }))}
                     title={`${key} score`}
                   />
                   <div style={{ fontSize: '0.8em', color: '#888', marginTop: '4px' }}>
@@ -897,6 +993,8 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
               />
             </div>
           </fieldset>
+
+          </>}
 
           {/* Description */}
           <fieldset style={{ background: '#1e1e24', border: '1px solid #2a2a35', borderRadius: '6px', padding: '20px' }}>
@@ -1003,6 +1101,7 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
               {hasLairActions && (
                 <div>
                   <label style={{ display: 'block', marginBottom: '6px', fontWeight: 'bold' }}>Lair Actions:</label>
+                  <label>Associated object initiative:<NumberInput type="number" value={lairActionInitiative} onChange={e => setLairActionInitiative(Number(e.target.value))} style={{ marginLeft: '8px', width: '80px' }} /></label>
                   <MarkdownEditor
                     value={lairActions}
                     onChange={setLairActions}
@@ -1015,6 +1114,7 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
               {hasMythicActions && (
                 <div>
                   <label style={{ display: 'block', marginBottom: '6px', fontWeight: 'bold' }}>Mythic Actions:</label>
+                  <label>Associated object initiative:<NumberInput type="number" value={mythicActionInitiative} onChange={e => setMythicActionInitiative(Number(e.target.value))} style={{ marginLeft: '8px', width: '80px' }} /></label>
                   <MarkdownEditor
                     value={mythicActions}
                     onChange={setMythicActions}
@@ -1030,6 +1130,10 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
           {/* Panel 2: Spellcasting Config */}
           {openPanel === 'spellcasting' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', background: '#1e1e24', padding: '20px', borderRadius: '6px', border: '1px solid #2a2a35' }}>
+              <div>
+                <button type="button" className="btn purple" onClick={importSpellcastingFromText}>Import spellcasting from text</button>
+                <p>Read spell lists from Traits &amp; Actions, or the pasted statblock. Review the extracted spells before saving.</p>
+              </div>
               <div>
                 <label>Spellcasting Configuration Type:</label>
                 <select
@@ -1112,12 +1216,12 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
                   <div>
                     <label>Caster Level (1-20):</label>
-                    <input
+                    <NumberInput
                       type="number"
                       min={1}
                       max={20}
                       value={spellcastingLevel}
-                      onChange={e => setSpellcastingLevel(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
+                      onChange={e => setSpellcastingLevel(Math.max(1, Math.min(20, Number(e.target.value))))}
                       title="Caster level score"
                     />
                   </div>
@@ -1207,7 +1311,7 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
                           placeholder="Name (e.g. 1st level)"
                           title="Slot name"
                         />
-                        <input
+                        <NumberInput
                           type="number"
                           value={curr.max}
                           onChange={e => {
@@ -1306,11 +1410,11 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
                           }}
                           placeholder={pd.name || 'Select spell...'}
                         />
-                        <input
+                        <NumberInput
                           type="number"
                           value={pd.maxUses}
                           onChange={e => {
-                            const val = Number(e.target.value) || 1;
+                            const val = Number(e.target.value);
                             setPerDaySpells(prev => {
                               const copy = [...prev];
                               copy[index] = { ...copy[index], maxUses: val };
@@ -1362,11 +1466,11 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
                     </div>
                     <div>
                       <label>Max Points:</label>
-                      <input type="number" value={maxPower} onChange={e => setMaxPower(Number(e.target.value) || 0)} min={0} title="Max points" />
+                      <NumberInput type="number" value={maxPower} onChange={e => setMaxPower(Number(e.target.value) || 0)} min={0} title="Max points" />
                     </div>
                     <div>
                       <label>Initial Current:</label>
-                      <input type="number" value={currentPower} onChange={e => setCurrentPower(Number(e.target.value) || 0)} min={0} title="Current points" />
+                      <NumberInput type="number" value={currentPower} onChange={e => setCurrentPower(Number(e.target.value) || 0)} min={0} title="Current points" />
                     </div>
                   </div>
                 )}
@@ -1382,7 +1486,7 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                     <div>
                       <label style={{ display: 'block', marginBottom: '6px' }}>Max Actions per Round:</label>
-                      <input type="number" value={legendaryMax} onChange={e => setLegendaryMax(Number(e.target.value) || 3)} min={1} title="Max actions" />
+                      <NumberInput type="number" value={legendaryMax} onChange={e => setLegendaryMax(Number(e.target.value))} min={1} title="Max actions" />
                     </div>
                     <div>
                       <label style={{ display: 'block', marginBottom: '6px', fontWeight: 'bold' }}>Legendary Actions Description:</label>
@@ -1496,11 +1600,11 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
                           {(feat.trackerType === 'day' || feat.trackerType === 'rest' || feat.trackerType === 'round') && (
                             <div>
                               <label>Max Uses:</label>
-                              <input
+                              <NumberInput
                                 type="number"
                                 min={1}
                                 value={feat.maxUses}
-                                onChange={e => updateCustomFeature(feat.name, { maxUses: Number(e.target.value) || 1 })}
+                                onChange={e => updateCustomFeature(feat.name, { maxUses: Number(e.target.value) })}
                                 title="Max uses limit"
                               />
                             </div>
@@ -1525,11 +1629,11 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
                           {feat.trackerType === 'power' && (
                             <div>
                               <label>Power Cost Amount:</label>
-                              <input
+                              <NumberInput
                                 type="number"
                                 min={1}
                                 value={feat.costAmount}
-                                onChange={e => updateCustomFeature(feat.name, { costAmount: Number(e.target.value) || 1 })}
+                                onChange={e => updateCustomFeature(feat.name, { costAmount: Number(e.target.value) })}
                                 title="Resource cost amount"
                               />
                             </div>
@@ -1551,11 +1655,11 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
                               </div>
                               <div>
                                 <label>Slots Cost Amount:</label>
-                                <input
+                                <NumberInput
                                   type="number"
                                   min={1}
                                   value={feat.costAmount}
-                                  onChange={e => updateCustomFeature(feat.name, { costAmount: Number(e.target.value) || 1 })}
+                                  onChange={e => updateCustomFeature(feat.name, { costAmount: Number(e.target.value) })}
                                   title="Slots quantity cost"
                                 />
                               </div>
@@ -1617,18 +1721,6 @@ function entriesToText(value: unknown) {
     })
     .filter(Boolean)
     .join('\n\n');
-}
-
-function parseEntriesText(value: string) {
-  return value
-    .split(/\n{2,}/)
-    .map(block => block.trim())
-    .filter(Boolean)
-    .map(block => {
-      const titleMatch = block.match(/^\*\*([^*]+?)\.?\*\*/);
-      const name = titleMatch?.[1]?.trim() || block.split('\n')[0].replace(/^#+\s*/, '').replace(/\*\*/g, '').trim();
-      return { name: name || 'Entry', description: block };
-    });
 }
 
 function epicActionsToText(value: unknown) {
@@ -1801,10 +1893,10 @@ function EpicActionModal({ isOpen, onClose, epicActionsText, onSave }: EpicActio
                       style={{ background: '#1e1e24', border: '1px solid #2a2a35', color: '#e2e8f0', padding: '6px', width: '100%' }}
                       title="Epic action name"
                     />
-                    <input
+                    <NumberInput
                       type="number"
                       value={act.maxUses}
-                      onChange={e => handleUpdateRow(index, { maxUses: Math.max(1, Number(e.target.value) || 1) })}
+                      onChange={e => handleUpdateRow(index, { maxUses: Math.max(1, Number(e.target.value)) })}
                       min={1}
                       style={{ background: '#1e1e24', border: '1px solid #2a2a35', color: '#e2e8f0', padding: '6px', width: '100%' }}
                       title="Epic action max uses"

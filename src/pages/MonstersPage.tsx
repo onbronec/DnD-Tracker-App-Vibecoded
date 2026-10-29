@@ -1,8 +1,13 @@
 import { ReactNode, useEffect, useMemo, useState } from 'react';
 import type { AbilityKey, Character, GameAction, GameState, MonsterAbilities, MonsterDatabaseEntry, MonsterTextEntry, SpellDatabaseEntry } from '../shared/types';
 import { CollapsiblePanel } from '../components/CollapsiblePanel';
+import { NumberInput } from '../components/NumberInput';
 import { MarkdownRenderer, DatabaseReferenceModal } from '../components/Markdown';
 import { useDatabaseReferences, DatabaseReference } from '../components/DatabaseReferences';
+import { EffectModal, effectRequiresManagement } from './CombatPage';
+import { effectToString, hpClass } from '../shared/defaults';
+import { armorClass, effectiveMaxHp } from '../shared/characterSheet';
+import { ReactionUsage } from '../components/ReactionUsage';
 
 interface Props {
   state: GameState;
@@ -16,6 +21,7 @@ export function MonstersPage({ state, submitAction, selectedCharacterId, onSelec
   const monsters = state.characters.filter(character => character.type === 'monster');
   const [selectedId, setSelectedId] = useState(selectedCharacterId || monsters[0]?.id || '');
   const [activeSection, setActiveSection] = useState('monster-overview');
+  const [conditionsOpen, setConditionsOpen] = useState(false);
   const selected = useMemo(
     () => monsters.find(character => String(character.id) === String(selectedId)) || monsters[0],
     [monsters, selectedId]
@@ -58,7 +64,8 @@ export function MonstersPage({ state, submitAction, selectedCharacterId, onSelec
   }, [selected?.id]);
 
   function scrollToSection(id: string) {
-    document.querySelector(`[data-monster-section="${id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const section = document.querySelector(`[data-monster-section="${id}"]`);
+    if (section) window.scrollBy({ top: section.getBoundingClientRect().top - (document.getElementById('monster-header')?.getBoundingClientRect().height || 0) - 12, behavior: 'auto' });
   }
 
   function selectCharacter(characterId: string) {
@@ -104,6 +111,7 @@ export function MonstersPage({ state, submitAction, selectedCharacterId, onSelec
     <div className="sheet-page-layout">
       <aside className="sheet-index" aria-label="Monster ability sections">
         <h3>Index</h3>
+        <select className="sheet-mobile-index" aria-label="Go to monster section" value={activeSection} onChange={event => scrollToSection(event.target.value)}>{indexLinks.map(link => <option key={link.id} value={link.id}>{link.label}</option>)}</select>
         {indexLinks.map(link => (
           <button
             key={link.id}
@@ -115,14 +123,14 @@ export function MonstersPage({ state, submitAction, selectedCharacterId, onSelec
         ))}
       </aside>
       <div className="stack sheet-main">
-        <section className="section page-sticky-section">
+        <section id="monster-header" className="section page-sticky-section sheet-header">
           <div className="section-title-row">
             <div>
               <h2>Monster Abilities</h2>
               <p>DM-only resource and ability tracking.</p>
             </div>
             <div className="button-row">
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-end' }}>
+              <div className="monster-selection">
                 <select value={String(selected.id)} onChange={event => selectCharacter(event.target.value)}>
                   {monsters.map(monster => {
                     const mData = (monster.monsterData || {}) as Record<string, unknown>;
@@ -143,9 +151,25 @@ export function MonstersPage({ state, submitAction, selectedCharacterId, onSelec
               <button className="btn" onClick={onBackToCombat}>Back to Combat</button>
             </div>
           </div>
+          <div className="monster-vitals" aria-label={`${selected.name} combat status`}>
+            {(!selected.isNonMonster || selected.hasHpAc) && <div className="monster-live-hp"><strong>HP {selected.currentHp}/{effectiveMaxHp(selected)}</strong>{selected.tempHp > 0 && <small>Temp {selected.tempHp}</small>}<div className="hp-bar"><div className={`hp-fill ${hpClass(selected.currentHp, effectiveMaxHp(selected))}`} style={{ width: `${Math.max(0, Math.min(100, selected.currentHp / effectiveMaxHp(selected) * 100))}%` }} /></div></div>}
+            <ReactionUsage character={selected} />
+            <div className="effect-row">
+              {selected.effects.map((effect, index) => {
+                const name = typeof effect === 'string' ? effect : effect.name;
+                const condition = state.conditionDatabase.find(item => String(item.name).toLowerCase() === name.toLowerCase());
+                return <button key={`${name}-${index}`} className={`effect-tag effect-${condition?.kind || 'neutral'}`} title={String(condition?.description || condition?.effect || name)} onClick={() => {
+                  if (effectRequiresManagement(effect, condition)) setConditionsOpen(true);
+                  else submitAction({ type: 'effect.remove', payload: { characterId: selected.id, index } });
+                }}>{effectToString(effect)}{typeof effect !== 'string' && effect.remainingRounds && <span className="effect-duration">{effect.remainingRounds}</span>}</button>;
+              })}
+            </div>
+            <button className="btn purple small" onClick={() => setConditionsOpen(true)}>Conditions</button>
+          </div>
         </section>
         <MonsterDetail monster={selected} submitAction={submitAction} spellDatabase={state.spellDatabase} />
       </div>
+      {conditionsOpen && <EffectModal character={selected} canEdit conditions={state.conditionDatabase} submitAction={submitAction} onClose={() => setConditionsOpen(false)} />}
     </div>
   );
 }
@@ -155,16 +179,17 @@ export function monsterDatabaseEntryToPreviewCharacter(monster: MonsterDatabaseE
   const maxPower = Number(power?.max ?? monster.maxPower ?? 0) || 0;
   const currentPower = Number(power?.current ?? maxPower) || 0;
   const hp = Number(monster.hp || monster.maxHp || 1) || 1;
+  const isNonMonster = monster.entityKind === 'nonMonster';
   return {
     id: `monster-preview-${monster.id || monster.name}`,
     name: monster.name || 'Monster',
     type: 'monster',
-    maxHp: hp,
-    currentHp: hp,
+    maxHp: isNonMonster && !monster.hasHpAc ? 0 : hp,
+    currentHp: isNonMonster && !monster.hasHpAc ? 0 : hp,
     tempHp: 0,
-    ac: Number(monster.ac || 10) || 10,
+    ac: isNonMonster && !monster.hasHpAc ? 0 : (Number(monster.ac || 10) || 10),
     initBonus: Number(monster.initBonus || 0) || 0,
-    initiative: null,
+    initiative: isNonMonster ? Number(monster.fixedInitiative || 20) : null,
     maxReactions: Number(monster.maxReactions || 1) || 0,
     currentReactions: Number(monster.maxReactions || 1) || 0,
     maxPower,
@@ -209,6 +234,9 @@ export function monsterDatabaseEntryToPreviewCharacter(monster: MonsterDatabaseE
       preparedEpicMax: 0
     },
     hasMultipleTurns: monster.hasMultipleTurns,
+    isNonMonster,
+    hasHpAc: !isNonMonster || Boolean(monster.hasHpAc),
+    fixedInitiative: isNonMonster ? Number(monster.fixedInitiative || 20) : undefined,
     group: monster.group
   };
 }
@@ -242,6 +270,8 @@ export function MonsterDetail({
     return s?.isCounterspell || s?.source?.toLowerCase() === 'counterspell' || name.toLowerCase().includes('counterspell');
   };
   const stats = (monsterData.stats || {}) as Partial<Record<AbilityKey, number>>;
+  const isNonMonster = Boolean(monster.isNonMonster || monsterData.entityKind === 'nonMonster');
+  const hasHpAc = !isNonMonster || Boolean(monster.hasHpAc || monsterData.hasHpAc);
   const textSections = [
     { title: 'Defensive Features', entries: monsterData.defensiveFeatures as MonsterTextEntry[] | undefined },
     { title: 'Features', entries: monsterData.features as MonsterTextEntry[] | undefined },
@@ -259,19 +289,19 @@ export function MonsterDetail({
         <div className="section-title-row">
           <div>
             <h2>{monster.name}</h2>
-            <p>{[monsterData.size, monsterData.type, monsterData.challenge ? `CR ${monsterData.challenge}` : ''].filter(Boolean).join(' · ') || 'Monster combat sheet'}</p>
+            <p>{isNonMonster ? `Non-monster object · fixed initiative ${monster.fixedInitiative ?? monster.initiative ?? 20}` : ([monsterData.size, monsterData.type, monsterData.challenge ? `CR ${monsterData.challenge}` : ''].filter(Boolean).join(' · ') || 'Monster combat sheet')}</p>
           </div>
         </div>
         <div className="stats-grid">
-          <div className="stat"><span>HP</span><strong>{monster.currentHp}/{monster.maxHp}</strong></div>
-          <div className="stat"><span>AC</span><strong>{monster.ac || 10}</strong></div>
-          <div className="stat"><span>Speed</span><strong>{String(monsterData.speed || '-')}</strong></div>
+          {hasHpAc && <div className="stat"><span>HP</span><strong>{monster.currentHp}/{effectiveMaxHp(monster)}</strong></div>}
+          {hasHpAc && <div className="stat"><span>AC</span><strong>{armorClass(monster)}</strong></div>}
+          {!isNonMonster && <div className="stat"><span>Speed</span><strong>{String(monsterData.speed || '-')}</strong></div>}
           <div className="stat"><span>Initiative</span><strong>{monster.initiative ?? `${monster.initBonus >= 0 ? '+' : ''}${monster.initBonus}`}</strong></div>
           <div className="stat"><span>{power.name || monster.powerName || 'Power'}</span><strong>{monster.currentPower || power.current || 0}/{monster.maxPower || power.max || 0}</strong></div>
           <div className="stat"><span>Spellcasting</span><strong>{spellcasting.enabled ? 'yes' : 'none'}</strong></div>
           <div className="stat"><span>Legendary</span><strong>{legendary?.enabled ? `${legendary.used || 0}/${legendary.max || 0}` : '-'}</strong></div>
         </div>
-        <AbilityScoresGrid stats={stats} />
+        {!isNonMonster && <><AbilityScoresGrid stats={stats} />
         <div className="monster-meta-grid">
           {monsterData.saves && <Meta label="Saves" value={String(monsterData.saves)} />}
           {monsterData.skills && <Meta label="Skills" value={String(monsterData.skills)} />}
@@ -287,7 +317,7 @@ export function MonsterDetail({
             />
           )}
           {monsterData.damageVulnerabilities && <Meta label="Damage Vulnerabilities" value={String(monsterData.damageVulnerabilities)} />}
-        </div>
+        </div></>}
       </section>
 
       <section className="section sheet-section-anchor" data-monster-section="monster-trackers">
@@ -301,8 +331,9 @@ export function MonsterDetail({
           {power.enabled && (
             <TrackerCard title={power.name || monster.powerName || 'Power'} subtitle={`${monster.currentPower || 0}/${monster.maxPower || 0}`}>
               <div className="button-row">
-                <button className="btn danger small" disabled={readOnly} onClick={() => submitAction({ type: 'character.updatePower', payload: { characterId: monster.id, value: (monster.currentPower || 0) - 1 } })}>-1</button>
-                <button className="btn success small" disabled={readOnly} onClick={() => submitAction({ type: 'character.updatePower', payload: { characterId: monster.id, value: (monster.currentPower || 0) + 1 } })}>+1</button>
+                <button className="btn danger small" disabled={readOnly} onClick={() => submitAction({ type: 'character.updatePower', payload: { characterId: monster.id, delta: -1 } })}>-1</button>
+                <NumberInput className="small-input" value={monster.currentPower || 0} disabled={readOnly} min={0} onCommit={value => submitAction({ type: 'character.updatePower', payload: { characterId: monster.id, value } })} aria-label={`${power.name || 'Power'} current`} />
+                <button className="btn success small" disabled={readOnly} onClick={() => submitAction({ type: 'character.updatePower', payload: { characterId: monster.id, delta: 1 } })}>+1</button>
               </div>
             </TrackerCard>
           )}
@@ -325,7 +356,7 @@ export function MonsterDetail({
                       max={feature.maxUses || 0}
                       used={feature.used || 0}
                       disabled={readOnly}
-                      onSet={used => submitAction({ type: 'monster.feature.uses', payload: { characterId: monster.id, index, used } })}
+                      onSet={(used, delta) => submitAction({ type: 'monster.feature.uses', payload: { characterId: monster.id, index, used, delta } })}
                     />
                   )}
                   {feature.trackerType === 'recharge' && (
@@ -467,7 +498,7 @@ export function MonsterDetail({
                 max={legendary.max || 0}
                 used={legendary.used || 0}
                 disabled={readOnly}
-                onSet={used => submitAction({ type: 'monster.legendary.uses', payload: { characterId: monster.id, used } })}
+                onSet={(used, delta) => submitAction({ type: 'monster.legendary.uses', payload: { characterId: monster.id, used, delta } })}
               />
             </TrackerCard>
           )}
@@ -477,7 +508,7 @@ export function MonsterDetail({
                 max={action.maxUses || 0}
                 used={action.used || 0}
                 disabled={readOnly}
-                onSet={used => submitAction({ type: 'monster.epic.uses', payload: { characterId: monster.id, index, used } })}
+                onSet={(used, delta) => submitAction({ type: 'monster.epic.uses', payload: { characterId: monster.id, index, used, delta } })}
               />
               {action.description && <MarkdownRenderer text={action.description} />}
             </TrackerCard>
@@ -517,7 +548,7 @@ export function MonsterDetail({
                     max={slots.max || 0}
                     used={slots.used || 0}
                     disabled={readOnly}
-                    onSet={used => submitAction({ type: 'monster.spellSlot.toggle', payload: { characterId: monster.id, level, index: Math.max(0, used - 1) } })}
+                    onSet={(used, delta) => submitAction({ type: 'monster.spellSlot.toggle', payload: { characterId: monster.id, level, used, delta } })}
                   />
                 )}
                 {slots.spells && slots.spells.length > 0 && (
@@ -542,7 +573,7 @@ export function MonsterDetail({
                     max={spell.maxUses || 0}
                     used={spell.used || 0}
                     disabled={readOnly}
-                    onSet={used => submitAction({ type: 'monster.perDaySpell.uses', payload: { characterId: monster.id, index, used } })}
+                    onSet={(used, delta) => submitAction({ type: 'monster.perDaySpell.uses', payload: { characterId: monster.id, index, used, delta } })}
                   />
                 </TrackerCard>
               ))}
@@ -654,15 +685,16 @@ function TrackerCard({ title, subtitle, children }: { title: string; subtitle: s
   );
 }
 
-function UseBoxes({ max, used, onSet, disabled = false }: { max: number; used: number; onSet: (used: number) => void; disabled?: boolean }) {
+function UseBoxes({ max, used, onSet, disabled = false }: { max: number; used: number; onSet: (used: number, delta?: number) => unknown; disabled?: boolean }) {
   const count = Math.max(0, max);
   if (count > 10) {
     const percent = count > 0 ? Math.min(100, Math.max(0, (used / count) * 100)) : 0;
     return (
       <div className="feature-bar-controls">
-        <button className="btn danger small" disabled={disabled} onClick={() => onSet(Math.max(0, used - 1))}>-1</button>
+        <button className="btn danger small" disabled={disabled} onClick={() => onSet(Math.max(0, used - 1), -1)}>-1</button>
         <div className="feature-bar"><div className="feature-bar-fill" style={{ width: `${percent}%` }} /></div>
-        <button className="btn success small" disabled={disabled} onClick={() => onSet(Math.min(count, used + 1))}>+1</button>
+        <NumberInput className="small-input" value={used} min={0} max={count} disabled={disabled} onCommit={onSet} aria-label="Uses spent" />
+        <button className="btn success small" disabled={disabled} onClick={() => onSet(Math.min(count, used + 1), 1)}>+1</button>
       </div>
     );
   }

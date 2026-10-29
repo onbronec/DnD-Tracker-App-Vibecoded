@@ -1,11 +1,12 @@
+import { NumberInput } from '../components/NumberInput';
 import { ChangeEvent, FormEvent, useMemo, useRef, useState } from 'react';
 import type { Character, ClientRole, GameAction, GameState, MonsterDatabaseEntry } from '../shared/types';
 import { effectToString, hpClass, monsterHealthLabel } from '../shared/defaults';
 import { CollapsiblePanelGroup } from '../components/CollapsiblePanel';
-import { MarkdownRenderer } from '../components/Markdown';
+import { MarkdownEditor, MarkdownRenderer } from '../components/Markdown';
 import { Modal } from '../components/Modal';
 import { SearchPicker } from '../components/SearchPicker';
-import { ABILITIES, armorClass } from '../shared/characterSheet';
+import { ABILITIES, armorClass, effectiveMaxHp } from '../shared/characterSheet';
 
 interface Props {
   state: GameState;
@@ -67,21 +68,21 @@ export function CombatPage({ state, role, submitAction, onOpenSpells, onOpenInve
           panels={[
             {
               id: 'add-character',
-              title: 'Add character / monster',
-              summary: 'Create quick combatants.',
+              title: 'Add character / monster / object',
+              summary: 'Create a combatant or a fixed-initiative object.',
               content: <AddCharacterForm submitAction={submitAction} />
             },
             ...(state.monsterDatabase.length > 0 ? [{
               id: 'add-monster-db',
-              title: 'Add monster from database',
-              summary: 'Search saved monsters.',
+              title: 'Add monster / object from database',
+              summary: 'Search saved monsters and non-monster objects.',
               content: <AddMonsterFromDatabase monsters={state.monsterDatabase} submitAction={submitAction} />
             }] : [])
           ]}
         />
       )}
 
-      <section className="section page-sticky-section">
+      <section id="combat-header" className="section page-sticky-section">
         <div className="section-title-row">
           <div>
             <h2>Combat</h2>
@@ -109,6 +110,8 @@ export function CombatPage({ state, role, submitAction, onOpenSpells, onOpenInve
         {state.combatState.active && <InitiativeLine characters={state.characters} currentTurn={state.combatState.currentTurn} played={state.combatState.playedThisRound} />}
       </section>
 
+      {isDM && state.activeEncounterId && <ActiveEncounterBrief state={state} submitAction={submitAction} />}
+
       <section className="section">
         <h2>Characters and monsters</h2>
         <div className="character-grid">
@@ -118,7 +121,6 @@ export function CombatPage({ state, role, submitAction, onOpenSpells, onOpenInve
             <CharacterCard
               key={character.id}
               character={character}
-              index={index}
               role={role}
               conditions={state.conditionDatabase || []}
               active={state.combatState.active && index === state.combatState.currentTurn}
@@ -155,8 +157,11 @@ function AddCharacterForm({ submitAction }: { submitAction: Props['submitAction'
     ac: '10',
     initBonus: '0',
     maxPower: '0',
-    maxReactions: '1'
+    maxReactions: '1',
+    fixedInitiative: '20', description: ''
   });
+  const [hasHpAc, setHasHpAc] = useState(false);
+  const isObject = form.type === 'nonMonster';
 
   function update(key: string, value: string) {
     setForm(current => ({ ...current, [key]: value }));
@@ -169,14 +174,20 @@ function AddCharacterForm({ submitAction }: { submitAction: Props['submitAction'
       type: 'character.add',
       payload: {
         name: form.name.trim(),
-        type: form.type,
+        type: isObject ? 'monster' : form.type,
+        isNonMonster: isObject,
+        hasHpAc: !isObject || hasHpAc,
+        ...(isObject ? {
+          fixedInitiative: Number(form.fixedInitiative), initiative: Number(form.fixedInitiative),
+          monsterData: { name: form.name.trim(), entityKind: 'nonMonster', hasHpAc, fixedInitiative: Number(form.fixedInitiative), description: form.description }
+        } : {}),
         maxHp: Number(form.maxHp) || 1,
-        currentHp: Number(form.currentHp) || Number(form.maxHp) || 1,
+        currentHp: form.currentHp === '' ? Number(form.maxHp) || 1 : Number(form.currentHp),
         ac: Number(form.ac) || 10,
         initBonus: Number(form.initBonus) || 0,
         maxPower: Number(form.maxPower) || 0,
-        maxReactions: Number(form.maxReactions) || 1,
-        currentReactions: Number(form.maxReactions) || 1
+        maxReactions: Number(form.maxReactions),
+        currentReactions: Number(form.maxReactions)
       }
     });
     setForm(current => ({ ...current, name: '', currentHp: '' }));
@@ -184,17 +195,30 @@ function AddCharacterForm({ submitAction }: { submitAction: Props['submitAction'
 
   return (
     <form className="form-grid" onSubmit={submit} data-testid="add-character-form">
-      <input value={form.name} onChange={event => update('name', event.target.value)} placeholder="Name" />
-      <select value={form.type} onChange={event => update('type', event.target.value)}>
+      <label className="field-card"><span>Name</span><input value={form.name} onChange={event => update('name', event.target.value)} placeholder="Name" required /></label>
+      <label className="field-card"><span>Combatant type</span><select value={form.type} onChange={event => {
+        update('type', event.target.value);
+        update('maxReactions', event.target.value === 'nonMonster' ? '0' : '1');
+      }}>
         <option value="player">Player</option>
         <option value="monster">Monster</option>
-      </select>
-      <input value={form.maxHp} onChange={event => update('maxHp', event.target.value)} type="number" placeholder="Max HP" />
-      <input value={form.currentHp} onChange={event => update('currentHp', event.target.value)} type="number" placeholder="Current HP" />
-      <input value={form.ac} onChange={event => update('ac', event.target.value)} type="number" placeholder="AC" />
-      <input value={form.initBonus} onChange={event => update('initBonus', event.target.value)} type="number" placeholder="Initiative bonus" />
-      <input value={form.maxPower} onChange={event => update('maxPower', event.target.value)} type="number" placeholder="Max Power" />
-      <input value={form.maxReactions} onChange={event => update('maxReactions', event.target.value)} type="number" placeholder="Reactions" />
+        <option value="nonMonster">Non-monster object</option>
+      </select></label>
+      {isObject && <>
+        <label className="field-card"><span>Fixed initiative</span><NumberInput value={form.fixedInitiative} onChange={event => update('fixedInitiative', event.target.value)} placeholder="Fixed initiative" /></label>
+        <label className="inline-check"><input type="checkbox" checked={hasHpAc} onChange={event => setHasHpAc(event.target.checked)} />Track HP / AC</label>
+      </>}
+      {(!isObject || hasHpAc) && <>
+        <label className="field-card"><span>Max HP</span><NumberInput value={form.maxHp} onChange={event => update('maxHp', event.target.value)} min={1} placeholder="Max HP" /></label>
+        <label className="field-card"><span>Current HP (defaults to max)</span><NumberInput value={form.currentHp} onChange={event => update('currentHp', event.target.value)} min={0} placeholder="Current HP" /></label>
+        <label className="field-card"><span>Armor class</span><NumberInput value={form.ac} onChange={event => update('ac', event.target.value)} min={0} placeholder="AC" /></label>
+      </>}
+      {!isObject && <>
+        <label className="field-card"><span>Initiative bonus</span><NumberInput value={form.initBonus} onChange={event => update('initBonus', event.target.value)} placeholder="Initiative bonus" /></label>
+        <label className="field-card"><span>Max Power</span><NumberInput value={form.maxPower} onChange={event => update('maxPower', event.target.value)} min={0} placeholder="Max Power" /></label>
+      </>}
+      <label className="field-card"><span>Reactions</span><NumberInput value={form.maxReactions} onChange={event => update('maxReactions', event.target.value)} min={0} placeholder="Reactions" /></label>
+      {isObject && <div className="form-wide"><MarkdownEditor value={form.description} onChange={value => update('description', value)} label="Object notes / actions" /></div>}
       <button className="btn success">Add</button>
     </form>
   );
@@ -205,6 +229,7 @@ function AddMonsterFromDatabase({ monsters, submitAction }: { monsters: MonsterD
   const [count, setCount] = useState('1');
   const [groupCount, setGroupCount] = useState('1');
   const [groupFilter, setGroupFilter] = useState('');
+  const [entityFilter, setEntityFilter] = useState('all');
   const [search, setSearch] = useState('');
 
   // Extract distinct groups from database
@@ -215,14 +240,14 @@ function AddMonsterFromDatabase({ monsters, submitAction }: { monsters: MonsterD
   }, [monsters]);
 
   // Pre-filter by group before text search
-  const groupFiltered = groupFilter ? monsters.filter(m => m.group === groupFilter) : monsters;
+  const groupFiltered = monsters.filter(m => (!groupFilter || m.group === groupFilter) && (entityFilter === 'all' || (m.entityKind === 'nonMonster' ? 'objects' : 'monsters') === entityFilter));
   const matchingMonsters = matchingItems(groupFiltered, search);
 
   async function addMonster() {
-    const monster = selectedMonster && matchingMonsters.includes(selectedMonster) ? selectedMonster : matchingMonsters[0] || monsters[0];
+    const monster = selectedMonster && matchingMonsters.includes(selectedMonster) ? selectedMonster : matchingMonsters[0];
     if (!monster) return;
     const copies = Math.max(1, Number(count) || 1);
-    const groups = Math.min(copies, Math.max(1, Number(groupCount) || 1));
+    const groups = monster.entityKind === 'nonMonster' ? 1 : Math.min(copies, Math.max(1, Number(groupCount) || 1));
     // Assign each copy to a group for shared initiative
     const groupIds: string[] = [];
     for (let g = 0; g < groups; g++) {
@@ -245,9 +270,13 @@ function AddMonsterFromDatabase({ monsters, submitAction }: { monsters: MonsterD
           maxHp: Number(monster.hp || monster.maxHp || 1),
           currentHp: Number(monster.hp || monster.maxHp || 1),
           ac: Number(monster.ac || 10),
-          maxReactions: Number(monster.maxReactions || 1),
-          currentReactions: Number(monster.maxReactions || 1),
+          maxReactions: Number(monster.maxReactions ?? (monster.entityKind === 'nonMonster' ? 0 : 1)),
+          currentReactions: Number(monster.maxReactions ?? (monster.entityKind === 'nonMonster' ? 0 : 1)),
           initBonus: Number(monster.initBonus || 0),
+          isNonMonster: monster.entityKind === 'nonMonster',
+          hasHpAc: monster.entityKind !== 'nonMonster' || Boolean(monster.hasHpAc),
+          fixedInitiative: monster.fixedInitiative,
+          initiative: monster.entityKind === 'nonMonster' ? Number(monster.fixedInitiative ?? 20) : null,
           maxPower,
           currentPower,
           powerName: String(power?.name || monster.powerName || 'Power'),
@@ -258,11 +287,11 @@ function AddMonsterFromDatabase({ monsters, submitAction }: { monsters: MonsterD
           monsterAbilities: monster.monsterAbilities
         }
       });
-      if (monster.hasLairActions || monster.hasMythicActions) {
+      if (monster.hasLairActions) {
         await submitAction({
           type: 'character.add',
           payload: {
-            name: `${name} ${monster.hasMythicActions ? 'Mythic' : 'Lair'} Actions`,
+            name: `${name} Lair Actions`,
             type: 'monster',
             maxHp: 1,
             currentHp: 1,
@@ -270,25 +299,40 @@ function AddMonsterFromDatabase({ monsters, submitAction }: { monsters: MonsterD
             maxReactions: 0,
             currentReactions: 0,
             initBonus: 0,
-            initiative: 20,
+            initiative: Number(monster.lairActionInitiative || 20),
+            fixedInitiative: Number(monster.lairActionInitiative || 20),
+            isNonMonster: true,
+            hasHpAc: false,
+            associatedObjectKind: 'lair',
             maxPower: 0,
             powerName: 'Power',
             monsterData: {
-              name: `${name} ${monster.hasMythicActions ? 'Mythic' : 'Lair'} Actions`,
-              hp: 1,
-              ac: 10,
-              initBonus: 0,
-              description: monster.hasMythicActions ? entriesToDescription(monster.mythicActions) : entriesToDescription(monster.lairActions),
-              actions: monster.hasMythicActions ? monster.mythicActions : monster.lairActions
+              name: `${name} Lair Actions`, entityKind: 'nonMonster', hasHpAc: false,
+              fixedInitiative: Number(monster.lairActionInitiative || 20), initBonus: 0,
+              description: entriesToDescription(monster.lairActions), actions: monster.lairActions
             }
           }
         });
+      }
+      if (monster.hasMythicActions) {
+        await submitAction({ type: 'character.add', payload: {
+          name: `${name} Mythic Actions`, type: 'monster', maxHp: 0, currentHp: 0, ac: 0,
+          maxReactions: 0, currentReactions: 0, initBonus: 0,
+          initiative: Number(monster.mythicActionInitiative || 20), fixedInitiative: Number(monster.mythicActionInitiative || 20),
+          isNonMonster: true, hasHpAc: false, associatedObjectKind: 'mythic', maxPower: 0, powerName: 'Power',
+          monsterData: { name: `${name} Mythic Actions`, entityKind: 'nonMonster', hasHpAc: false, fixedInitiative: Number(monster.mythicActionInitiative || 20), initBonus: 0, description: entriesToDescription(monster.mythicActions), actions: monster.mythicActions }
+        }});
       }
     }
   }
 
   return (
     <div className="stack compact-stack">
+      <label className="field-card"><span>Database entries</span><select aria-label="Database entity type" value={entityFilter} onChange={event => { setEntityFilter(event.target.value); setSelectedMonster(null); }}>
+        <option value="all">Monsters and non-monster objects</option>
+        <option value="monsters">Monsters</option>
+        <option value="objects">Non-monster objects</option>
+      </select></label>
       {availableGroups.length > 0 && (
         <select
           value={groupFilter}
@@ -305,22 +349,21 @@ function AddMonsterFromDatabase({ monsters, submitAction }: { monsters: MonsterD
         onQueryChange={setSearch}
         selectedId={String((selectedMonster || matchingMonsters[0])?.id || '')}
         onSelect={setSelectedMonster}
-        placeholder="Search monsters"
+        placeholder="Search monsters / objects"
         getId={monster => String(monster.id)}
         getLabel={monster => String(monster.name || 'Monster')}
-        getMeta={monster => `HP ${monster.hp || monster.maxHp || '-'} · AC ${monster.ac || '-'}` + (monster.group ? ` · ${monster.group}` : '')}
-        getDescription={monster => String(monster.description || '').slice(0, 120)}
+        getMeta={monster => monster.entityKind === 'nonMonster' ? `Non-monster · Initiative ${monster.fixedInitiative ?? 20}` : `HP ${monster.hp || monster.maxHp || '-'} · AC ${monster.ac || '-'}` + (monster.group ? ` · ${monster.group}` : '')}
       />
       <div className="button-row">
         <label title="Total number of copies to add" style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.9em' }}>
           Count:
-          <input className="small-input" type="number" min={1} value={count} onChange={event => setCount(event.target.value)} style={{ width: '60px' }} />
+          <NumberInput className="small-input" type="number" min={1} value={count} onChange={event => setCount(event.target.value)} style={{ width: '60px' }} />
         </label>
         <label title="Number of initiative groups — monsters in the same group share a single initiative roll" style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.9em' }}>
           Groups:
-          <input className="small-input" type="number" min={1} value={groupCount} onChange={event => setGroupCount(event.target.value)} style={{ width: '60px' }} />
+          <NumberInput className="small-input" type="number" min={1} value={groupCount} onChange={event => setGroupCount(event.target.value)} style={{ width: '60px' }} />
         </label>
-        <button className="btn success" onClick={addMonster}>Add to combat</button>
+        <button className="btn success" disabled={!matchingMonsters.length} onClick={addMonster}>Add to combat</button>
       </div>
     </div>
   );
@@ -328,19 +371,24 @@ function AddMonsterFromDatabase({ monsters, submitAction }: { monsters: MonsterD
 
 function InitiativeLine({ characters, currentTurn, played }: { characters: Character[]; currentTurn: number; played: number[] }) {
   return (
-    <div className="initiative-line">
+    <nav className="initiative-line" aria-label="Initiative order">
       {characters.map((character, index) => (character.type === 'monster' || character.activeInCombat !== false) && (
-        <span key={character.id} className={index === currentTurn ? 'current' : played.includes(index) ? 'played' : ''}>
+        <button type="button" key={character.id} className={index === currentTurn ? 'current' : played.includes(index) ? 'played' : ''} aria-label={`Go to ${character.name}`} aria-current={index === currentTurn ? 'step' : undefined} onClick={() => {
+          const card = document.getElementById(`combatant-${character.id}`);
+          if (!card) return;
+          const headerHeight = document.getElementById('combat-header')?.getBoundingClientRect().height || 0;
+          window.scrollBy({ top: card.getBoundingClientRect().top - headerHeight - 12, behavior: 'auto' });
+          card.focus({ preventScroll: true });
+        }}>
           {character.name} ({character.initiative ?? '-'})
-        </span>
+        </button>
       ))}
-    </div>
+    </nav>
   );
 }
 
 function CharacterCard({
   character,
-  index,
   role,
   conditions,
   active,
@@ -352,7 +400,6 @@ function CharacterCard({
   onOpenMonsters
 }: {
   character: Character;
-  index: number;
   role: ClientRole;
   conditions: Array<Record<string, unknown>>;
   active: boolean;
@@ -366,7 +413,13 @@ function CharacterCard({
   const isDM = role === 'dm';
   const canEdit = isDM || character.type === 'player';
   const [drafts, setDrafts] = useState({ damage: '', healing: '', tempHp: '', effect: '' });
-  const hpPercent = useMemo(() => Math.max(0, Math.min(100, (character.currentHp / character.maxHp) * 100)), [character.currentHp, character.maxHp]);
+  const [expanded, setExpanded] = useState(false);
+  const isNonMonster = Boolean(character.isNonMonster || character.monsterData?.entityKind === 'nonMonster');
+  const hasHpAc = !isNonMonster || Boolean(character.hasHpAc || character.monsterData?.hasHpAc);
+  const maxHp = effectiveMaxHp(character);
+  const instanceName = character.id.endsWith('_turn2') ? character.name.replace(/ \(Turn 2\)$/, '') : character.name;
+  const monsterNumber = instanceName === character.monsterData?.name ? 0 : Number(instanceName.match(/\s+(\d+)$/)?.[1] || 0);
+  const hpPercent = useMemo(() => Math.max(0, Math.min(100, (character.currentHp / maxHp) * 100)), [character.currentHp, maxHp]);
 
   function setDraft(key: string, value: string) {
     setDrafts(current => ({ ...current, [key]: value }));
@@ -406,16 +459,16 @@ function CharacterCard({
   }
 
   return (
-    <article className={`character-card ${active ? 'active' : ''} ${played ? 'played' : ''}`} data-testid={`character-${character.name}`}>
+    <article id={`combatant-${character.id}`} tabIndex={-1} className={`character-card ${active ? 'active' : ''} ${played ? 'played' : ''}`} data-testid={`character-${character.name}`}>
       <div className="card-header">
         <div>
           <button className="name-button" onClick={onOpenEffects} title="Open conditions and effects">
             {character.name}
           </button>
-          <span className="type-pill">{character.type === 'player' ? 'Player' : 'Monster'}</span>
+          <span className="type-pill">{character.type === 'player' ? 'Player' : isNonMonster ? 'Object' : 'Monster'}</span>
         </div>
         <div className="button-row compact">
-          {isDM && character.type === 'monster' && <span className="type-pill">#{index + 1}</span>}
+          <button className={`btn small input-toggle ${expanded ? 'active' : ''}`} aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>input</button>
           {character.type === 'player' && <button className="btn purple small" onClick={onOpenSpells}>Sheet</button>}
           {character.type === 'player' && <button className="btn purple small" onClick={onOpenInventory}>Inventory</button>}
           {isDM && character.type === 'monster' && <button className="btn purple small" onClick={onOpenMonsters}>Abilities</button>}
@@ -425,16 +478,16 @@ function CharacterCard({
       </div>
 
       <div className="stats-grid">
-        <Stat label="HP" value={role === 'player' && character.type === 'monster' ? monsterHealthLabel(character.currentHp, character.maxHp) : `${character.currentHp}/${character.maxHp}`} />
-        <Stat label="Temp" value={String(character.tempHp || 0)} />
-        <Stat label="AC" value={String(armorClass(character))} />
+        {hasHpAc && <Stat label="HP" tone={role === 'player' && character.type === 'monster' ? hpClass(character.currentHp, maxHp) : ''} value={role === 'player' && character.type === 'monster' ? monsterHealthLabel(character.currentHp, maxHp) : `${character.currentHp}/${maxHp}`} />}
+        {hasHpAc && <Stat label="Temp" value={String(character.tempHp || 0)} />}
+        {hasHpAc && <Stat label="AC" value={String(armorClass(character))} />}
         <Stat label="Init" value={String(character.initiative ?? '-')} />
         {isDM && character.type === 'monster' && <Stat label={character.powerName || 'Power'} value={`${character.currentPower || 0}/${character.maxPower || 0}`} />}
       </div>
 
-      {(isDM || character.type === 'player') && (
+      {hasHpAc && (isDM || character.type === 'player') && (
         <div className="hp-bar">
-          <div className={`hp-fill ${hpClass(character.currentHp, character.maxHp)}`} style={{ width: `${hpPercent}%` }} />
+          <div className={`hp-fill ${hpClass(character.currentHp, maxHp)}`} style={{ width: `${hpPercent}%` }} />
         </div>
       )}
 
@@ -458,6 +511,7 @@ function CharacterCard({
               data-tooltip={tooltip}
             >
               {effectToString(effect)}
+              {typeof effect !== 'string' && effect.remainingRounds && <span className="effect-duration" title={`${effect.remainingRounds} rounds remaining; expires at round end`}>{effect.remainingRounds}</span>}
             </button>
           );
         })}
@@ -466,11 +520,11 @@ function CharacterCard({
       {canEdit && (
         <div className="card-controls">
           <div className="quick-row">
-            <button className="btn danger small" onClick={() => submitAction({ type: 'character.adjustHp', payload: { characterId: character.id, amount: -1 } })}>HP -1</button>
+            {hasHpAc && <><button className="btn danger small" onClick={() => submitAction({ type: 'character.adjustHp', payload: { characterId: character.id, amount: -1 } })}>HP -1</button>
             <button className="btn danger small" onClick={() => submitAction({ type: 'character.adjustHp', payload: { characterId: character.id, amount: -10 } })}>HP -10</button>
             <button className="btn success small" onClick={() => submitAction({ type: 'character.adjustHp', payload: { characterId: character.id, amount: 1 } })}>HP +1</button>
-            <button className="btn success small" onClick={() => submitAction({ type: 'character.adjustHp', payload: { characterId: character.id, amount: 10 } })}>HP +10</button>
-            {character.type === 'monster' && (
+            <button className="btn success small" onClick={() => submitAction({ type: 'character.adjustHp', payload: { characterId: character.id, amount: 10 } })}>HP +10</button></>}
+            {expanded && character.type === 'monster' && (
               <>
                 <button
                   className="btn danger small"
@@ -478,7 +532,7 @@ function CharacterCard({
                     type: 'character.updatePower',
                     payload: {
                       characterId: character.id,
-                      value: (character.currentPower ?? 0) - 1
+                      delta: -1
                     }
                   })}
                 >
@@ -490,7 +544,7 @@ function CharacterCard({
                     type: 'character.updatePower',
                     payload: {
                       characterId: character.id,
-                      value: (character.currentPower ?? 0) + 1
+                      delta: 1
                     }
                   })}
                 >
@@ -499,56 +553,81 @@ function CharacterCard({
               </>
             )}
           </div>
-          <div className="quick-row">
-            <span>Reakce:</span>
-            {Array.from({ length: Math.max(0, character.maxReactions ?? 1) }, (_, reactionIndex) => {
-              const currentReactions = character.currentReactions ?? character.maxReactions ?? 1;
-              const usedReactions = (character.maxReactions ?? 1) - currentReactions;
-              const isUsed = reactionIndex < usedReactions;
-              return (
-                <button
-                  key={reactionIndex}
-                  className={`feature-box ${isUsed ? 'used' : ''}`}
-                  onClick={() => submitAction({ type: 'character.reaction.set', payload: { characterId: character.id, value: currentReactions + (isUsed ? 1 : -1) } })}
-                  aria-label={`${character.name} reaction ${reactionIndex + 1}`}
-                  title="Reaction"
-                />
-              );
-            })}
-          </div>
-          <div className="input-action-row">
-            <input value={drafts.damage} onChange={event => setDraft('damage', event.target.value)} type="number" placeholder="Damage" data-testid={`damage-${character.name}`} />
+        </div>
+      )}
+      <div className="quick-row">
+        <span>Reakce: {Math.max(0, (character.maxReactions ?? 1) - (character.currentReactions ?? character.maxReactions ?? 1))}/{character.maxReactions ?? 1} used · {character.currentReactions ?? character.maxReactions ?? 1} available</span>
+        {Array.from({ length: Math.max(0, character.maxReactions ?? 1) }, (_, reactionIndex) => {
+          const currentReactions = character.currentReactions ?? character.maxReactions ?? 1;
+          const usedReactions = (character.maxReactions ?? 1) - currentReactions;
+          const isUsed = reactionIndex < usedReactions;
+          return (
+            <button
+              key={reactionIndex}
+              className={`feature-box ${isUsed ? 'used' : ''}`}
+              disabled={!canEdit}
+              aria-pressed={isUsed}
+              onClick={() => submitAction({ type: 'character.reaction.set', payload: { characterId: character.id, value: currentReactions + (isUsed ? 1 : -1) } })}
+              aria-label={`${character.name} reaction ${reactionIndex + 1}`}
+              title={isUsed ? 'Used reaction' : 'Available reaction'}
+            />
+          );
+        })}
+      </div>
+      {expanded && canEdit && (
+        <div className="card-controls">
+          {hasHpAc && <div className="input-action-row">
+            <NumberInput value={drafts.damage} onChange={event => setDraft('damage', event.target.value)} type="number" placeholder="Damage" data-testid={`damage-${character.name}`} />
             <button className="btn danger small" onClick={() => applyHp('damage')}>Apply</button>
-            <input value={drafts.healing} onChange={event => setDraft('healing', event.target.value)} type="number" placeholder="Heal" data-testid={`heal-${character.name}`} />
+            <NumberInput value={drafts.healing} onChange={event => setDraft('healing', event.target.value)} type="number" placeholder="Heal" data-testid={`heal-${character.name}`} />
             <button className="btn success small" onClick={() => applyHp('healing')}>Apply</button>
-          </div>
-          <div className="input-action-row">
-            <input value={drafts.tempHp} onChange={event => setDraft('tempHp', event.target.value)} type="number" placeholder="Temp HP" />
-            <button className="btn warning small" onClick={() => submitAction({ type: 'character.setTempHp', payload: { characterId: character.id, value: Number(drafts.tempHp) || 0 } }).then(() => setDraft('tempHp', ''))}>Set</button>
+          </div>}
+          <div className={`input-action-row ${hasHpAc ? '' : 'object-effect-row'}`}>
+            {hasHpAc && <>
+            <NumberInput value={drafts.tempHp} onChange={event => setDraft('tempHp', event.target.value)} type="number" placeholder="Temp HP" />
+            <button className="btn warning small" onClick={() => submitAction({ type: 'character.setTempHp', payload: { characterId: character.id, value: Number(drafts.tempHp) || 0 } }).then(() => setDraft('tempHp', ''))}>Set</button></>}
             <input value={drafts.effect} onChange={event => setDraft('effect', event.target.value)} placeholder="Effect" />
             <button className="btn purple small" onClick={addEffect}>Add</button>
           </div>
-          {isDM && (
+          {isDM && !isNonMonster && (
             <div className="input-action-row">
-              <input
+              <NumberInput
                 type="number"
                 value={character.initiative ?? ''}
-                onChange={event => submitAction({ type: 'character.setInitiative', payload: { characterId: character.id, value: event.target.value } })}
+                onCommit={value => submitAction({ type: 'character.setInitiative', payload: { characterId: character.id, value } })}
                 placeholder="Initiative"
               />
               {character.type === 'monster' && (
-                <input
+                <NumberInput
                   type="number"
                   value={character.currentPower ?? 0}
-                  onChange={event => submitAction({ type: 'character.updatePower', payload: { characterId: character.id, value: Number(event.target.value) || 0 } })}
+                  onCommit={value => submitAction({ type: 'character.updatePower', payload: { characterId: character.id, value } })}
                   placeholder="Power"
                 />
               )}
             </div>
           )}
+          {isDM && character.type === 'monster' && !isNonMonster && <label className="monster-number-field">Monster number <small>(0 = none)</small><NumberInput min={0} value={monsterNumber} aria-label="Monster number" onCommit={value => submitAction({ type: 'character.setMonsterNumber', payload: { characterId: character.id, value } })} /></label>}
         </div>
       )}
+      {expanded && isNonMonster && Boolean(character.monsterData?.description) && <MarkdownRenderer text={String(character.monsterData?.description || '')} />}
     </article>
+  );
+}
+
+function ActiveEncounterBrief({ state, submitAction }: { state: GameState; submitAction: Props['submitAction'] }) {
+  const encounter = (state.encounters || []).find(item => item.id === state.activeEncounterId);
+  if (!encounter) return null;
+  return (
+    <section className="section encounter-brief">
+      <div className="section-title-row"><div><h2>Encounter: {encounter.name}</h2><p>DM notes and available reinforcements.</p></div></div>
+      <MarkdownRenderer text={encounter.notes} emptyLabel="No encounter notes." />
+      {encounter.reserve.length > 0 && <div className="reserve-row"><strong>Monster reserve</strong>{encounter.reserve.map(entry => {
+        const monster = state.monsterDatabase.find(item => item.id === entry.monsterId);
+        if (!monster) return null;
+        return <span className="reserve-entry" key={entry.id}>{monster.name} ×{entry.quantity}<button className="btn success small" onClick={() => submitAction({ type: 'encounter.reserve.addToCombat', page: 'encounters', payload: { encounterId: encounter.id, entryId: entry.id, quantity: 1 } })}>Add</button></span>;
+      })}</div>}
+    </section>
   );
 }
 
@@ -573,6 +652,7 @@ export function EffectModal({
   const [diceCount, setDiceCount] = useState('2');
   const [diceSides, setDiceSides] = useState('4');
   const [damageType, setDamageType] = useState('fire');
+  const [remainingRounds, setRemainingRounds] = useState('');
   const matchingConditions = matchingItems(conditions, search);
   const conditionForAdd = selectedCondition && matchingConditions.includes(selectedCondition) ? selectedCondition : matchingConditions[0] || selectedCondition;
   const isAbilityAdjustment = Boolean(conditionForAdd?.statAdjustmentType);
@@ -595,6 +675,7 @@ export function EffectModal({
       payload: {
         characterId: character.id,
         name: trimmed,
+        ...(Number(remainingRounds) > 0 ? { remainingRounds: Number(remainingRounds) } : {}),
         level: condition?.hasLevels ? Number(level) || 1 : null,
         ability: condition?.statAdjustmentType ? ability : null,
         value: condition?.statAdjustmentType ? Number(level) || 1 : null,
@@ -634,6 +715,7 @@ export function EffectModal({
 
         {canEdit && (
           <div className="stack compact-stack">
+            <details><summary>Duration (optional)</summary><label>Rounds, expires at round end<NumberInput className="small-input" min={0} value={remainingRounds} onChange={event => setRemainingRounds(event.target.value)} placeholder="No limit" /></label></details>
             <div className="form-grid">
               <div className="form-wide">
                 <SearchPicker
@@ -655,7 +737,7 @@ export function EffectModal({
                 </select>
               )}
               {(conditionForAdd?.hasLevels || isAbilityAdjustment) && (
-                <input
+                <NumberInput
                   data-testid="condition-level-input"
                   value={level}
                   onChange={event => setLevel(event.target.value)}
@@ -667,8 +749,8 @@ export function EffectModal({
               )}
               {hasDice && (
                 <>
-                  <input value={diceCount} onChange={event => setDiceCount(event.target.value)} type="number" min={1} placeholder="Dice count" />
-                  <input value={diceSides} onChange={event => setDiceSides(event.target.value)} type="number" min={2} placeholder="Die sides" />
+                  <NumberInput value={diceCount} onChange={event => setDiceCount(event.target.value)} type="number" min={1} placeholder="Dice count" />
+                  <NumberInput value={diceSides} onChange={event => setDiceSides(event.target.value)} type="number" min={2} placeholder="Die sides" />
                   <input value={damageType} onChange={event => setDamageType(event.target.value)} placeholder="Damage type" />
                 </>
               )}
@@ -746,9 +828,9 @@ function ActiveEffectRow({
       )}
       {canEdit && hasDice && (
         <div className="dice-effect-controls">
-          <input className="tiny-input" value={diceCount} onChange={event => setDiceCount(event.target.value)} type="number" min={1} aria-label={`${effectToString(effect)} dice count`} />
+          <NumberInput className="tiny-input" value={diceCount} onChange={event => setDiceCount(event.target.value)} type="number" min={1} aria-label={`${effectToString(effect)} dice count`} />
           <span>d</span>
-          <input className="tiny-input" value={diceSides} onChange={event => setDiceSides(event.target.value)} type="number" min={2} aria-label={`${effectToString(effect)} die sides`} />
+          <NumberInput className="tiny-input" value={diceSides} onChange={event => setDiceSides(event.target.value)} type="number" min={2} aria-label={`${effectToString(effect)} die sides`} />
           <input className="small-input" value={damageType} onChange={event => setDamageType(event.target.value)} placeholder="type" aria-label={`${effectToString(effect)} damage type`} />
           <button
             className="btn small"
@@ -757,6 +839,9 @@ function ActiveEffectRow({
             Save dice
           </button>
         </div>
+      )}
+      {canEdit && (
+        <details className="effect-duration-editor"><summary>Duration{typeof effect !== 'string' && effect.remainingRounds ? ` · ${effect.remainingRounds}` : ''}</summary><label>Remaining rounds<NumberInput className="small-input" min={0} value={typeof effect === 'string' ? '' : effect.remainingRounds ?? ''} onCommit={value => submitAction({ type: 'effect.duration.set', payload: { characterId, index, remainingRounds: value || null } })} /></label><small>0 removes the timer.</small></details>
       )}
       {canEdit && (
         <button className="btn danger small" onClick={() => submitAction({ type: 'effect.remove', payload: { characterId, index } })}>
@@ -777,7 +862,7 @@ function conditionForEffect(conditions: Array<Record<string, unknown>>, effect: 
 }
 
 export function effectRequiresManagement(effect: Character['effects'][number], condition?: Record<string, unknown>) {
-  return Boolean(condition?.hasLevels || conditionHasDice(condition) || (typeof effect !== 'string' && (effect.level || (effect.diceCount && effect.diceSides))));
+  return Boolean(condition?.hasLevels || conditionHasDice(condition) || (typeof effect !== 'string' && (effect.level || effect.remainingRounds || (effect.diceCount && effect.diceSides))));
 }
 
 function conditionHasDice(condition?: Record<string, unknown> | null) {
@@ -839,9 +924,9 @@ function entriesToDescription(entries?: Array<{ name: string; description: strin
   return (entries || []).map(entry => entry.description || `**${entry.name}.**`).join('\n\n');
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, tone = '' }: { label: string; value: string; tone?: string }) {
   return (
-    <div className="stat">
+    <div className={`stat ${tone ? `health-${tone}` : ''}`}>
       <span>{label}</span>
       <strong>{value}</strong>
     </div>

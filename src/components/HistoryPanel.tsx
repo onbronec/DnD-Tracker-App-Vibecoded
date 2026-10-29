@@ -5,23 +5,26 @@ interface Props {
   entries: ActionLogEntry[];
   onUndo: () => void;
   onRedo: () => void;
+  onClear?: () => void;
+  onCollapse: () => void;
 }
 
-export function HistoryPanel({ currentPage, entries, onUndo, onRedo }: Props) {
+export function HistoryPanel({ currentPage, entries, onUndo, onRedo, onClear, onCollapse }: Props) {
   const currentEntries = entries.filter(entry => entry.page === currentPage);
   const latest = [...entries].reverse().slice(0, 80);
 
   return (
-    <aside className="history-panel">
-      <div className="history-header">
-        <div>
-          <h2>History</h2>
-          <p>Undo/redo applies to {currentPage}</p>
-        </div>
-        <div className="history-actions">
-          <button className="btn warning" onClick={onUndo}>Undo page</button>
-          <button className="btn success" onClick={onRedo}>Redo page</button>
-        </div>
+    <aside id="history-panel" className="history-panel" aria-label="History">
+      <div className="section-title-row">
+        <h2>History</h2>
+        <button className="btn small" onClick={onCollapse}>Collapse history</button>
+      </div>
+      <div className="history-actions">
+        <button className="btn warning" onClick={onUndo}>Undo page</button>
+        <button className="btn success" onClick={onRedo}>Redo page</button>
+        {onClear && <button className="btn danger" onClick={() => {
+          if (window.confirm('Clear all history and undo/redo? Campaign data will stay as it is.')) onClear();
+        }}>Clear history</button>}
       </div>
 
       <div className="history-section">

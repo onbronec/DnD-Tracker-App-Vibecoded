@@ -34,17 +34,17 @@ app.get('/api/autosave', (req, res) => {
         res.status(403).json({ success: false, error: 'DM token required' });
         return;
     }
-    res.json({ success: true, data: stateRef.current });
+    res.json({ success: true, data: filterStateForClient(stateRef.current, 'dm') });
 });
 
-app.post('/api/autosave', (req, res) => {
+app.post('/api/autosave', async (req, res) => {
     if (req.query.token !== dmToken) {
         res.status(403).json({ success: false, error: 'DM token required' });
         return;
     }
     try {
         stateRef.current = req.body && req.body.schemaVersion ? req.body : stateRef.current;
-        const result = autosaveScheduler.flush();
+        const result = await autosaveScheduler.flush();
         if (!result.ok) throw result.error;
         res.json({ success: true, message: 'Autosave created' });
     } catch (error) {
@@ -87,6 +87,17 @@ function getLocalIp() {
 }
 
 if (require.main === module) {
+    let shuttingDown = false;
+    async function shutdown() {
+        if (shuttingDown) return;
+        shuttingDown = true;
+        io.close();
+        server.close();
+        const result = await autosaveScheduler.flush();
+        process.exit(result.ok ? 0 : 1);
+    }
+    process.once('SIGINT', shutdown);
+    process.once('SIGTERM', shutdown);
     const localIP = getLocalIp();
     server.listen(PORT, () => {
         console.log('\n========================================');

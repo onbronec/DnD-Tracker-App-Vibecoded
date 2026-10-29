@@ -2,9 +2,12 @@ const {
     normalizeCharacter,
     normalizeCondition,
     normalizeCharacterAbility,
+    normalizeCharacterAction,
     normalizeInventory,
     normalizeMagicItem,
     normalizeMonsterDbItem,
+    normalizeEncounter,
+    normalizeEncounterGroup,
     normalizePotion,
     normalizeSpell,
     normalizeSpellbook,
@@ -13,7 +16,9 @@ const {
 const { importSpellsFromDataFolder } = require('./spellImport');
 const { clone, clamp, makeId, toNumber } = require('./utils');
 
-const LOG_LIMIT = 500;
+const { pruneHistory } = require('./history');
+const { prepareAoe } = require('./aoe');
+const { normalizeFeatures, normalizeFeatureActions, normalizeActionSettings, spendActionReaction, normalizeCasting, featureFor, consumeSpark } = require('./casting');
 const SPELL_SLOTS_TABLE = {
     1: [2, 0, 0, 0, 0, 0, 0, 0, 0],
     2: [3, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -65,6 +70,40 @@ function findCharacterIndex(state, id) {
     return state.characters.findIndex(character => character.id === id);
 }
 
+function effectiveMaxHp(character) {
+    return Math.max(1, (Number(character.maxHp) || 1) + maxHpEffectBonus(character));
+}
+
+function maxHpEffectBonus(character) {
+    return (character.effects || []).reduce((sum, effect) => {
+        const current = typeof effect === 'string' ? { name: effect, level: null, value: null } : effect;
+        const value = Number(current.value ?? current.level ?? 0);
+        if (!Number.isFinite(value)) return sum;
+        if (current.name === 'Max HP Increased') return sum + value;
+        if (current.name === 'Max HP Reduced') return sum - value;
+        return sum;
+    }, 0);
+}
+
+function clampCurrentHpToEffectiveMax(character) {
+    character.currentHp = clamp(character.currentHp || 0, 0, effectiveMaxHp(character));
+}
+
+function syncFeatureStatusEffect(character, feature) {
+    if (character.casting?.type === 'divineSpark' && feature?.id === character.casting.sparkFeatureId && feature.statusName?.toLowerCase() === character.casting.sparkCondition.toLowerCase()) return;
+    if (!feature?.statusEffect || !feature.statusName) return;
+    const statusName = String(feature.statusName || '').trim();
+    if (!statusName) return;
+    if (!Array.isArray(character.effects)) character.effects = [];
+    const hasStatus = character.effects.some(effect => (typeof effect === 'string' ? effect : effect.name) === statusName);
+    if ((feature.used || 0) > 0) {
+        if (!hasStatus) character.effects.push({ name: statusName, level: null });
+        return;
+    }
+    character.effects = character.effects.filter(effect => (typeof effect === 'string' ? effect : effect.name) !== statusName);
+    clampCurrentHpToEffectiveMax(character);
+}
+
 function pageForAction(type) {
     if (type.startsWith('toolbelt.')) return 'toolbelt';
     if (type === 'character.activateInCombat' || type === 'character.deactivateFromCombat' || type === 'character.deleteSavedPlayer') return 'databases';
@@ -73,6 +112,7 @@ function pageForAction(type) {
     if (type.startsWith('spell.') || type.startsWith('spellbook.')) return 'spells';
     if (type.startsWith('monster.')) return 'monsters';
     if (type.startsWith('database.')) return 'databases';
+    if (type.startsWith('encounter.')) return 'encounters';
     return 'combat';
 }
 
@@ -93,6 +133,7 @@ function snapshotPage(state, page) {
             characters: state.characters.map(c => ({
                 id: c.id,
                 spellcasterLevel: c.spellcasterLevel,
+                casting: clone(c.casting),
                 spellSlots: clone(c.spellSlots),
                 customFeatures: clone(c.customFeatures),
                 characterAbilities: clone(c.characterAbilities || []),
@@ -136,12 +177,21 @@ function snapshotPage(state, page) {
             playerCharacters: clone(state.characters.filter(character => character.type === 'player'))
         };
     }
+    if (page === 'encounters') {
+        return {
+            encounters: clone(state.encounters || []),
+            encounterGroups: clone(state.encounterGroups || []),
+            activeEncounterId: state.activeEncounterId || null,
+            characters: clone(state.characters),
+            combatState: clone(state.combatState)
+        };
+    }
     if (page === 'toolbelt') {
         return {
             toolbelt: clone(ensureToolbelt(state))
         };
     }
-    return clone(state);
+    throw new Error('Neplatna stranka historie.');
 }
 
 function restorePage(state, page, snapshot) {
@@ -161,6 +211,14 @@ function restorePage(state, page, snapshot) {
         state.characters = [...monsters, ...clone(snapshot.playerCharacters || [])];
         return;
     }
+    if (page === 'encounters') {
+        state.encounters = clone(snapshot.encounters || []);
+        state.encounterGroups = clone(snapshot.encounterGroups || []);
+        state.activeEncounterId = snapshot.activeEncounterId || null;
+        state.characters = clone(snapshot.characters || state.characters);
+        state.combatState = clone(snapshot.combatState || state.combatState);
+        return;
+    }
     if (page === 'toolbelt') {
         state.toolbelt = clone(snapshot.toolbelt || ensureToolbelt(state));
         return;
@@ -176,7 +234,8 @@ function restorePage(state, page, snapshot) {
         if (page === 'spells') {
             character.spellcasterLevel = saved.spellcasterLevel || 0;
             character.spellSlots = clone(saved.spellSlots || {});
-            character.customFeatures = clone(saved.customFeatures || []);
+            character.customFeatures = normalizeFeatures(saved.customFeatures);
+            character.casting = normalizeCasting(saved.casting || character.casting, character);
             character.characterAbilities = clone(saved.characterAbilities || []);
             character.characterActions = clone(saved.characterActions || []);
             character.ac = saved.ac || character.ac || 10;
@@ -222,13 +281,7 @@ function addLogEntry(state, action, client, page, label, before, after, reversib
     };
 
     state.actionLog.push(entry);
-    if (state.actionLog.length > LOG_LIMIT) {
-        const removed = state.actionLog.splice(0, state.actionLog.length - LOG_LIMIT);
-        const removedIds = new Set(removed.map(item => item.id));
-        Object.keys(state.redoStacks || {}).forEach(pageName => {
-            state.redoStacks[pageName] = (state.redoStacks[pageName] || []).filter(id => !removedIds.has(id));
-        });
-    }
+    pruneHistory(state);
     if (!state.redoStacks[page]) state.redoStacks[page] = [];
     if (reversible) state.redoStacks[page] = [];
     return entry;
@@ -242,11 +295,13 @@ function ensureInventory(character) {
 function ensureSpellShape(character) {
     if (!character.spellSlots || typeof character.spellSlots !== 'object') character.spellSlots = {};
     if (!Array.isArray(character.customFeatures)) character.customFeatures = [];
+    character.customFeatures = normalizeFeatures(character.customFeatures);
+    character.casting = normalizeCasting(character.casting, character);
     character.characterAbilities = Array.isArray(character.characterAbilities)
         ? character.characterAbilities.map(normalizeCharacterAbility)
         : [];
     character.characterActions = Array.isArray(character.characterActions)
-        ? character.characterActions.map(normalizeCharacterAbility)
+        ? character.characterActions.map(normalizeCharacterAction)
         : [];
     if (!character.hitDice || typeof character.hitDice !== 'object') character.hitDice = { max: 0, current: 0 };
     if (!character.abilityScores || typeof character.abilityScores !== 'object') {
@@ -280,6 +335,31 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
     const payload = action.payload || {};
 
     switch (action.type) {
+        case 'toolbelt.partyCheck.record': {
+            const key = String(payload.checkKey || '');
+            const [kind, check] = key.split(':');
+            if (!((kind === 'save' || kind === 'ability') && ABILITY_KEYS.includes(check)) && !(kind === 'skill' && SKILL_KEYS.includes(check))) throw new Error('Neplatny party check.');
+            if (key !== `${kind}:${check}`) throw new Error('Neplatny party check.');
+            const results = Array.isArray(payload.results) ? payload.results : [];
+            const validated = results.map(result => {
+                const character = findCharacter(state, result.characterId);
+                if (!character || character.type !== 'player' || character.activeInCombat === false || !Number.isFinite(result.total)) throw new Error('Neplatny vysledek.');
+                return [character.id, {
+                    total: result.total,
+                    natural: Number.isInteger(result.natural) && result.natural >= 1 && result.natural <= 20 ? result.natural : null,
+                    detail: String(result.detail || '').slice(0, 500)
+                }];
+            });
+            const toolbelt = ensureToolbelt(state);
+            if (!toolbelt.partyChecks) toolbelt.partyChecks = {};
+            toolbelt.partyChecks[key] = { ...(toolbelt.partyChecks[key] || {}), ...Object.fromEntries(validated) };
+            return `Party Checks: ${key}`;
+        }
+        case 'toolbelt.partyCheck.clear': {
+            const toolbelt = ensureToolbelt(state);
+            if (toolbelt.partyChecks) delete toolbelt.partyChecks[String(payload.checkKey)];
+            return 'Party Checks: clear results';
+        }
         case 'toolbelt.dice.add': {
             const toolbelt = ensureToolbelt(state);
             const key = String(client.id || payload.actorId || 'player');
@@ -382,6 +462,22 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             }
             return `${character.name} pridana do trackeru`;
         }
+        case 'character.setMonsterNumber': {
+            const character = findCharacter(state, payload.characterId);
+            if (!character || character.type !== 'monster' || character.isNonMonster) throw new Error('Monstrum neexistuje.');
+            const value = Number(payload.value);
+            if (!Number.isSafeInteger(value) || value < 0) throw new Error('Neplatne cislo monstra.');
+            const primaryId = character.id.replace(/_turn2$/, '');
+            const primary = findCharacter(state, primaryId);
+            const source = primary || character;
+            const oldName = source.id.endsWith('_turn2') ? source.name.replace(/ \(Turn 2\)$/, '') : source.name;
+            const baseName = oldName === source.monsterData?.name ? oldName : oldName.replace(/\s+\d+$/, '');
+            const name = value ? `${baseName} ${value}` : baseName;
+            if (primary) primary.name = name;
+            const secondary = findCharacter(state, `${primaryId}_turn2`);
+            if (secondary) secondary.name = `${name} (Turn 2)`;
+            return `${oldName}: oznaceni ${name}`;
+        }
         case 'character.remove': {
             const character = findCharacter(state, payload.characterId);
             if (!character) throw new Error('Postava neexistuje.');
@@ -421,27 +517,33 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
         case 'character.adjustHp': {
             const character = findCharacter(state, payload.characterId);
             if (!character) throw new Error('Postava neexistuje.');
+            if (character.isNonMonster && !character.hasHpAc) throw new Error('Tento non-monster objekt nema HP.');
             const amount = toNumber(payload.amount, 0);
             if (amount < 0) {
                 let damage = Math.abs(amount);
                 const tempDamage = Math.min(character.tempHp || 0, damage);
                 character.tempHp = (character.tempHp || 0) - tempDamage;
                 damage -= tempDamage;
-                character.currentHp = clamp((character.currentHp || 0) - damage, 0, character.maxHp || 1);
+                character.currentHp = clamp((character.currentHp || 0) - damage, 0, effectiveMaxHp(character));
             } else {
-                character.currentHp = clamp((character.currentHp || 0) + amount, 0, character.maxHp || 1);
+                character.currentHp = clamp((character.currentHp || 0) + amount, 0, effectiveMaxHp(character));
             }
             return `${character.name}: ${amount >= 0 ? '+' : ''}${amount} HP`;
         }
         case 'character.setTempHp': {
             const character = findCharacter(state, payload.characterId);
             if (!character) throw new Error('Postava neexistuje.');
+            if (character.isNonMonster && !character.hasHpAc) throw new Error('Tento non-monster objekt nema HP.');
             character.tempHp = Math.max(0, toNumber(payload.value, 0));
             return `${character.name}: temp HP ${character.tempHp}`;
         }
         case 'character.setInitiative': {
             const character = findCharacter(state, payload.characterId);
             if (!character) throw new Error('Postava neexistuje.');
+            if (character.isNonMonster) {
+                character.initiative = Number(character.fixedInitiative ?? 20);
+                return `${character.name}: fixed initiative ${character.initiative}`;
+            }
             character.initiative = payload.value === '' || payload.value === null ? null : toNumber(payload.value, 0);
             // If this is the primary of a multi-turn monster, update secondary initiative too
             if (character.hasMultipleTurns && !character.id.endsWith('_turn2')) {
@@ -456,7 +558,7 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
         case 'character.updatePower': {
             const character = findCharacter(state, payload.characterId);
             if (!character) throw new Error('Postava neexistuje.');
-            character.currentPower = Math.max(0, toNumber(payload.value, character.currentPower || 0));
+            character.currentPower = Math.max(0, payload.delta !== undefined ? (character.currentPower || 0) + toNumber(payload.delta) : toNumber(payload.value, character.currentPower || 0));
             if (character.monsterAbilities?.power) character.monsterAbilities.power.current = character.currentPower;
             return `${character.name}: ${character.powerName || 'Power'} ${character.currentPower}`;
         }
@@ -474,13 +576,31 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             if (!name) throw new Error('Efekt nema nazev.');
             if (!Array.isArray(character.effects)) character.effects = [];
             const effect = { name, level: payload.level ?? null };
+            if (payload.remainingRounds !== undefined && payload.remainingRounds !== null && payload.remainingRounds !== '') {
+                if (!Number.isInteger(Number(payload.remainingRounds)) || Number(payload.remainingRounds) < 1) throw new Error('Neplatne trvani condition.');
+                effect.remainingRounds = Number(payload.remainingRounds);
+            }
             if (payload.ability) effect.ability = payload.ability;
             if (payload.value !== undefined && payload.value !== null) effect.value = toNumber(payload.value, 0);
             if (payload.diceCount !== undefined && payload.diceCount !== null) effect.diceCount = Math.max(0, toNumber(payload.diceCount, 0));
             if (payload.diceSides !== undefined && payload.diceSides !== null) effect.diceSides = Math.max(0, toNumber(payload.diceSides, 0));
             if (payload.damageType !== undefined && payload.damageType !== null) effect.damageType = String(payload.damageType || '');
             character.effects.push(effect);
+            clampCurrentHpToEffectiveMax(character);
             return `${character.name}: efekt ${name}`;
+        }
+        case 'effect.duration.set': {
+            const character = findCharacter(state, payload.characterId);
+            const effect = character?.effects?.[Number(payload.index)];
+            if (!effect) throw new Error('Efekt neexistuje.');
+            const current = typeof effect === 'string' ? { name: effect, level: null } : { ...effect };
+            if (payload.remainingRounds === null || payload.remainingRounds === '' || Number(payload.remainingRounds) === 0) delete current.remainingRounds;
+            else {
+                if (!Number.isInteger(Number(payload.remainingRounds)) || Number(payload.remainingRounds) < 1) throw new Error('Neplatne trvani condition.');
+                current.remainingRounds = Number(payload.remainingRounds);
+            }
+            character.effects[Number(payload.index)] = current;
+            return `${character.name}: condition duration`;
         }
         case 'effect.remove': {
             const character = findCharacter(state, payload.characterId);
@@ -489,6 +609,7 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             const removed = character.effects?.[index];
             if (!removed) throw new Error('Efekt neexistuje.');
             character.effects.splice(index, 1);
+            clampCurrentHpToEffectiveMax(character);
             return `${character.name}: odebran efekt ${removed.name || removed}`;
         }
         case 'effect.level.set': {
@@ -500,6 +621,7 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             const current = typeof effect === 'string' ? { name: effect, level: null } : effect;
             const level = clamp(toNumber(payload.level, current.level || 1), 1, toNumber(payload.maxLevel, 20));
             character.effects[index] = { ...current, level };
+            clampCurrentHpToEffectiveMax(character);
             return `${character.name}: ${current.name} level ${level}`;
         }
         case 'effect.dice.set': {
@@ -518,6 +640,18 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
         case 'combat.start':
             startCombat(state);
             return 'Zahajen boj';
+        case 'combat.aoe.apply': {
+            const targets = prepareAoe(state, payload);
+            for (const { character, damage, effects } of targets) {
+                const absorbed = Math.min(character.tempHp || 0, damage);
+                character.tempHp = Math.max(0, (character.tempHp || 0) - absorbed);
+                character.currentHp = clamp((character.currentHp || 0) - (damage - absorbed), 0, effectiveMaxHp(character));
+                character.effects = effects;
+                clampCurrentHpToEffectiveMax(character);
+                syncMultiTurnCharacters(state, character.id);
+            }
+            return `AOE applied (${targets.length} targets)`;
+        }
         case 'combat.nextTurn':
             nextTurn(state);
             return 'Dalsi tah';
@@ -542,6 +676,7 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
                 round: Math.max(1, toNumber(payload.combatState?.round, 1)),
                 playedThisRound: Array.isArray(payload.combatState?.playedThisRound) ? payload.combatState.playedThisRound : []
             };
+            if (Number.isFinite(payload.combatState?.durationRound)) state.combatState.durationRound = Math.max(0, Math.floor(payload.combatState.durationRound));
             if (state.combatState.currentTurn >= state.characters.length) state.combatState.currentTurn = 0;
             return `Nacten combat stav (${characters.length} postav)`;
         }
@@ -602,6 +737,70 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             item.attuned = Boolean(payload.attuned);
             return `${character.name}: attunement ${item.name}`;
         }
+        case 'spell.casting.update': {
+            const character = findCharacter(state, payload.characterId);
+            if (!character || character.type !== 'player') throw new Error('Hrac neexistuje.');
+            ensureSpellShape(character);
+            if (!['standard', 'warlock', 'divineSpark'].includes(payload.casting?.type)) throw new Error('Neplatny casting type.');
+            const casting = normalizeCasting(payload.casting, character);
+            for (const id of (casting.type === 'warlock' ? Object.values(casting.featureByLevel) : casting.type === 'divineSpark' ? [casting.sparkFeatureId] : []).filter(Boolean)) {
+                if (!character.customFeatures.some(feature => feature.id === id)) throw new Error('Casting resource neexistuje.');
+            }
+            if (casting.type === 'warlock' && new Set(['1', '2', '3', '4', '5'].map(level => casting.featureByLevel[level])).size !== 1) throw new Error('Levely 1-5 musi sdilet jeden resource.');
+            if (casting.type === 'warlock' && !casting.featureByLevel['1']) throw new Error('Vyber sdileny Warlock resource.');
+            const maxima = Object.entries(payload.slotMaxByLevel || {}).map(([level, max]) => {
+                if (!/^[6-9]$/.test(level) || !Number.isInteger(max) || max < 0 || max > 100) throw new Error('Neplatny pocet spellslotu.');
+                return [level, max];
+            });
+            character.casting = casting;
+            if (casting.type === 'warlock') maxima.forEach(([level, max]) => { character.spellSlots[level] = { max, used: Math.min(max, character.spellSlots[level]?.used || 0) }; });
+            return `${character.name}: casting settings`;
+        }
+        case 'spell.spark.spend': {
+            const character = findCharacter(state, payload.characterId);
+            if (!character || character.type !== 'player') throw new Error('Hrac neexistuje.');
+            ensureSpellShape(character);
+            consumeSpark(character);
+            clampCurrentHpToEffectiveMax(character);
+            return `${character.name}: Divine Spark`;
+        }
+        case 'spell.cast': {
+            const character = findCharacter(state, payload.characterId);
+            if (!character || character.type !== 'player') throw new Error('Hrac neexistuje.');
+            ensureSpellShape(character);
+            const spell = state.spellDatabase.find(item => item.id === payload.spellId);
+            if (!spell || !character.spellbook.knownSpellIds.includes(spell.id)) throw new Error('Spell neni ve spellbooku.');
+            if (character.spellbook.preparesSpells && spell.levelKey !== 'cantrip' && !character.spellbook.preparedSpellIds.includes(spell.id)) throw new Error('Spell neni prepared.');
+            const level = String(payload.level || spell.levelKey);
+            if (spell.levelKey === 'cantrip') return `${character.name}: ${spell.name}`;
+            if (/^[1-9]$/.test(spell.levelKey) ? !/^[1-9]$/.test(level) || Number(level) < Number(spell.levelKey) : level !== spell.levelKey) throw new Error('Neplatny spell level.');
+            if (character.casting.type === 'divineSpark' && /^epic[1-3]$/.test(level)) {
+                consumeSpark(character);
+                clampCurrentHpToEffectiveMax(character);
+            } else {
+                const featureId = character.casting.type === 'warlock' ? character.casting.featureByLevel[level] : null;
+                if (featureId) {
+                    const feature = character.customFeatures.find(item => item.id === featureId);
+                    if (!feature || (feature.used || 0) >= feature.maxUses) throw new Error('Casting resource neni dostupny.');
+                    feature.used = (feature.used || 0) + 1;
+                    syncFeatureStatusEffect(character, feature);
+                } else {
+                    const slots = character.spellSlots[level];
+                    if (!slots || slots.used >= slots.max) throw new Error('Spellslot neni dostupny.');
+                    slots.used += 1;
+                }
+            }
+            return `${character.name}: cast ${spell.name} (${level})`;
+        }
+        case 'spell.slot.spend': {
+            const character = findCharacter(state, payload.characterId);
+            if (!character) throw new Error('Postava neexistuje.');
+            ensureSpellShape(character);
+            const slots = character.spellSlots[String(payload.level)];
+            if (!slots || slots.used >= slots.max) throw new Error('Spellslot neni dostupny.');
+            slots.used += 1;
+            return `${character.name}: spell slot L${payload.level}`;
+        }
         case 'spell.slot.toggle': {
             const character = findCharacter(state, payload.characterId);
             if (!character) throw new Error('Postava neexistuje.');
@@ -626,13 +825,28 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             character.hitDice.current = clamp(character.hitDice.current, 0, character.hitDice.max || 0);
             return `${character.name}: hit die`;
         }
+        case 'spell.feature.use':
+        case 'spell.feature.action.use': {
+            const character = findCharacter(state, payload.characterId);
+            if (!character) throw new Error('Postava neexistuje.');
+            ensureSpellShape(character);
+            const feature = featureFor(character, payload);
+            const usedAction = action.type === 'spell.feature.use' ? feature : feature?.actions.find(item => item.id === payload.actionId);
+            if (!usedAction) throw new Error('Feature action neexistuje.');
+            if ((feature.used || 0) >= feature.maxUses) throw new Error('Feature nema dostupna pouziti.');
+            spendActionReaction(character, usedAction);
+            feature.used = (feature.used || 0) + 1;
+            syncFeatureStatusEffect(character, feature);
+            return `${character.name}: ${feature.name}${usedAction === feature ? '' : ` — ${usedAction.name}`}`;
+        }
         case 'spell.feature.uses': {
             const character = findCharacter(state, payload.characterId);
             if (!character) throw new Error('Postava neexistuje.');
             ensureSpellShape(character);
-            const feature = character.customFeatures[Number(payload.index)];
+            const feature = featureFor(character, payload);
             if (!feature) throw new Error('Feature neexistuje.');
-            feature.used = clamp(toNumber(payload.used, feature.used || 0), 0, feature.maxUses || 0);
+            feature.used = clamp(payload.delta !== undefined ? (feature.used || 0) + toNumber(payload.delta) : toNumber(payload.used, feature.used || 0), 0, feature.maxUses || 0);
+            syncFeatureStatusEffect(character, feature);
             return `${character.name}: ${feature.name}`;
         }
         case 'spell.character.update': {
@@ -644,7 +858,7 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
                 current: clamp(toNumber(payload.hitDiceCurrent, character.hitDice?.current || 0), 0, Math.max(0, toNumber(payload.hitDiceMax, character.hitDice?.max || 0)))
             };
             updateSpellSlotsForLevel(character);
-            character.customFeatures = Array.isArray(payload.customFeatures) ? clone(payload.customFeatures) : character.customFeatures;
+            character.customFeatures = Array.isArray(payload.customFeatures) ? normalizeFeatures(payload.customFeatures) : character.customFeatures;
             return `${character.name}: kouzla/abilities`;
         }
         case 'spell.sheet.update': {
@@ -652,7 +866,7 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             if (!character || character.type !== 'player') throw new Error('Hrac neexistuje.');
             ensureSpellShape(character);
             character.maxHp = Math.max(1, toNumber(payload.maxHp, character.maxHp || 1));
-            character.currentHp = clamp(toNumber(character.currentHp, character.maxHp), 0, character.maxHp);
+            character.currentHp = clamp(toNumber(character.currentHp, effectiveMaxHp(character)), 0, effectiveMaxHp(character));
             character.proficiencyBonus = clamp(toNumber(payload.proficiencyBonus, character.proficiencyBonus || 2), 0, 10);
             character.ac = Math.max(0, toNumber(payload.ac, character.ac || 10));
             character.initBonus = toNumber(payload.initBonus, character.initBonus || 0);
@@ -671,11 +885,20 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             const character = findCharacter(state, payload.characterId);
             if (!character || character.type !== 'player') throw new Error('Hrac neexistuje.');
             ensureSpellShape(character);
-            const action = normalizeCharacterAbility(payload.action || payload);
+            const action = normalizeCharacterAction(payload.action || payload);
             const index = character.characterActions.findIndex(item => item.id === action.id);
             if (index === -1) character.characterActions.push(action);
             else character.characterActions[index] = action;
             return `${character.name}: action ${action.name}`;
+        }
+        case 'spell.action.use': {
+            const character = findCharacter(state, payload.characterId);
+            if (!character || character.type !== 'player') throw new Error('Hrac neexistuje.');
+            ensureSpellShape(character);
+            const action = character.characterActions.find(item => item.id === payload.id);
+            if (!action) throw new Error('Action neexistuje.');
+            spendActionReaction(character, action);
+            return `${character.name}: ${action.name}`;
         }
         case 'spell.action.remove': {
             const character = findCharacter(state, payload.characterId);
@@ -699,18 +922,18 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             const character = findCharacter(state, payload.characterId);
             if (!character) throw new Error('Postava neexistuje.');
             ensureSpellShape(character);
-            const index = Number(payload.index);
-            const current = character.customFeatures[index];
+            const current = featureFor(character, payload);
+            const index = character.customFeatures.indexOf(current);
             if (!current) throw new Error('Feature neexistuje.');
-            character.customFeatures[index] = normalizeFeaturePayload(payload, { used: current.used || 0 });
+            character.customFeatures[index] = normalizeFeaturePayload(payload, current);
             return `${character.name}: upravena feature ${character.customFeatures[index].name}`;
         }
         case 'spell.feature.remove': {
             const character = findCharacter(state, payload.characterId);
             if (!character) throw new Error('Postava neexistuje.');
             ensureSpellShape(character);
-            const index = Number(payload.index);
-            const removed = character.customFeatures[index];
+            const removed = featureFor(character, payload);
+            const index = character.customFeatures.indexOf(removed);
             if (!removed) throw new Error('Feature neexistuje.');
             character.customFeatures.splice(index, 1);
             return `${character.name}: odebrana feature ${removed.name}`;
@@ -800,7 +1023,7 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             if (!character || character.type !== 'monster') throw new Error('Monstrum neexistuje.');
             const feature = character.monsterAbilities?.customFeatures?.[Number(payload.index)];
             if (!feature) throw new Error('Feature neexistuje.');
-            feature.used = clamp(toNumber(payload.used, feature.used || 0), 0, feature.maxUses || 0);
+            feature.used = clamp(payload.delta !== undefined ? (feature.used || 0) + toNumber(payload.delta) : toNumber(payload.used, feature.used || 0), 0, feature.maxUses || 0);
             // Track recharge attempts - only one per turn
             if (payload.rechargeAttempted !== undefined) {
                 feature.rechargeAttempted = Boolean(payload.rechargeAttempted);
@@ -813,7 +1036,7 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             const slots = character.monsterAbilities?.spellcasting?.spellSlots?.[String(payload.level)] || character.monsterAbilities?.spellSlots?.[String(payload.level)];
             if (!slots || slots.atWill) throw new Error('Spell slot level neexistuje.');
             const index = Number(payload.index);
-            slots.used = index < slots.used ? index : index + 1;
+            slots.used = payload.delta !== undefined ? slots.used + toNumber(payload.delta) : payload.used !== undefined ? toNumber(payload.used) : index < slots.used ? index : index + 1;
             slots.used = clamp(slots.used, 0, slots.max || 0);
             if (character.monsterAbilities?.spellSlots?.[String(payload.level)]) character.monsterAbilities.spellSlots[String(payload.level)].used = slots.used;
             return `${character.name}: monster spell slot L${payload.level}`;
@@ -823,7 +1046,7 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             if (!character || character.type !== 'monster') throw new Error('Monstrum neexistuje.');
             const spell = character.monsterAbilities?.spellcasting?.perDaySpells?.[Number(payload.index)] || character.monsterAbilities?.perDaySpells?.[Number(payload.index)];
             if (!spell) throw new Error('Spell neexistuje.');
-            spell.used = clamp(toNumber(payload.used, spell.used || 0), 0, spell.maxUses || 0);
+            spell.used = clamp(payload.delta !== undefined ? (spell.used || 0) + toNumber(payload.delta) : toNumber(payload.used, spell.used || 0), 0, spell.maxUses || 0);
             if (character.monsterAbilities?.perDaySpells?.[Number(payload.index)]) character.monsterAbilities.perDaySpells[Number(payload.index)].used = spell.used;
             return `${character.name}: ${spell.name}`;
         }
@@ -832,7 +1055,7 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             if (!character || character.type !== 'monster') throw new Error('Monstrum neexistuje.');
             const legendary = character.monsterAbilities?.legendaryActions;
             if (!legendary?.enabled) throw new Error('Legendary actions nejsou aktivni.');
-            legendary.used = clamp(toNumber(payload.used, legendary.used || 0), 0, legendary.max || 0);
+            legendary.used = clamp(payload.delta !== undefined ? (legendary.used || 0) + toNumber(payload.delta) : toNumber(payload.used, legendary.used || 0), 0, legendary.max || 0);
             return `${character.name}: legendary ${legendary.used}/${legendary.max}`;
         }
         case 'monster.epic.uses': {
@@ -840,8 +1063,50 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             if (!character || character.type !== 'monster') throw new Error('Monstrum neexistuje.');
             const epic = character.monsterAbilities?.epicActions?.actions?.[Number(payload.index)];
             if (!epic) throw new Error('Epic action neexistuje.');
-            epic.used = clamp(toNumber(payload.used, epic.used || 0), 0, epic.maxUses || 0);
+            epic.used = clamp(payload.delta !== undefined ? (epic.used || 0) + toNumber(payload.delta) : toNumber(payload.used, epic.used || 0), 0, epic.maxUses || 0);
             return `${character.name}: epic ${epic.name}`;
+        }
+        case 'encounter.upsert': {
+            const encounter = normalizeEncounter(payload.encounter || {});
+            const index = (state.encounters || []).findIndex(item => item.id === encounter.id);
+            if (index >= 0) state.encounters[index] = encounter;
+            else state.encounters = [...(state.encounters || []), encounter];
+            return `Encounter ulozen: ${encounter.name}`;
+        }
+        case 'encounter.remove': {
+            state.encounters = (state.encounters || []).filter(item => item.id !== payload.id);
+            if (state.activeEncounterId === payload.id) state.activeEncounterId = null;
+            return 'Encounter odstraněn';
+        }
+        case 'encounter.group.upsert': {
+            const group = normalizeEncounterGroup(payload.group || {});
+            const index = (state.encounterGroups || []).findIndex(item => item.id === group.id);
+            if (index >= 0) state.encounterGroups[index] = group;
+            else state.encounterGroups = [...(state.encounterGroups || []), group];
+            return `Story arc uložen: ${group.name}`;
+        }
+        case 'encounter.group.remove': {
+            state.encounterGroups = (state.encounterGroups || []).filter(item => item.id !== payload.id);
+            state.encounters = (state.encounters || []).map(item => item.groupId === payload.id ? { ...item, groupId: null } : item);
+            return 'Story arc odstraněn';
+        }
+        case 'encounter.importToCombat': {
+            const encounter = (state.encounters || []).find(item => item.id === payload.encounterId);
+            if (!encounter) throw new Error('Encounter neexistuje.');
+            const added = addEncounterEntriesToCombat(state, encounter.monsters);
+            if (!added) throw new Error('Encounter neobsahuje žádná dostupná monstra.');
+            state.activeEncounterId = encounter.id;
+            return `Do boje přidán encounter ${encounter.name} (${added} monster)`;
+        }
+        case 'encounter.reserve.addToCombat': {
+            const encounter = (state.encounters || []).find(item => item.id === payload.encounterId);
+            if (!encounter) throw new Error('Encounter neexistuje.');
+            const entry = (encounter.reserve || []).find(item => item.id === payload.entryId);
+            if (!entry) throw new Error('Rezervní monstrum neexistuje.');
+            const added = addEncounterEntriesToCombat(state, [{ ...entry, quantity: Math.max(1, Number(payload.quantity) || 1) }]);
+            if (!added) throw new Error('Monstrum už není v databázi.');
+            state.activeEncounterId = encounter.id;
+            return 'Rezerva přidána do boje';
         }
         case 'database.monster.upsert': {
             upsertDatabaseItem(state.monsterDatabase, normalizeMonsterDbItem(payload.monster || {}), 'monster_db');
@@ -966,6 +1231,10 @@ function startCombat(state) {
         }
         // Secondary turn entries get their initiative from the primary
         if (character.id.endsWith('_turn2')) return;
+        if (character.isNonMonster) {
+            character.initiative = Number(character.fixedInitiative ?? 20);
+            return;
+        }
         if (character.initiative === null || character.initiative === undefined) {
             const initiative = rollInitiative(character);
             character.initiative = initiative;
@@ -1057,6 +1326,18 @@ function nextTurn(state) {
         state.combatState.playedThisRound.push(state.combatState.currentTurn);
         state.combatState.currentTurn = indexes[currentPosition + 1];
     } else {
+        const completedRound = state.combatState.round;
+        if (completedRound > (state.combatState.durationRound ?? completedRound - 1)) {
+            for (const index of indexes) {
+                const character = state.characters[index];
+                character.effects = (character.effects || []).flatMap(effect => {
+                    if (typeof effect === 'string' || !effect.remainingRounds) return [effect];
+                    return effect.remainingRounds > 1 ? [{ ...effect, remainingRounds: effect.remainingRounds - 1 }] : [];
+                });
+                clampCurrentHpToEffectiveMax(character);
+            }
+            state.combatState.durationRound = completedRound;
+        }
         state.combatState.round += 1;
         state.combatState.currentTurn = indexes[0];
         state.combatState.playedThisRound = [];
@@ -1178,7 +1459,16 @@ function normalizeFeaturePayload(payload, fallback) {
     const maxUses = Math.max(1, toNumber(payload.maxUses, 1));
     const name = String(payload.name || '').trim();
     if (!name) throw new Error('Feature nema nazev.');
+    if (payload.actions !== undefined && (!Array.isArray(payload.actions) || payload.actions.some(action => !action || !String(action.name || '').trim()))) throw new Error('Kazda feature action musi mit nazev.');
+    const actions = normalizeFeatureActions(payload.actions ?? fallback.actions);
+    if (new Set(actions.map(action => action.id)).size !== actions.length) throw new Error('Feature actions musi mit unikatni ID.');
     return {
+        ...fallback,
+        id: fallback.id || makeId('feature'),
+        description: String(payload.description ?? fallback.description ?? ''),
+        isAction: Boolean(payload.isAction ?? fallback.isAction),
+        ...normalizeActionSettings({ ...fallback, ...payload }),
+        actions,
         name,
         maxUses,
         used: clamp(toNumber(fallback.used, 0), 0, maxUses),
@@ -1267,10 +1557,18 @@ function regainFeatureUses(feature, restType) {
 
 function applyRest(character, restType) {
     ensureSpellShape(character);
-    character.customFeatures.forEach(feature => regainFeatureUses(feature, restType));
+    character.customFeatures.forEach(feature => {
+        regainFeatureUses(feature, restType);
+        syncFeatureStatusEffect(character, feature);
+    });
+    if (character.casting?.type === 'warlock') {
+        const linked = new Set(Object.values(character.casting.featureByLevel));
+        character.customFeatures.filter(feature => linked.has(feature.id)).forEach(feature => { feature.used = 0; syncFeatureStatusEffect(character, feature); });
+        Object.entries(character.spellSlots).forEach(([level, slots]) => { if (/^[1-9]$/.test(level)) slots.used = 0; });
+    }
     if (restType !== 'long') return;
 
-    character.currentHp = character.maxHp || 1;
+    character.currentHp = effectiveMaxHp(character);
     character.tempHp = 0;
     Object.keys(character.spellSlots || {}).forEach(level => {
         character.spellSlots[level].used = 0;
@@ -1322,6 +1620,74 @@ function transferInventoryItem(state, payload) {
     const targetInventory = ensureInventory(target);
     if (!Array.isArray(targetInventory[payload.collection])) throw new Error('Neznama kolekce inventare.');
     targetInventory[payload.collection].push(clone(item));
+}
+
+function addEncounterEntriesToCombat(state, entries) {
+    let added = 0;
+    (entries || []).forEach(entry => {
+        const monster = (state.monsterDatabase || []).find(item => item.id === entry.monsterId);
+        if (!monster) return;
+        const copies = Math.max(1, Math.min(99, Number(entry.quantity) || 1));
+        for (let index = 0; index < copies; index += 1) {
+            const power = monster.monsterAbilities?.power;
+            const maxPower = Number(power?.max ?? monster.maxPower ?? 0) || 0;
+            const name = copies > 1 ? `${monster.name} ${index + 1}` : monster.name;
+            const character = normalizeCharacter({
+                id: makeId('monster'),
+                name,
+                type: 'monster',
+                activeInCombat: true,
+                maxHp: Number(monster.hp || monster.maxHp || 1),
+                currentHp: Number(monster.hp || monster.maxHp || 1),
+                ac: Number(monster.ac || 10),
+                maxReactions: Number(monster.maxReactions || 1),
+                currentReactions: Number(monster.maxReactions || 1),
+                initBonus: Number(monster.initBonus || 0),
+                maxPower,
+                currentPower: Number(power?.current ?? maxPower) || 0,
+                powerName: String(power?.name || monster.powerName || 'Power'),
+                hasMultipleTurns: Boolean(monster.hasMultipleTurns),
+                isNonMonster: monster.entityKind === 'nonMonster',
+                hasHpAc: monster.entityKind !== 'nonMonster' || Boolean(monster.hasHpAc),
+                fixedInitiative: monster.fixedInitiative,
+                monsterData: monster,
+                monsterAbilities: monster.monsterAbilities
+            });
+            state.characters.push(character);
+            if (character.hasMultipleTurns) {
+                state.characters.push(normalizeCharacter({
+                    ...clone(character),
+                    id: `${character.id}_turn2`,
+                    name: `${character.name} (Turn 2)`,
+                    initiative: character.initiative === null ? null : character.initiative - 10,
+                    hasMultipleTurns: false
+                }));
+            }
+            if (monster.hasLairActions) state.characters.push(createAssociatedActionObject(monster, name, 'lair'));
+            if (monster.hasMythicActions) state.characters.push(createAssociatedActionObject(monster, name, 'mythic'));
+            added += 1;
+        }
+    });
+    return added;
+}
+
+function createAssociatedActionObject(monster, parentName, kind) {
+    const actionEntries = kind === 'lair' ? monster.lairActions : monster.mythicActions;
+    const fixedInitiative = Number(kind === 'lair' ? monster.lairActionInitiative : monster.mythicActionInitiative) || 20;
+    const cleanName = value => String(value || '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+    const names = new Set((actionEntries || []).map(entry => cleanName(entry.name)));
+    const tracked = (monster.monsterAbilities?.customFeatures || []).filter(feature => names.has(cleanName(feature.name)));
+    const label = kind === 'lair' ? 'Lair' : 'Mythic';
+    return normalizeCharacter({
+        id: makeId('monster'), name: `${parentName} ${label} Actions`, type: 'monster', activeInCombat: true,
+        maxHp: 0, currentHp: 0, ac: 0, maxReactions: 0, currentReactions: 0,
+        initiative: fixedInitiative, fixedInitiative, initBonus: 0, isNonMonster: true, hasHpAc: false, associatedObjectKind: kind,
+        monsterData: {
+            name: `${parentName} ${label} Actions`, entityKind: 'nonMonster', hasHpAc: false, fixedInitiative, initBonus: 0,
+            description: (actionEntries || []).map(item => `${item.name || ''}\n${item.description || ''}`).join('\n\n'), actions: actionEntries || []
+        },
+        monsterAbilities: { enabled: tracked.length > 0, customFeatures: tracked }
+    });
 }
 
 function upsertDatabaseItem(collection, item, prefix) {
@@ -1442,6 +1808,14 @@ function normalizeImport(items) {
 }
 
 function updateSpellSlotsForLevel(character) {
+    if (character.casting?.type === 'warlock') {
+        const retained = Object.fromEntries(Object.entries(character.spellSlots || {}).filter(([level]) => /^[6-9]$/.test(level)));
+        Object.entries(epicSlotsForLevel(character.spellcasterLevel || 0)).forEach(([level, max]) => {
+            if (max > 0) retained[level] = { max, used: clamp(character.spellSlots?.[level]?.used || 0, 0, max) };
+        });
+        character.spellSlots = retained;
+        return;
+    }
     const slotsArray = SPELL_SLOTS_TABLE[Math.min(20, character.spellcasterLevel || 0)] || [];
     const nextSlots = {};
     slotsArray.forEach((max, index) => {
@@ -1518,7 +1892,12 @@ function syncMultiTurnCharacters(state, changedId) {
 }
 
 function applyGameAction(state, action, client) {
-    const page = action.page || pageForAction(action.type);
+    if (action.type === 'history.clear') {
+        state.actionLog = [];
+        state.redoStacks = {};
+        return { state, entry: null };
+    }
+    const page = action.type === 'combat.aoe.apply' ? 'combat' : action.page || pageForAction(action.type);
     const before = snapshotPage(state, page);
     const label = applyActionMutation(state, action, client);
     // Sync multi-turn monster entries after any character or monster action
@@ -1536,8 +1915,10 @@ function applyGameAction(state, action, client) {
 }
 
 function undoPage(state, page, client) {
+    pruneHistory(state);
     const entry = [...state.actionLog].reverse().find(item => item.page === page && item.reversible && !item.undone);
     if (!entry) throw new Error('Na teto strance neni co vratit.');
+    if (entry.type === 'combat.aoe.apply' && client.role !== 'dm') throw new Error('AOE muze vratit pouze DM.');
     restorePage(state, page, entry.before);
     entry.undone = true;
     if (!state.redoStacks[page]) state.redoStacks[page] = [];
@@ -1548,8 +1929,8 @@ function undoPage(state, page, client) {
         client,
         page,
         `Undo: ${entry.label}`,
-        snapshotPage(state, page),
-        snapshotPage(state, page),
+        undefined,
+        undefined,
         false,
         entry.visibility
     );
@@ -1557,10 +1938,13 @@ function undoPage(state, page, client) {
 }
 
 function redoPage(state, page, client) {
+    pruneHistory(state);
     const stack = state.redoStacks[page] || [];
-    const entryId = stack.pop();
+    const entryId = stack[stack.length - 1];
     const entry = state.actionLog.find(item => item.id === entryId);
     if (!entry || !entry.undone) throw new Error('Na teto strance neni co znovu provest.');
+    if (entry.type === 'combat.aoe.apply' && client.role !== 'dm') throw new Error('AOE muze zopakovat pouze DM.');
+    stack.pop();
     restorePage(state, page, entry.after);
     entry.undone = false;
     const redoEntry = addLogEntry(
@@ -1569,8 +1953,8 @@ function redoPage(state, page, client) {
         client,
         page,
         `Redo: ${entry.label}`,
-        snapshotPage(state, page),
-        snapshotPage(state, page),
+        undefined,
+        undefined,
         false,
         entry.visibility
     );

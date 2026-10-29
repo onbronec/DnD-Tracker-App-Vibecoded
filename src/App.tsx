@@ -7,14 +7,16 @@ import { SpellsPage } from './pages/SpellsPage';
 import { MonstersPage } from './pages/MonstersPage';
 import { DatabasesPage } from './pages/DatabasesPage';
 import { MonsterEditorPage } from './pages/MonsterEditorPage';
+import { EncounterPlannerPage } from './pages/EncounterPlannerPage';
 import { HistoryPanel } from './components/HistoryPanel';
-import { Toolbelt } from './components/Toolbelt';
+import { Toolbelt, type DiceRollRequest } from './components/Toolbelt';
 import { DatabaseReferenceProvider } from './components/DatabaseReferences';
 
 const PAGES: Array<{ id: PageScope; label: string; dmOnly?: boolean }> = [
   { id: 'combat', label: 'Combat' },
   { id: 'spells', label: 'Character Sheets' },
   { id: 'monsters', label: 'Monster Abilities', dmOnly: true },
+  { id: 'encounters', label: 'Encounter Planner', dmOnly: true },
   { id: 'inventory', label: 'Inventory' },
   { id: 'databases', label: 'Databases' }
 ];
@@ -24,7 +26,13 @@ export function App() {
   const [page, setPage] = useState<PageScope>('combat');
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null);
   const [editingMonsterId, setEditingMonsterId] = useState<string | null>(null);
-  const [historyOpen, setHistoryOpen] = useState(true);
+  const [databaseTab, setDatabaseTab] = useState<'magic' | 'potion' | 'condition' | 'spell' | 'characters' | 'monster'>('magic');
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [diceRequest, setDiceRequest] = useState<DiceRollRequest | null>(null);
+
+  function openDiceRoller(expression: string) {
+    setDiceRequest({ expression, key: Date.now() });
+  }
 
   const state = socket.state;
   const isDM = socket.role === 'dm';
@@ -96,7 +104,7 @@ export function App() {
   }
 
   return (
-    <DatabaseReferenceProvider state={state}>
+    <DatabaseReferenceProvider state={state} onOpenDiceRoller={openDiceRoller}>
       <main className="app-shell">
       <header className="topbar">
         <div>
@@ -121,7 +129,7 @@ export function App() {
             {item.label}
           </button>
         ))}
-        <button className="nav-btn history-toggle" onClick={() => setHistoryOpen(value => !value)}>
+        <button className={`nav-btn history-toggle ${historyOpen ? 'active' : ''}`} aria-expanded={historyOpen} aria-controls="history-panel" onClick={() => setHistoryOpen(value => !value)}>
           History
         </button>
       </nav>
@@ -188,10 +196,21 @@ export function App() {
               role={socket.role}
               submitAction={submitPageAction}
               onBackToCombat={() => setPage('combat')}
+              initialTab={databaseTab}
+              onActiveTabChange={setDatabaseTab}
               onOpenMonsterEditor={(monsterId) => {
                 setEditingMonsterId(monsterId);
+                setDatabaseTab('monster');
                 setPage('monster-editor');
               }}
+            />
+          )}
+          {page === 'encounters' && isDM && (
+            <EncounterPlannerPage
+              state={state}
+              submitAction={submitPageAction}
+              onCreateMonster={() => { setEditingMonsterId(null); setDatabaseTab('monster'); setPage('monster-editor'); }}
+              onOpenCombat={() => setPage('combat')}
             />
           )}
           {page === 'monster-editor' && isDM && (
@@ -210,12 +229,14 @@ export function App() {
           <HistoryPanel
             currentPage={page}
             entries={socket.history}
+            onCollapse={() => setHistoryOpen(false)}
             onUndo={() => socket.undo(page)}
             onRedo={() => socket.redo(page)}
+            onClear={isDM ? () => { socket.submitAction({ type: 'history.clear' }); } : undefined}
           />
         )}
       </div>
-      <Toolbelt role={socket.role} state={state} submitAction={socket.submitAction} />
+      <Toolbelt role={socket.role} state={state} submitAction={socket.submitAction} diceRequest={diceRequest} />
       </main>
     </DatabaseReferenceProvider>
   );

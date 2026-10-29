@@ -1,7 +1,85 @@
 import { describe, expect, it } from 'vitest';
-import { parseMonsterMarkdown } from '../../src/shared/monsterParser';
+import { parseMonsterEntries, parseMonsterMarkdown, parseMonsterSpellcasting } from '../../src/shared/monsterParser';
+import { weirdboyActions } from '../fixtures/monsterSpellcasting';
 
 describe('monster Markdown parser', () => {
+  it('keeps spell lists and continuation paragraphs inside one action through editor round-trips', () => {
+    const entries = parseMonsterEntries(weirdboyActions);
+    expect(entries.map(entry => entry.name)).toEqual(['Spellcasting — LOUDER! BIGGER!', 'Bonecracking Staff']);
+    expect(entries[0].description).toContain('All limited uses recharge');
+    expect(parseMonsterEntries(entries.map(entry => entry.description).join('\n\n'))).toEqual(entries);
+    const spells = parseMonsterSpellcasting(entries[0].description);
+    expect(spells.spellcastingType).toBe('per-day');
+    expect(spells.atWillSpells).toHaveLength(12);
+    expect(spells.perDaySpells).toHaveLength(22);
+    expect(spells.counterspells).toHaveLength(4);
+  });
+
+  it.each([{ spells: undefined }, { spells: [
+    { name: 'Fly' }, { name: 'Lightning Bolt' }, { name: 'Chain Lightning' },
+    { name: 'Globe of Invulnerability' }, { name: 'Meteor Swarm' }, { name: 'Sonic Boom' },
+    { name: 'Obsidian Tombs' }, { name: 'The Classic', source: 'Counterspell' },
+    { name: 'The Mage Killer', source: 'Counterspell' }, { name: 'The Feint', source: 'Counterspell' }
+  ] }])('imports decorated per-day spell lists instead of a trait mentioning Spellcasting (database: %j)', ({ spells: spellDatabase }) => {
+    const parsed = parseMonsterMarkdown(`# Grimfang Weirdboy
+
+## Regular Traits
+**Follower of Gruumsh.** The Weirdboy participates in Gruumsh Warband mechanics.
+**You Cheated! Do It Again! (1/Action).** When a spell the Weirdboy casts as part of his Spellcasting action is successfully countered, he can immediately cast a different spell.
+
+## Actions
+**Bonecracking Staff.** Melee Weapon Attack: +12 to hit.
+**Spellcasting — LOUDER! BIGGER!** The Weirdboy casts two spells from the list below as one action.
+- **At Will:** Fly, Lightning Bolt.
+- **Counterspells:** The Classic, The Mage Killer, The Feint (use their existing campaign rules).
+- **3/Day Each:** Chain Lightning, Globe of Invulnerability.
+- **1/Day Each:** Meteor Swarm, Sonic Boom *(Epic Tier 1)*, Obsidian Tombs *(Epic Tier 2)*.
+
+All limited uses recharge when the Weirdboy finishes a long rest.
+
+## Reactions
+**Spellcasting.** The Weirdboy can cast Shield when its normal reaction trigger occurs.
+`.replace(/\n/g, '\r\n'), spellDatabase);
+
+    const spellcasting = parsed.monsterAbilities.spellcasting;
+    expect(parsed.actions.map(entry => entry.name)).toEqual(['Bonecracking Staff', 'Spellcasting — LOUDER! BIGGER!']);
+    expect(spellcasting.enabled).toBe(true);
+    expect(spellcasting.spellcastingType).toBe('per-day');
+    expect(spellcasting.spellSlots).toEqual({});
+    expect(spellcasting.atWillSpells).toEqual(['Fly', 'Lightning Bolt']);
+    expect(spellcasting.counterspells).toEqual(['The Classic', 'The Mage Killer', 'The Feint']);
+    expect(spellcasting.perDaySpells).toEqual([
+      { name: 'Chain Lightning', maxUses: 3, used: 0 },
+      { name: 'Globe of Invulnerability', maxUses: 3, used: 0 },
+      { name: 'Meteor Swarm', maxUses: 1, used: 0 },
+      { name: 'Sonic Boom', maxUses: 1, used: 0 },
+      { name: 'Obsidian Tombs', maxUses: 1, used: 0 }
+    ]);
+  });
+
+  it('does not enable spellcasting for a trait that only mentions it', () => {
+    const parsed = parseMonsterMarkdown(`# Guard
+## Regular Traits
+**Mage Hunter.** The guard interrupts an enemy's Spellcasting action.
+`);
+    expect(parsed.monsterAbilities.spellcasting.enabled).toBe(false);
+  });
+
+  it('accepts Markdown list markers and bold labels for slot-based spellcasting', () => {
+    const parsed = parseMonsterMarkdown(`# Mage
+## Regular Traits
+**Innate Spellcasting.** The mage casts spells.
+* **Cantrips (at will):** Light.
++ **1st level (4 slots):** Shield, Magic Missile.
+- **Epic Tier 1 (2 slots):** Sonic Boom.
+`);
+    const spellcasting = parsed.monsterAbilities.spellcasting;
+    expect(spellcasting.spellcastingType).toBe('custom-slots');
+    expect(spellcasting.atWillSpells).toEqual(['Light']);
+    expect(spellcasting.spellSlots['1']).toEqual({ max: 4, used: 0, atWill: false, spells: ['Shield', 'Magic Missile'] });
+    expect(spellcasting.spellSlots.epic1).toEqual({ max: 2, used: 0, atWill: false, spells: ['Sonic Boom'] });
+  });
+
   it('parses Notion-style monster statblocks into editable monster data', () => {
     const parsed = parseMonsterMarkdown(`
 Zealot
@@ -255,5 +333,27 @@ Demon Lord
     expect(parsed.damageImmunities).toBe('Poison, Acid, Hellfire, Vile');
     expect(parsed.conditionImmunities).toBe('Poisoned, Charmed, Stunned');
     expect(parsed.damageVulnerabilities).toBe('Radiant, Righteous');
+  });
+
+  it('imports encounter points and a fixed-initiative non-monster object', () => {
+    const parsed = parseMonsterMarkdown(`
+# Gruumsh Warband
+**Entity Type:** Non-Monster
+**Fixed Initiative:** 20
+**Has HP/AC:** no
+**Encounter Points:** 0.5
+**Expected DPR:** 35
+
+## Actions
+**Gruumsh's Gaze (1/Round).** Choose a Hunter and Prey.
+`);
+
+    expect(parsed).toEqual(expect.objectContaining({
+      name: 'Gruumsh Warband', entityKind: 'nonMonster', hasHpAc: false,
+      fixedInitiative: 20, encounterPoints: 0.5, dpr: 35
+    }));
+    expect(parsed.monsterAbilities.customFeatures).toContainEqual(
+      expect.objectContaining({ name: "Gruumsh's Gaze", trackerType: 'round', maxUses: 1 })
+    );
   });
 });

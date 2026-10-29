@@ -11,8 +11,17 @@ export interface DatabaseReference {
 }
 
 const DatabaseReferenceContext = createContext<DatabaseReference[]>([]);
+const DiceReferenceContext = createContext<((expression: string) => void) | undefined>(undefined);
 
-export function DatabaseReferenceProvider({ state, children }: { state: GameState; children: ReactNode }) {
+export function DatabaseReferenceProvider({
+  state,
+  onOpenDiceRoller,
+  children
+}: {
+  state: GameState;
+  onOpenDiceRoller?: (expression: string) => void;
+  children: ReactNode;
+}) {
   const references = useMemo(() => {
     const result: DatabaseReference[] = [];
     (state.conditionDatabase || []).forEach(item => addReference(result, 'condition', item));
@@ -23,13 +32,19 @@ export function DatabaseReferenceProvider({ state, children }: { state: GameStat
 
   return (
     <DatabaseReferenceContext.Provider value={references}>
-      {children}
+      <DiceReferenceContext.Provider value={onOpenDiceRoller}>
+        {children}
+      </DiceReferenceContext.Provider>
     </DatabaseReferenceContext.Provider>
   );
 }
 
 export function useDatabaseReferences() {
   return useContext(DatabaseReferenceContext);
+}
+
+export function useDiceReferenceClick() {
+  return useContext(DiceReferenceContext);
 }
 
 function addReference(result: DatabaseReference[], kind: DatabaseReferenceKind, item: Record<string, unknown>) {

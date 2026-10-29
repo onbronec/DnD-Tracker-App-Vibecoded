@@ -1,6 +1,7 @@
 import { ReactNode, useRef, useState } from 'react';
 import { Modal } from './Modal';
-import { DatabaseReference, useDatabaseReferences } from './DatabaseReferences';
+import { DatabaseReference, useDatabaseReferences, useDiceReferenceClick } from './DatabaseReferences';
+import { parseDiceExpression } from '../shared/dice';
 
 interface RendererProps {
   text?: string;
@@ -19,13 +20,23 @@ interface EditorProps {
 export function MarkdownRenderer({ text, emptyLabel = 'No notes.' }: RendererProps) {
   const source = text || '';
   const references = useDatabaseReferences();
+  const onOpenDiceRoller = useDiceReferenceClick();
   const [detail, setDetail] = useState<DatabaseReference | null>(null);
   if (!source.trim()) return <p className="empty">{emptyLabel}</p>;
+
+  function handleDiceClick(expression: string) {
+    const cleaned = expression.replace(/\s+/g, '').replace(/[×⋅]/g, '*').replace(/[−–—]/g, '-');
+    if (onOpenDiceRoller) {
+      onOpenDiceRoller(cleaned);
+    } else if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('dnd:open-dice-roller', { detail: { expression: cleaned } }));
+    }
+  }
 
   return (
     <>
       <div className="markdown-render">
-        {source.split(/\n{2,}/).map((block, blockIndex) => renderBlock(block, blockIndex, references, setDetail))}
+        {source.split(/\n{2,}/).map((block, blockIndex) => renderBlock(block, blockIndex, references, setDetail, handleDiceClick))}
       </div>
       {detail && <DatabaseReferenceModal reference={detail} onClose={() => setDetail(null)} />}
     </>
@@ -70,6 +81,27 @@ export function MarkdownEditor({ value, onChange, placeholder, label = 'Markdown
     window.requestAnimationFrame(() => textarea.focus());
   }
 
+  function insertBlock(block: string) {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      onChange(value ? `${value}\n\n${block}` : block);
+      return;
+    }
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const before = value.slice(0, start);
+    const after = value.slice(end);
+    const prefix = before && !before.endsWith('\n\n') ? before.endsWith('\n') ? '\n' : '\n\n' : '';
+    const suffix = after && !after.startsWith('\n\n') ? after.startsWith('\n') ? '\n' : '\n\n' : '';
+    const next = `${before}${prefix}${block}${suffix}${after}`;
+    onChange(next);
+    window.requestAnimationFrame(() => {
+      textarea.focus();
+      const cursor = before.length + prefix.length;
+      textarea.setSelectionRange(cursor, cursor + block.length);
+    });
+  }
+
   // Compact indicator shown below the textarea
   const parsedIndicator = parsedItems && parsedItems.length > 0 ? (
     <div className="md-parsed-indicator">
@@ -92,6 +124,7 @@ export function MarkdownEditor({ value, onChange, placeholder, label = 'Markdown
         <button type="button" className="btn small markdown-tool" onClick={() => applyWrap('*')}>Italic</button>
         <button type="button" className="btn small markdown-tool" onClick={() => insertPrefix('## ')}>Header</button>
         <button type="button" className="btn small markdown-tool" onClick={() => insertPrefix('- ')}>List</button>
+        <button type="button" className="btn small markdown-tool" onClick={() => insertBlock('| Column 1 | Column 2 | Column 3 |\n| --- | --- | --- |\n| Value | Value | Value |')}>Table</button>
         <button type="button" className="btn small markdown-tool" onClick={() => applyWrap('[', '](https://)') }>Link</button>
         <button type="button" className="btn small markdown-tool" onClick={() => applyWrap('@[', ']')}>Reference</button>
         <button type="button" className="btn small markdown-tool" onClick={() => applyWrap('[br]', '', '')}>Line Break</button>
@@ -150,34 +183,94 @@ function renderBlock(
   block: string,
   key: number,
   references: DatabaseReference[],
-  onReferenceClick: (reference: DatabaseReference) => void
+  onReferenceClick: (reference: DatabaseReference) => void,
+  onDiceClick: (expression: string) => void
 ) {
   const trimmed = block.trim();
   const heading = trimmed.match(/^(#{1,3})\s+(.+)$/);
   if (heading) {
     const level = heading[1].length;
-    const content = renderInline(heading[2], `${key}-h`, references, onReferenceClick);
+    const content = renderInline(heading[2], `${key}-h`, references, onReferenceClick, onDiceClick);
     if (level === 1) return <h3 key={key}>{content}</h3>;
     return <h4 key={key}>{content}</h4>;
   }
 
   const lines = trimmed.split('\n');
+  const leadingBreakCount = countLeadingBreakLines(lines);
+  const table = parseTable(lines.slice(leadingBreakCount));
+  if (table) {
+    return (
+      <>
+        {Array.from({ length: leadingBreakCount }, (_, index) => <br key={`${key}-br-${index}`} />)}
+        <div key={key} className="markdown-table-wrap">
+          <table className="markdown-table">
+            <thead>
+              <tr>
+                {table.headers.map((header, index) => (
+                  <th key={index}>{renderInline(header, `${key}-th-${index}`, references, onReferenceClick, onDiceClick)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {table.rows.map((row, rowIndex) => (
+                <tr key={rowIndex}>
+                  {table.headers.map((_, cellIndex) => (
+                    <td key={cellIndex}>{renderInline(row[cellIndex] || '', `${key}-td-${rowIndex}-${cellIndex}`, references, onReferenceClick, onDiceClick)}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </>
+    );
+  }
+
   if (lines.every(line => /^-\s+/.test(line.trim()))) {
     return (
       <ul key={key}>
-        {lines.map((line, index) => <li key={index}>{renderInline(line.replace(/^-\s+/, ''), `${key}-${index}`, references, onReferenceClick)}</li>)}
+        {lines.map((line, index) => <li key={index}>{renderInline(line.replace(/^-\s+/, ''), `${key}-${index}`, references, onReferenceClick, onDiceClick)}</li>)}
       </ul>
     );
   }
 
-  return <p key={key}>{lines.map((line, index) => <span key={index}>{renderInline(line, `${key}-${index}`, references, onReferenceClick)}{index < lines.length - 1 && <br />}</span>)}</p>;
+  return <p key={key}>{lines.map((line, index) => <span key={index}>{renderInline(line, `${key}-${index}`, references, onReferenceClick, onDiceClick)}{index < lines.length - 1 && <br />}</span>)}</p>;
+}
+
+function countLeadingBreakLines(lines: string[]) {
+  let count = 0;
+  while (count < lines.length && /^\s*(?:\[br\]|<br\s*\/?>)\s*$/i.test(lines[count])) {
+    count += 1;
+  }
+  return count;
+}
+
+function parseTable(lines: string[]) {
+  if (lines.length < 2 || !lines[0].includes('|') || !lines[1].includes('|')) return null;
+  const separator = splitTableRow(lines[1]);
+  if (separator.length === 0 || !separator.every(cell => /^:?-{3,}:?$/.test(cell))) return null;
+  const headers = splitTableRow(lines[0]);
+  if (headers.length === 0) return null;
+  const rows = lines.slice(2)
+    .filter(line => line.includes('|'))
+    .map(splitTableRow)
+    .filter(row => row.length > 0);
+  return { headers, rows };
+}
+
+function splitTableRow(line: string) {
+  let trimmed = line.trim();
+  if (trimmed.startsWith('|')) trimmed = trimmed.slice(1);
+  if (trimmed.endsWith('|')) trimmed = trimmed.slice(0, -1);
+  return trimmed.split('|').map(cell => cell.trim());
 }
 
 function renderInline(
   text: string,
   keyPrefix: string,
   references: DatabaseReference[],
-  onReferenceClick: (reference: DatabaseReference) => void
+  onReferenceClick: (reference: DatabaseReference) => void,
+  onDiceClick: (expression: string) => void
 ): ReactNode[] {
   const parts: ReactNode[] = [];
   let index = 0;
@@ -204,14 +297,14 @@ function renderInline(
 
     const bold = remaining.match(/^\*\*([^*]+)\*\*/);
     if (bold) {
-      parts.push(<strong key={key}>{bold[1]}</strong>);
+      parts.push(<strong key={key}>{renderInline(bold[1], `${key}-b`, references, onReferenceClick, onDiceClick)}</strong>);
       index += bold[0].length;
       continue;
     }
 
     const italic = remaining.match(/^\*([^*]+)\*/);
     if (italic) {
-      parts.push(<em key={key}>{italic[1]}</em>);
+      parts.push(<em key={key}>{renderInline(italic[1], `${key}-i`, references, onReferenceClick, onDiceClick)}</em>);
       index += italic[0].length;
       continue;
     }
@@ -235,6 +328,42 @@ function renderInline(
         index += bracket ? bracket[0].length : match.length + 1;
         continue;
       }
+      if (bracket) {
+        const diceCandidate = bracket[1].trim();
+        if (isValidDiceCandidate(diceCandidate)) {
+          parts.push(
+            <button
+              key={key}
+              type="button"
+              className="markdown-reference markdown-reference-dice"
+              onClick={() => onDiceClick(diceCandidate)}
+            >
+              {diceCandidate}
+            </button>
+          );
+          index += bracket[0].length;
+          continue;
+        }
+      }
+    }
+
+    const prevChar = index > 0 ? text[index - 1] : '';
+    if (!/[A-Za-z0-9_]/.test(prevChar)) {
+      const diceMatch = matchDiceAtTextStart(remaining);
+      if (diceMatch) {
+        parts.push(
+          <button
+            key={key}
+            type="button"
+            className="markdown-reference markdown-reference-dice"
+            onClick={() => onDiceClick(diceMatch)}
+          >
+            {diceMatch}
+          </button>
+        );
+        index += diceMatch.length;
+        continue;
+      }
     }
 
     parts.push(text[index]);
@@ -242,6 +371,72 @@ function renderInline(
   }
 
   return parts;
+}
+
+function isValidDiceCandidate(candidate: string): boolean {
+  if (!/\d*d\d+/i.test(candidate)) return false;
+  try {
+    const terms = parseDiceExpression(candidate);
+    return terms.some(term => typeof term.sides === 'number');
+  } catch {
+    return false;
+  }
+}
+
+function matchDiceAtTextStart(text: string): string | null {
+  const firstChar = text[0];
+  if (!firstChar || (!/[0-9(dD]/.test(firstChar))) return null;
+  if ((firstChar === 'd' || firstChar === 'D') && !/^d\d+/i.test(text)) return null;
+
+  let maxEnd = 0;
+  while (maxEnd < text.length && /[0-9dD+\-*×⋅−–—()\s]/.test(text[maxEnd])) {
+    maxEnd += 1;
+  }
+
+  const rawSlice = text.slice(0, maxEnd);
+  if (!/\d*d\d+/i.test(rawSlice)) return null;
+
+  for (let len = maxEnd; len >= 2; len--) {
+    const endChar = text[len - 1];
+    if (!/[0-9)]/.test(endChar)) continue;
+    const nextChar = text[len] || '';
+    if (/[A-Za-z0-9_]/.test(nextChar)) continue;
+    const candidate = text.slice(0, len);
+    if (!/\d*d\d+/i.test(candidate)) continue;
+    if (!hasBalancedParentheses(candidate)) continue;
+    if (isWrappedInRedundantParentheses(candidate)) continue;
+    if (isValidDiceCandidate(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function isWrappedInRedundantParentheses(value: string): boolean {
+  if (!value.startsWith('(') || !value.endsWith(')')) return false;
+  let depth = 0;
+  for (let i = 0; i < value.length - 1; i++) {
+    const ch = value[i];
+    if (ch === '(') depth += 1;
+    else if (ch === ')') {
+      depth -= 1;
+      if (depth === 0) return false;
+    }
+  }
+  return true;
+}
+
+function hasBalancedParentheses(value: string): boolean {
+  let depth = 0;
+  for (const ch of value) {
+    if (ch === '(') depth += 1;
+    else if (ch === ')') {
+      depth -= 1;
+      if (depth < 0) return false;
+    }
+  }
+  return depth === 0;
 }
 
 function referenceByName(name: string, references: DatabaseReference[]) {
