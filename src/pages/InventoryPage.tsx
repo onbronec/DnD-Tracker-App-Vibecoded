@@ -263,10 +263,13 @@ function AddItemForm({
                   characterId,
                   itemType,
                   item: {
+                    ...(item.id ? { id: String(item.id) } : {}),
+                    ...(itemType === 'magic' && item.id ? { magicItemId: String(item.id) } : {}),
                     name: String(item.name || 'Item'),
                     spellName: String(item.name || 'Scroll'),
                     itemType: String(item.itemType || item.type || 'Wondrous item'),
                     rarity: String(item.rarity || ''),
+                    requiresAttunement: Boolean(item.requiresAttunement),
                     description: String(item.description || item.effect || ''),
                     quantity: 1
                   }

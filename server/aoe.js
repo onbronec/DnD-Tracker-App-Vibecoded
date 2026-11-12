@@ -1,8 +1,13 @@
 const { clone, clamp } = require('./utils');
 const ABILITIES = ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'];
 
+function halfTowardZero(value) {
+    return value < 0 ? -Math.floor(Math.abs(value) / 2) : Math.floor(value / 2);
+}
+
 function prepareAoe(state, payload) {
-    if (!Number.isFinite(payload.dc) || payload.dc < 1 || !Number.isSafeInteger(payload.damageTotal) || payload.damageTotal < 0 || !['half', 'none'].includes(payload.onSuccess)) throw new Error('Neplatne AOE damage / DC.');
+    const noRoll = Boolean(payload.noRoll);
+    if ((!noRoll && (!Number.isFinite(payload.dc) || payload.dc < 1)) || !Number.isSafeInteger(payload.damageTotal) || !['half', 'none'].includes(payload.onSuccess)) throw new Error('Neplatne AOE damage / DC.');
     if (!Array.isArray(payload.targets) || payload.targets.length === 0 || !Array.isArray(payload.conditions)) throw new Error('AOE nema vybrane cile.');
     const conditionIds = new Set();
     const conditions = payload.conditions.map(selected => {
@@ -36,11 +41,11 @@ function prepareAoe(state, payload) {
         const character = state.characters.find(item => item.id === target.characterId);
         const primaryId = String(target.characterId).replace(/_turn2$/, '');
         if (!character || character.activeInCombat === false || character.isNonMonster || character.monsterData?.entityKind === 'nonMonster' || ids.has(primaryId)) throw new Error('Neplatny nebo duplicitni AOE cil.');
-        if (!Number.isFinite(target.saveTotal) || (target.natural !== null && (!Number.isInteger(target.natural) || target.natural < 1 || target.natural > 20)) || typeof target.halfDamage !== 'boolean') throw new Error('Chybi platny save vysledek.');
+        if ((!noRoll && (!Number.isFinite(target.saveTotal) || (target.natural !== null && (!Number.isInteger(target.natural) || target.natural < 1 || target.natural > 20)))) || typeof target.halfDamage !== 'boolean') throw new Error('Chybi platny save vysledek.');
         ids.add(primaryId);
-        const success = target.natural === 20 || (target.natural !== 1 && target.saveTotal >= payload.dc);
-        let damage = success ? payload.onSuccess === 'half' ? Math.floor(payload.damageTotal / 2) : 0 : payload.damageTotal;
-        if (target.halfDamage) damage = Math.floor(damage / 2);
+        const success = noRoll ? false : (target.natural === 20 || (target.natural !== 1 && target.saveTotal >= payload.dc));
+        let damage = success ? payload.onSuccess === 'half' ? halfTowardZero(payload.damageTotal) : 0 : payload.damageTotal;
+        if (target.halfDamage) damage = halfTowardZero(damage);
         const effects = clone(character.effects || []);
         if (!success) conditions.forEach(({ definition, effect }) => {
             const index = effects.findIndex(item => {

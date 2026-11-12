@@ -8,6 +8,7 @@ import { EffectModal, effectRequiresManagement } from './CombatPage';
 import { effectToString, hpClass } from '../shared/defaults';
 import { armorClass, effectiveMaxHp } from '../shared/characterSheet';
 import { ReactionUsage } from '../components/ReactionUsage';
+import { MonsterEpicActions } from '../components/MonsterEpicActions';
 
 interface Props {
   state: GameState;
@@ -93,6 +94,7 @@ export function MonstersPage({ state, submitAction, selectedCharacterId, onSelec
   const indexLinks: Array<{ id: string; label: string }> = [
     { id: 'monster-overview', label: 'Overview' },
     { id: 'monster-trackers', label: 'Trackers' },
+    ...(abilities.epicActions?.enabled ? [{ id: 'monster-epic-actions', label: 'Epic Actions' }] : []),
     ...(abilities.spellcasting?.enabled ? [{ id: 'monster-spellcasting', label: 'Spellcasting' }] : []),
     ...(Array.isArray(monsterData.defensiveFeatures) && (monsterData.defensiveFeatures as unknown[]).length > 0 ? [{ id: 'monster-section-Defensive Features', label: 'Defensive' }] : []),
     ...(Array.isArray(monsterData.features) && (monsterData.features as unknown[]).length > 0 ? [{ id: 'monster-section-Features', label: 'Features' }] : []),
@@ -272,6 +274,7 @@ export function MonsterDetail({
   const stats = (monsterData.stats || {}) as Partial<Record<AbilityKey, number>>;
   const isNonMonster = Boolean(monster.isNonMonster || monsterData.entityKind === 'nonMonster');
   const hasHpAc = !isNonMonster || Boolean(monster.hasHpAc || monsterData.hasHpAc);
+  const imageUrl = (monster.imageUrl || monsterData.imageUrl) as string | undefined;
   const textSections = [
     { title: 'Defensive Features', entries: monsterData.defensiveFeatures as MonsterTextEntry[] | undefined },
     { title: 'Features', entries: monsterData.features as MonsterTextEntry[] | undefined },
@@ -292,6 +295,16 @@ export function MonsterDetail({
             <p>{isNonMonster ? `Non-monster object · fixed initiative ${monster.fixedInitiative ?? monster.initiative ?? 20}` : ([monsterData.size, monsterData.type, monsterData.challenge ? `CR ${monsterData.challenge}` : ''].filter(Boolean).join(' · ') || 'Monster combat sheet')}</p>
           </div>
         </div>
+        {imageUrl && (
+          <div style={{ margin: '12px 0 16px', maxWidth: '360px', maxHeight: '240px', overflow: 'hidden', borderRadius: '8px', border: '1px solid var(--border)' }}>
+            <img
+              src={imageUrl}
+              alt={monster.name}
+              style={{ width: '100%', height: '100%', maxHeight: '240px', objectFit: 'cover', objectPosition: String(monster.imageFocus || monsterData.imageFocus || 'center'), display: 'block' }}
+              onError={e => { (e.target as HTMLElement).style.display = 'none'; }}
+            />
+          </div>
+        )}
         <div className="stats-grid">
           {hasHpAc && <div className="stat"><span>HP</span><strong>{monster.currentHp}/{effectiveMaxHp(monster)}</strong></div>}
           {hasHpAc && <div className="stat"><span>AC</span><strong>{armorClass(monster)}</strong></div>}
@@ -502,19 +515,10 @@ export function MonsterDetail({
               />
             </TrackerCard>
           )}
-          {abilities.epicActions?.enabled && (abilities.epicActions.actions || []).map((action, index) => (
-            <TrackerCard key={`${action.name}-${index}`} title={`Epic: ${action.name}`} subtitle={`${action.used || 0}/${action.maxUses || 0} used, resets on monster turn`}>
-              <UseBoxes
-                max={action.maxUses || 0}
-                used={action.used || 0}
-                disabled={readOnly}
-                onSet={(used, delta) => submitAction({ type: 'monster.epic.uses', payload: { characterId: monster.id, index, used, delta } })}
-              />
-              {action.description && <MarkdownRenderer text={action.description} />}
-            </TrackerCard>
-          ))}
         </div>
       </section>
+
+      {abilities.epicActions?.enabled && <MonsterEpicActions characterId={monster.id} actions={abilities.epicActions.actions || []} readOnly={readOnly} submitAction={submitAction} />}
 
       {spellcasting.enabled && (
         <section className="section sheet-section-anchor" data-monster-section="monster-spellcasting">

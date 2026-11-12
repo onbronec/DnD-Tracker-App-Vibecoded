@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import '@testing-library/jest-dom/vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { CollapsiblePanel, CollapsiblePanelGroup } from '../../src/components/CollapsiblePanel';
 import { DatabaseReferenceProvider } from '../../src/components/DatabaseReferences';
@@ -12,6 +12,8 @@ import { Toolbelt } from '../../src/components/Toolbelt';
 import { NumberInput } from '../../src/components/NumberInput';
 import { CombatPage } from '../../src/pages/CombatPage';
 import { DatabasesPage } from '../../src/pages/DatabasesPage';
+import { EncounterPlannerPage } from '../../src/pages/EncounterPlannerPage';
+import { MonsterEditorPage } from '../../src/pages/MonsterEditorPage';
 import { InventoryPage } from '../../src/pages/InventoryPage';
 import { SpellsPage } from '../../src/pages/SpellsPage';
 import type { Character, GameAction, GameState } from '../../src/shared/types';
@@ -56,9 +58,24 @@ describe('visual UX helpers', () => {
     const orc = within(screen.getByTestId('character-Orc'));
     expect(orc.getByText('Bloodied').closest('.stat')).toHaveClass('health-medium');
     expect(orc.getByRole('button', { name: 'Stunned' })).toBeVisible();
-    expect(orc.getByRole('button', { name: 'Orc reaction 1' })).toBeDisabled();
+    expect(orc.getByRole('button', { name: 'Orc reaction 1' })).not.toBeDisabled();
     expect(orc.getByRole('button', { name: 'Orc reaction 1' })).toHaveAttribute('aria-pressed', 'true');
     expect(orc.getByRole('button', { name: 'Orc reaction 3' })).toHaveAttribute('aria-pressed', 'false');
+    expect(orc.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
+
+    // Player clicking Refresh calls character.reaction.set with max reactions
+    fireEvent.click(orc.getByRole('button', { name: 'Refresh' }));
+    expect(props.submitAction).toHaveBeenCalledWith({
+      type: 'character.reaction.set',
+      payload: { characterId: 'orc', value: 3, refresh: true }
+    });
+
+    // Player clicking available reaction 3 spends 1 reaction (currentReactions was 1, so 1 - 1 = 0)
+    fireEvent.click(orc.getByRole('button', { name: 'Orc reaction 3' }));
+    expect(props.submitAction).toHaveBeenCalledWith({
+      type: 'character.reaction.set',
+      payload: { characterId: 'orc', value: 0 }
+    });
     state.characters[1].currentHp = 20;
     rerender(<CombatPage {...props} role="player" />);
     expect(orc.getByText('Critical').closest('.stat')).toHaveClass('health-low');
@@ -131,6 +148,40 @@ describe('visual UX helpers', () => {
     expect(screen.getByLabelText('Mage save total')).toHaveValue(20);
     expect(submitAction).not.toHaveBeenCalled();
     random.mockRestore();
+  });
+
+  it('supports negative AOE damage as healing, No roll auto-fail, and per-character Crow/Astria auras', async () => {
+    const submitAction = vi.fn(async () => ({ ok: true }));
+    const state = gameState({
+      characters: [
+        character({ id: 'crow', name: 'Crow', abilityScores: { strength: 10, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 18, charisma: 10 } }),
+        character({ id: 'astria', name: 'Astria', abilityScores: { strength: 10, dexterity: 14, constitution: 10, intelligence: 16, wisdom: 10, charisma: 10 } })
+      ]
+    });
+    render(<Toolbelt role="dm" state={state} submitAction={submitAction} />);
+    fireEvent.click(screen.getByRole('button', { name: 'AOE Resolver' }));
+
+    const crowTarget = within(screen.getByRole('article', { name: 'Crow AOE target' }));
+    fireEvent.change(screen.getByLabelText('Crow save total'), { target: { value: '10' } });
+    fireEvent.click(crowTarget.getByLabelText('Crow Crow aura'));
+    fireEvent.click(crowTarget.getByLabelText('Crow Astria aura'));
+    expect(screen.getByLabelText('Crow save total')).toHaveValue(17);
+    expect(crowTarget.getByText('Auras: Crow aura +4, Astria aura +3')).toBeVisible();
+    expect(crowTarget.getByText('DEX save +7 (base +0, Crow aura +4, Astria aura +3)')).toBeVisible();
+
+    fireEvent.change(screen.getByLabelText('Damage total'), { target: { value: '-50' } });
+    fireEvent.click(screen.getByLabelText('No roll'));
+    expect(crowTarget.getByText('Failure · Healing 50')).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Apply to 2 targets' }));
+    await screen.findByRole('button', { name: 'Applied' });
+    expect(submitAction).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'combat.aoe.apply',
+      payload: expect.objectContaining({
+        damageTotal: -50,
+        noRoll: true
+      })
+    }));
   });
 
   it('keeps collapsible panels closed by default and opens on demand', () => {
@@ -837,6 +888,250 @@ describe('page visual behavior', () => {
     expect(noteHeadings).toEqual(['New Note', 'Old Note']);
   });
 
+  it('displays dynamic To-Do count in toolbelt and opens full detail modal with actions', () => {
+    const submitAction = vi.fn(async (_action: GameAction) => undefined);
+    const state = gameState({
+      toolbelt: {
+        diceRolls: {},
+        improvNames: [],
+        calendar: {
+          weekday: 'Wednesday',
+          day: 24,
+          month: 'December',
+          year: 502,
+          records: [
+            // Due trigger on 23rd
+            { id: 't1', type: 'trigger', dateKey: '502-December-23', recordedDateKey: '502-December-20', text: '**Ambush trigger**', completed: false, notified: true },
+            // Future trigger on 28th
+            { id: 't2', type: 'trigger', dateKey: '502-December-28', recordedDateKey: '502-December-20', text: '**Future trigger**', completed: false, notified: false }
+          ]
+        },
+        notes: [
+          // Incomplete temp note
+          { id: 'n1', type: 'temp', title: 'Rewrite spell rules', text: 'Transfer to homebrew doc', date: '2026-06-04', completed: false, timestamp: '2026-06-04T00:00:00.000Z' },
+          // Completed temp note
+          { id: 'n2', type: 'temp', title: 'Done temp', text: 'Already done', date: '2026-06-03', completed: true, timestamp: '2026-06-03T00:00:00.000Z' },
+          // Regular permanent note
+          { id: 'n3', type: 'note', title: 'Regular note', text: 'Normal text', date: '2026-06-01', timestamp: '2026-06-01T00:00:00.000Z' }
+        ]
+      }
+    });
+
+    render(<Toolbelt role="dm" state={state} submitAction={submitAction} />);
+
+    // Total active To-Do items: 1 due trigger (t1) + 1 incomplete temp note (n1) = 2
+    const todoBtn = screen.getByRole('button', { name: /To-Do \(2\)/i });
+    expect(todoBtn).toBeInTheDocument();
+    fireEvent.click(todoBtn);
+
+    // Modal opens
+    expect(screen.getByRole('heading', { name: /To-Do/i })).toBeInTheDocument();
+    expect(screen.getByText('Ambush trigger')).toBeInTheDocument();
+    expect(screen.getByText('Rewrite spell rules')).toBeInTheDocument();
+    expect(screen.queryByText('Future trigger')).not.toBeInTheDocument();
+  });
+
+  it('supports search and type filtering in notepad and toggles temp note completion', () => {
+    const submitAction = vi.fn(async (_action: GameAction) => undefined);
+    const state = gameState({
+      toolbelt: {
+        diceRolls: {},
+        improvNames: [],
+        calendar: { weekday: 'Tuesday', day: 23, month: 'December', year: 502, records: [] },
+        notes: [
+          { id: 'n1', type: 'temp', title: 'Buy diamonds', text: 'Components for revivify', date: '2026-06-05', completed: false, timestamp: '2026-06-05T00:00:00.000Z' },
+          { id: 'n2', type: 'note', title: 'Lore of Astria', text: 'Ancient history', date: '2026-06-04', timestamp: '2026-06-04T00:00:00.000Z' }
+        ]
+      }
+    });
+
+    render(<Toolbelt role="dm" state={state} submitAction={submitAction} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Notepad' }));
+
+    // Search input exists
+    const searchInput = screen.getByPlaceholderText(/Search notes/i);
+    expect(searchInput).toBeInTheDocument();
+
+    // Search filters results
+    fireEvent.change(searchInput, { target: { value: 'diamonds' } });
+    expect(screen.getByText('Buy diamonds')).toBeInTheDocument();
+    expect(screen.queryByText('Lore of Astria')).not.toBeInTheDocument();
+  });
+
+  it('filters monster database by combatType and flag with matching inactive counter', () => {
+    const submitAction = vi.fn(async () => undefined);
+    render(
+      <DatabasesPage
+        initialTab="monster"
+        state={gameState({
+          monsterDatabase: [
+            { id: 'm1', name: 'Orc Warrior', type: 'humanoid', combatType: 'monster', flag: 'active', hp: 15, ac: 13 },
+            { id: 'm2', name: 'Orc Shaman', type: 'humanoid', combatType: 'spellcaster', flag: 'active', hp: 20, ac: 12 },
+            { id: 'm3', name: 'Old Boss', type: 'humanoid', combatType: 'leader', flag: 'inactive', hp: 50, ac: 16 }
+          ]
+        })}
+        role="dm"
+        submitAction={submitAction}
+        onBackToCombat={vi.fn()}
+      />
+    );
+
+    // Active monsters are visible by default
+    expect(screen.getByText('Orc Warrior')).toBeInTheDocument();
+    expect(screen.getByText('Orc Shaman')).toBeInTheDocument();
+    expect(screen.queryByText('Old Boss')).not.toBeInTheDocument();
+
+    // Bottom counter shows inactive monsters
+    expect(screen.getByText(/Počet neaktivních monster/i)).toBeInTheDocument();
+  });
+
+  it('shows adapt flag monsters by default with adapt badge, supports multiple groups and 20-item load more pagination', () => {
+    const submitAction = vi.fn(async () => undefined);
+    const manyMonsters: MonsterDatabaseEntry[] = [];
+    for (let i = 1; i <= 25; i++) {
+      manyMonsters.push({
+        id: `m_${i}`,
+        name: `Monster ${i}`,
+        hp: 50,
+        ac: 15,
+        flag: i === 1 ? 'adapt' : 'active',
+        groups: i === 1 ? ['Undead', 'Bosses'] : ['Minions']
+      });
+    }
+
+    render(
+      <DatabasesPage
+        initialTab="monster"
+        state={gameState({
+          monsterDatabase: manyMonsters
+        })}
+        role="dm"
+        submitAction={submitAction}
+        onBackToCombat={vi.fn()}
+      />
+    );
+
+    // Adapt monster is visible by default with Adapt badge
+    expect(screen.getByText('Monster 1')).toBeInTheDocument();
+    expect(screen.getByText('Adapt')).toBeInTheDocument();
+
+    // Pagination: only first 20 visible
+    expect(screen.getByText('Monster 20')).toBeInTheDocument();
+    expect(screen.queryByText('Monster 21')).not.toBeInTheDocument();
+
+    // Load more button
+    const loadMoreBtn = screen.getByRole('button', { name: /Load more \(\+20\)/i });
+    expect(loadMoreBtn).toBeInTheDocument();
+    expect(loadMoreBtn).toHaveTextContent('Showing 20 of 25');
+
+    // Click load more
+    fireEvent.click(loadMoreBtn);
+    expect(screen.getByText('Monster 21')).toBeInTheDocument();
+    expect(screen.getByText('Monster 25')).toBeInTheDocument();
+  });
+
+  it('renders Monster Groups tab, displays and edits Markdown descriptions, and toggles normal vs grouped by roles', async () => {
+    const submitAction = vi.fn(async () => undefined);
+    const monsters: MonsterDatabaseEntry[] = [
+      {
+        id: 'orc_grunt',
+        name: 'Orc Grunt',
+        hp: 30,
+        ac: 13,
+        combatType: 'monster',
+        groups: ['Orc Clan'],
+        imageUrl: '/images/monsters/orc.jpg',
+        imageFocus: 'top'
+      },
+      {
+        id: 'orc_shaman',
+        name: 'Orc Shaman',
+        hp: 45,
+        ac: 12,
+        combatType: 'spellcaster',
+        groups: ['Orc Clan']
+      },
+      {
+        id: 'orc_chief',
+        name: 'Orc Chieftain',
+        hp: 90,
+        ac: 16,
+        combatType: 'leader',
+        groups: ['Orc Clan']
+      },
+      {
+        id: 'goblin_archer',
+        name: 'Goblin Scout',
+        hp: 20,
+        ac: 14,
+        combatType: 'ranged',
+        groups: ['Goblin Raiders']
+      }
+    ];
+
+    render(
+      <DatabasesPage
+        initialTab="monsterGroups"
+        state={gameState({
+          monsterDatabase: monsters,
+          monsterGroupDescriptions: {
+            'Orc Clan': 'Fierce warriors who worship Gruumsh.'
+          }
+        })}
+        role="dm"
+        submitAction={submitAction}
+        onBackToCombat={vi.fn()}
+      />
+    );
+
+    // Monster Groups tab is active and shows group pills
+    expect(screen.getByRole('button', { name: 'Monster Groups' })).toHaveClass('active');
+    expect(screen.getByRole('button', { name: /Orc Clan/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Goblin Raiders/i })).toBeInTheDocument();
+
+    // Select Orc Clan
+    fireEvent.click(screen.getByRole('button', { name: /Orc Clan/i }));
+
+    // Orc Clan is selected, shows Markdown description and Edit button
+    expect(screen.getByText('Fierce warriors who worship Gruumsh.')).toBeInTheDocument();
+    const editDescBtn = screen.getByRole('button', { name: 'Edit Description' });
+    expect(editDescBtn).toBeInTheDocument();
+
+    // Clicking edit description opens Markdown editor
+    fireEvent.click(editDescBtn);
+    const textarea = screen.getByPlaceholderText(/Napište Markdown popis/i);
+    expect(textarea).toBeInTheDocument();
+    fireEvent.change(textarea, { target: { value: 'Updated Orc Clan description with tactical notes.' } });
+
+    // Save description calls action
+    fireEvent.click(screen.getByRole('button', { name: 'Save Description' }));
+    expect(submitAction).toHaveBeenCalledWith({
+      type: 'database.monsterGroup.updateDescription',
+      payload: {
+        group: 'Orc Clan',
+        description: 'Updated Orc Clan description with tactical notes.'
+      }
+    });
+
+    // In normal view, monsters of Orc Clan are displayed
+    expect(screen.getByText('Orc Grunt')).toBeInTheDocument();
+    expect(screen.getByText('Orc Shaman')).toBeInTheDocument();
+    expect(screen.getByText('Orc Chieftain')).toBeInTheDocument();
+    expect(screen.queryByText('Goblin Scout')).not.toBeInTheDocument();
+
+    // Image focus is applied to monster image
+    const orcImg = screen.getByAltText('Orc Grunt');
+    expect(orcImg).toHaveStyle({ objectPosition: 'top' });
+
+    // Switch to Grouped by Roles view
+    fireEvent.click(screen.getByRole('button', { name: /Rozdělené podle rolí/i }));
+
+    // Role section headers with badges should now be visible
+    expect(screen.getByText('Monster')).toBeInTheDocument();
+    expect(screen.getByText('Spellcaster')).toBeInTheDocument();
+    expect(screen.getByText('Leader')).toBeInTheDocument();
+  });
+
   it('keeps inventory item actions inside the item modal', () => {
     const submitAction = vi.fn(async (_action: GameAction) => undefined);
     render(
@@ -964,6 +1259,398 @@ describe('page visual behavior', () => {
   });
 });
 
+describe('encounter planner', () => {
+  it('organizes identical monsters into shared-initiative groups in the Encounter Planner', async () => {
+    const submitAction = vi.fn(async (_action: GameAction) => undefined);
+    const onOpenCombat = vi.fn();
+    render(
+      <EncounterPlannerPage
+        state={gameState({
+          monsterDatabase: [
+            { id: 'skeleton', name: 'Skeleton', hp: 13, ac: 13, encounterPoints: 0.2, dpr: 5 }
+          ]
+        })}
+        submitAction={submitAction}
+        onCreateMonster={vi.fn()}
+        onOpenCombat={onOpenCombat}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText('Add quantity'), { target: { value: '6' } });
+    fireEvent.change(screen.getByLabelText('Add groups'), { target: { value: '2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add Skeleton to encounter' }));
+
+    expect(screen.getByText('2 groups (~3×/group)')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Skeleton groups'), { target: { value: '1' } });
+    expect(screen.getByText('1 group (6× shared init)')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Import to Combat' }));
+    await vi.waitFor(() => {
+      expect(submitAction).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'encounter.upsert',
+        payload: expect.objectContaining({
+          encounter: expect.objectContaining({
+            monsters: [expect.objectContaining({ monsterId: 'skeleton', quantity: 6, groupCount: 1 })]
+          })
+        })
+      }));
+      expect(submitAction).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'encounter.importToCombat'
+      }));
+      expect(onOpenCombat).toHaveBeenCalled();
+    });
+  });
+
+  it('visually displays numbered monster groups in the initiative line and character cards', () => {
+    const s1 = character({
+      id: 'skel1',
+      name: 'Skeleton 1',
+      type: 'monster',
+      groupId: 'grp_1',
+      groupName: 'Group 1',
+      initiative: 14
+    });
+    const s2 = character({
+      id: 'skel2',
+      name: 'Skeleton 2',
+      type: 'monster',
+      groupId: 'grp_1',
+      groupName: 'Group 1',
+      initiative: 14
+    });
+    const hero = character({
+      id: 'ayla',
+      name: 'Ayla',
+      type: 'player',
+      initiative: 18
+    });
+
+    render(
+      <CombatPage
+        state={gameState({
+          characters: [hero, s1, s2],
+          combatState: { active: true, currentTurn: 1, round: 1, playedThisRound: [] }
+        })}
+        role="dm"
+        submitAction={vi.fn(async () => undefined)}
+        onOpenSpells={vi.fn()}
+        onOpenInventory={vi.fn()}
+        onOpenMonsters={vi.fn()}
+      />
+    );
+
+    // InitiativeLine shows group cluster for Group 1 with both skeleton buttons inside
+    const nav = screen.getByRole('navigation', { name: 'Initiative order' });
+    expect(within(nav).getByText(/Group 1/)).toBeInTheDocument();
+    expect(within(nav).getByRole('button', { name: 'Go to Skeleton 1' })).toBeInTheDocument();
+    expect(within(nav).getByRole('button', { name: 'Go to Skeleton 2' })).toBeInTheDocument();
+
+    // Character cards show group pill and in-group styling
+    const card1 = screen.getByTestId('character-Skeleton 1');
+    const card2 = screen.getByTestId('character-Skeleton 2');
+    expect(card1).toHaveClass('in-group');
+    expect(card2).toHaveClass('in-group');
+    expect(card1.querySelector('.group-pill')).toHaveTextContent('Group 1');
+    expect(card2.querySelector('.group-pill')).toHaveTextContent('Group 1');
+    expect(within(card1).getByText('Init').closest('.stat')).toHaveTextContent('Group 1');
+    expect(within(card2).getByText('Init').closest('.stat')).toHaveTextContent('Group 1');
+  });
+
+  it('opens encounter loader modal from the combat page and imports encounter into combat', async () => {
+    const submitAction = vi.fn(async () => undefined);
+    render(
+      <CombatPage
+        state={gameState({
+          encounters: [
+            {
+              id: 'crypt_ambush',
+              name: 'Crypt Ambush',
+              groupId: null,
+              notes: 'Sneak attack',
+              monsters: [{ id: 'e1', monsterId: 'skeleton', quantity: 4, groupCount: 1 }],
+              reserve: [],
+              updatedAt: ''
+            }
+          ],
+          monsterDatabase: [{ id: 'skeleton', name: 'Skeleton', hp: 13, ac: 13, encounterPoints: 0.2, dpr: 5 }]
+        })}
+        role="dm"
+        submitAction={submitAction}
+        onOpenSpells={vi.fn()}
+        onOpenInventory={vi.fn()}
+        onOpenMonsters={vi.fn()}
+      />
+    );
+
+    // Header has the Load encounter button
+    const loadBtn = screen.getByRole('button', { name: 'Load encounter' });
+    expect(loadBtn).toBeInTheDocument();
+
+    // Clicking it opens the modal
+    fireEvent.click(loadBtn);
+    const modal = screen.getByRole('dialog', { name: 'Load encounter from planner' });
+    expect(modal).toBeInTheDocument();
+    expect(within(modal).getByText('Crypt Ambush')).toBeInTheDocument();
+    expect(within(modal).getByText(/Skeleton ×4/)).toBeInTheDocument();
+
+    // Toggle clear existing monsters and click load
+    fireEvent.click(within(modal).getByLabelText('Clear existing monsters'));
+    fireEvent.click(within(modal).getByRole('button', { name: 'Load encounter Crypt Ambush' }));
+
+    expect(submitAction).toHaveBeenCalledWith({
+      type: 'encounter.importToCombat',
+      page: 'combat',
+      payload: {
+        encounterId: 'crypt_ambush',
+        clearExistingMonsters: true
+      }
+    });
+  });
+
+  it('renders ActiveEncounterBrief with close button and shows header Close button when encounter is active', () => {
+    const submitAction = vi.fn(async () => undefined);
+    render(
+      <CombatPage
+        state={gameState({
+          activeEncounterId: 'crypt_ambush',
+          combatState: { active: false, currentTurn: 0, round: 1, playedThisRound: [] },
+          encounters: [
+            {
+              id: 'crypt_ambush',
+              name: 'Crypt Ambush',
+              groupId: null,
+              notes: 'Watch out for shadows in corners.',
+              monsters: [{ id: 'e1', monsterId: 'skeleton', quantity: 2, groupCount: 1 }],
+              reserve: [],
+              updatedAt: ''
+            }
+          ]
+        })}
+        role="dm"
+        submitAction={submitAction}
+        onOpenSpells={vi.fn()}
+        onOpenInventory={vi.fn()}
+        onOpenMonsters={vi.fn()}
+      />
+    );
+
+    // ActiveEncounterBrief is displayed
+    expect(screen.getByText('Encounter: Crypt Ambush')).toBeInTheDocument();
+    expect(screen.getByText('Watch out for shadows in corners.')).toBeInTheDocument();
+
+    // Close encounter button in the brief
+    const closeEncounterBtn = screen.getByRole('button', { name: 'Close encounter' });
+    expect(closeEncounterBtn).toBeInTheDocument();
+    fireEvent.click(closeEncounterBtn);
+    expect(submitAction).toHaveBeenCalledWith({
+      type: 'encounter.close',
+      page: 'combat'
+    });
+
+    // Header Close button is also available even when combatState.active is false
+    const headerCloseBtn = screen.getByRole('button', { name: 'Close' });
+    expect(headerCloseBtn).toBeInTheDocument();
+    fireEvent.click(headerCloseBtn);
+    expect(submitAction).toHaveBeenCalledWith({
+      type: 'combat.close',
+      page: 'combat'
+    });
+  });
+
+  it('provides export notes (Notion-ready) and export summary buttons in Encounter Planner', () => {
+    const submitAction = vi.fn(async () => undefined);
+    render(
+      <EncounterPlannerPage
+        state={gameState({
+          encounters: [
+            {
+              id: 'enc1',
+              name: 'Goblin Raid',
+              groupId: null,
+              notes: '# Shrnutí\nTest encounter idea\n---\n# Loot\n10 gp',
+              monsters: [
+                { id: 'm1', monsterId: 'goblin', quantity: 2, groupCount: 1 }
+              ],
+              reserve: [],
+              updatedAt: ''
+            }
+          ],
+          monsterDatabase: [
+            { id: 'goblin', name: 'Goblin', type: 'humanoid', combatType: 'ranged', flag: 'active', hp: 7, ac: 15 }
+          ]
+        })}
+        role="dm"
+        submitAction={submitAction}
+      />
+    );
+
+    expect(screen.getAllByRole('button', { name: /Export notes/i }).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByRole('button', { name: /Export summary/i }).length).toBeGreaterThanOrEqual(1);
+
+    // Select the saved encounter to view its monster list
+    fireEvent.click(screen.getByRole('button', { name: /Goblin Raid/i }));
+    expect(screen.getByRole('button', { name: /Mutate this monster/i })).toBeInTheDocument();
+  });
+
+  it('handles encounter states (active/done/unused), arc collapsing, unused arc, direct monster edit and hides done in combat loader', async () => {
+    const onOpenMonsterEditor = vi.fn();
+    const submitAction = vi.fn(async () => undefined);
+
+    const testState = gameState({
+      encounterGroups: [
+        { id: 'arc_active_and_done', name: 'Arc 1' },
+        { id: 'arc_all_done', name: 'Arc 2' }
+      ],
+      encounters: [
+        {
+          id: 'enc_active',
+          name: 'Active Ambush',
+          groupId: 'arc_active_and_done',
+          status: 'active',
+          notes: 'Active encounter',
+          monsters: [{ id: 'm1', monsterId: 'goblin', quantity: 1, groupCount: 1 }],
+          reserve: [],
+          updatedAt: ''
+        },
+        {
+          id: 'enc_done_1',
+          name: 'Done Skirmish',
+          groupId: 'arc_active_and_done',
+          status: 'done',
+          notes: 'Completed skirmish',
+          monsters: [{ id: 'm2', monsterId: 'goblin', quantity: 1, groupCount: 1 }],
+          reserve: [],
+          updatedAt: ''
+        },
+        {
+          id: 'enc_done_all',
+          name: 'Old Boss Fight',
+          groupId: 'arc_all_done',
+          status: 'done',
+          notes: 'Completed boss',
+          monsters: [{ id: 'm3', monsterId: 'goblin', quantity: 1, groupCount: 1 }],
+          reserve: [],
+          updatedAt: ''
+        },
+        {
+          id: 'enc_unused',
+          name: 'Unused Patrol',
+          groupId: 'arc_active_and_done',
+          status: 'unused',
+          notes: 'Unused patrol',
+          monsters: [{ id: 'm4', monsterId: 'goblin', quantity: 1, groupCount: 1 }],
+          reserve: [],
+          updatedAt: ''
+        }
+      ],
+      monsterDatabase: [
+        { id: 'goblin', name: 'Goblin', hp: 7, ac: 15, encounterPoints: 0.1, dpr: 5 }
+      ]
+    });
+
+    const { rerender } = render(
+      <EncounterPlannerPage
+        state={testState}
+        submitAction={submitAction}
+        onCreateMonster={vi.fn()}
+        onOpenMonsterEditor={onOpenMonsterEditor}
+        onOpenCombat={vi.fn()}
+      />
+    );
+
+    // Active encounter in Arc 1 is visible
+    expect(screen.getByRole('button', { name: /Active Ambush/i })).toBeInTheDocument();
+
+    // Arc 1 has Done encounters collapsible detail
+    expect(screen.getByText(/Done encounters \(1\)/i)).toBeInTheDocument();
+
+    // Arc 2 has only done encounters, so the entire arc summary says "All done (1)"
+    expect(screen.getByText(/All done \(1\)/i)).toBeInTheDocument();
+
+    // Dedicated "Unused" arc is visible and contains Unused Patrol
+    const unusedArc = document.querySelector('.unused-arc');
+    expect(unusedArc).toBeInTheDocument();
+    expect(within(unusedArc as HTMLElement).getAllByText(/^Unused$/).length).toBeGreaterThanOrEqual(1);
+    expect(within(unusedArc as HTMLElement).getByRole('button', { name: /Unused Patrol/i })).toBeInTheDocument();
+
+    // Open Active Ambush to test Edit monster button
+    fireEvent.click(screen.getByRole('button', { name: /Active Ambush/i }));
+    const editBtn = screen.getByRole('button', { name: /Edit monster/i });
+    expect(editBtn).toBeInTheDocument();
+    fireEvent.click(editBtn);
+    await waitFor(() => {
+      expect(onOpenMonsterEditor).toHaveBeenCalledWith('goblin');
+    });
+
+    // In CombatPage, LoadEncounterModal hides done encounters
+    rerender(
+      <CombatPage
+        state={testState}
+        role="dm"
+        submitAction={submitAction}
+        onOpenSpells={vi.fn()}
+        onOpenInventory={vi.fn()}
+        onOpenMonsters={vi.fn()}
+      />
+    );
+
+    const loadBtn = screen.getByRole('button', { name: 'Load encounter' });
+    fireEvent.click(loadBtn);
+
+    const modal = screen.getByRole('dialog', { name: 'Load encounter from planner' });
+    expect(within(modal).getByText('Active Ambush')).toBeInTheDocument();
+    expect(within(modal).getByText('Unused Patrol')).toBeInTheDocument();
+    expect(within(modal).queryByText('Done Skirmish')).not.toBeInTheDocument();
+    expect(within(modal).queryByText('Old Boss Fight')).not.toBeInTheDocument();
+  });
+
+  it('displays expected HP vs actual HP and expected DPS vs actual DPS in MonsterEditorPage based on points', () => {
+    const testState = gameState({
+      encounterDifficulty: {
+        easyMax: 8,
+        mediumMax: 12,
+        hardMin: 13,
+        barMaximum: 20,
+        hpPerPoint: 150,
+        dprPerPointMin: 80,
+        dprPerPointMax: 100
+      },
+      monsterDatabase: [
+        {
+          id: 'test_dragon',
+          name: 'Red Drake',
+          hp: 300,
+          dpr: 170,
+          encounterPoints: 2,
+          combatType: 'elite'
+        }
+      ]
+    });
+
+    render(
+      <MonsterEditorPage
+        state={testState}
+        editingMonsterId="test_dragon"
+        submitAction={vi.fn()}
+        onBackToDatabases={vi.fn()}
+      />
+    );
+
+    // Points: 2.0 pt -> Expected HP = 2 * 150 = 300; Expected DPS = 2 * (80-100) = 160-200
+    // Check points card
+    expect(screen.getByText('Encounter Body (Points)')).toBeInTheDocument();
+    expect(screen.getByText('2.0 pt')).toBeInTheDocument();
+
+    // Check HP: Skutečné vs. Očekávané
+    expect(screen.getByText('HP (Skutečné vs. Očekávané)')).toBeInTheDocument();
+    expect(screen.getByText('300 oček.')).toBeInTheDocument();
+
+    // Check DPS: Skutečný vs. Očekávaný
+    expect(screen.getByText('DPS (Skutečný vs. Očekávaný)')).toBeInTheDocument();
+    expect(screen.getByText('160–200 oček.')).toBeInTheDocument();
+  });
+});
+
 describe('character sheet math', () => {
   it('computes saves and skills with proficiency, expertise and temporary ability score effects', () => {
     const hero = character({
@@ -1053,6 +1740,18 @@ function gameState(overrides: Partial<GameState> = {}): GameState {
     actionLog: [],
     redoStacks: {},
     nextSequence: 1,
+    encounters: [],
+    encounterGroups: [],
+    activeEncounterId: null,
+    encounterDifficulty: {
+      easyMax: 8,
+      mediumMax: 12,
+      hardMin: 13,
+      barMaximum: 20,
+      hpPerPoint: 150,
+      dprPerPointMin: 80,
+      dprPerPointMax: 100
+    },
     toolbelt: {
       diceRolls: {},
       improvNames: [],

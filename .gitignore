@@ -4,6 +4,8 @@ node_modules/
 # OS files
 .DS_Store
 Thumbs.db
+*.lnk
+dnd-player-usb/
 
 # IDE files
 .vscode/

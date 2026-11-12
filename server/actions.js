@@ -5,6 +5,8 @@ const {
     normalizeCharacterAction,
     normalizeInventory,
     normalizeMagicItem,
+    linkMagicItemsWithDatabase,
+    syncInventoryMagicItemFromDb,
     normalizeMonsterDbItem,
     normalizeEncounter,
     normalizeEncounterGroup,
@@ -18,6 +20,7 @@ const { clone, clamp, makeId, toNumber } = require('./utils');
 
 const { pruneHistory } = require('./history');
 const { prepareAoe } = require('./aoe');
+const { normalizeEpicAction, resetEpicResources } = require('./monsterEpic');
 const { normalizeFeatures, normalizeFeatureActions, normalizeActionSettings, spendActionReaction, normalizeCasting, featureFor, consumeSpark } = require('./casting');
 const SPELL_SLOTS_TABLE = {
     1: [2, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -112,6 +115,7 @@ function pageForAction(type) {
     if (type.startsWith('spell.') || type.startsWith('spellbook.')) return 'spells';
     if (type.startsWith('monster.')) return 'monsters';
     if (type.startsWith('database.')) return 'databases';
+    if (type === 'encounter.importToCombat' || type === 'encounter.reserve.addToCombat' || type === 'encounter.close') return 'combat';
     if (type.startsWith('encounter.')) return 'encounters';
     return 'combat';
 }
@@ -120,12 +124,14 @@ function snapshotPage(state, page) {
     if (page === 'combat') {
         return {
             characters: clone(state.characters),
-            combatState: clone(state.combatState)
+            combatState: clone(state.combatState),
+            activeEncounterId: state.activeEncounterId || null
         };
     }
     if (page === 'inventory') {
         return {
-            characters: state.characters.map(c => ({ id: c.id, inventory: clone(c.inventory) }))
+            characters: state.characters.map(c => ({ id: c.id, inventory: clone(c.inventory) })),
+            magicItemDatabase: clone(state.magicItemDatabase || [])
         };
     }
     if (page === 'spells') {
@@ -174,6 +180,7 @@ function snapshotPage(state, page) {
             conditionDatabase: clone(state.conditionDatabase || []),
             spellDatabase: clone(state.spellDatabase || []),
             itemDatabase: clone(state.itemDatabase || []),
+            monsterGroupDescriptions: clone(state.monsterGroupDescriptions || {}),
             playerCharacters: clone(state.characters.filter(character => character.type === 'player'))
         };
     }
@@ -183,7 +190,8 @@ function snapshotPage(state, page) {
             encounterGroups: clone(state.encounterGroups || []),
             activeEncounterId: state.activeEncounterId || null,
             characters: clone(state.characters),
-            combatState: clone(state.combatState)
+            combatState: clone(state.combatState),
+            monsterDatabase: clone(state.monsterDatabase || [])
         };
     }
     if (page === 'toolbelt') {
@@ -198,6 +206,7 @@ function restorePage(state, page, snapshot) {
     if (page === 'combat') {
         state.characters = clone(snapshot.characters || []);
         state.combatState = clone(snapshot.combatState);
+        state.activeEncounterId = snapshot.activeEncounterId || null;
         return;
     }
     if (page === 'databases') {
@@ -207,6 +216,7 @@ function restorePage(state, page, snapshot) {
         state.conditionDatabase = clone(snapshot.conditionDatabase || []);
         state.spellDatabase = clone(snapshot.spellDatabase || []);
         state.itemDatabase = clone(snapshot.itemDatabase || []);
+        state.monsterGroupDescriptions = clone(snapshot.monsterGroupDescriptions || {});
         const monsters = state.characters.filter(character => character.type === 'monster');
         state.characters = [...monsters, ...clone(snapshot.playerCharacters || [])];
         return;
@@ -217,6 +227,9 @@ function restorePage(state, page, snapshot) {
         state.activeEncounterId = snapshot.activeEncounterId || null;
         state.characters = clone(snapshot.characters || state.characters);
         state.combatState = clone(snapshot.combatState || state.combatState);
+        if (Array.isArray(snapshot.monsterDatabase)) {
+            state.monsterDatabase = clone(snapshot.monsterDatabase);
+        }
         return;
     }
     if (page === 'toolbelt') {
@@ -225,6 +238,9 @@ function restorePage(state, page, snapshot) {
     }
 
     const snapshotMap = new Map((snapshot.characters || []).map(character => [character.id, character]));
+    if (page === 'inventory' && Array.isArray(snapshot.magicItemDatabase)) {
+        state.magicItemDatabase = clone(snapshot.magicItemDatabase);
+    }
     state.characters.forEach(character => {
         const saved = snapshotMap.get(character.id);
         if (!saved) return;
@@ -403,16 +419,51 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             const calendar = ensureToolbelt(state).calendar;
             const text = String(payload.text || '').trim();
             if (!text) throw new Error('Zaznam chybi.');
+            const id = String(payload.id || makeId('cal'));
+            const type = payload.type === 'trigger' ? 'trigger' : 'event';
+            const dateKey = String(payload.dateKey || calendarDateKey(calendar));
+            const recordedDateKey = String(payload.recordedDateKey || (type === 'trigger' ? calendarDateKey(calendar) : dateKey));
+            const existingIndex = calendar.records.findIndex(item => item.id === id);
+            const existing = existingIndex >= 0 ? calendar.records[existingIndex] : null;
+
+            // If dateKey moved to another date, reset notified to false
+            const dateChanged = existing && existing.dateKey !== dateKey;
+            const notified = payload.notified !== undefined
+                ? Boolean(payload.notified)
+                : (dateChanged ? false : Boolean(existing?.notified));
+            const completed = payload.completed !== undefined
+                ? Boolean(payload.completed)
+                : Boolean(existing?.completed);
+
             const record = {
-                id: String(payload.id || makeId('cal')),
-                dateKey: String(payload.dateKey || calendarDateKey(calendar)),
+                id,
+                type,
+                dateKey,
+                recordedDateKey,
                 text,
+                completed,
+                notified,
                 timestamp: new Date().toISOString()
             };
-            const index = calendar.records.findIndex(item => item.id === record.id);
-            if (index >= 0) calendar.records[index] = record;
+            if (existingIndex >= 0) calendar.records[existingIndex] = record;
             else calendar.records.unshift(record);
-            return 'Calendar record added';
+            return type === 'trigger' ? 'Calendar trigger saved' : 'Calendar event saved';
+        }
+        case 'toolbelt.calendar.record.toggleComplete': {
+            const calendar = ensureToolbelt(state).calendar;
+            const record = calendar.records.find(item => item.id === payload.id);
+            if (record) {
+                record.completed = !record.completed;
+            }
+            return 'Calendar record completion toggled';
+        }
+        case 'toolbelt.calendar.record.acknowledge': {
+            const calendar = ensureToolbelt(state).calendar;
+            const record = calendar.records.find(item => item.id === payload.id);
+            if (record) {
+                record.notified = true;
+            }
+            return 'Calendar trigger acknowledged';
         }
         case 'toolbelt.calendar.record.remove': {
             const calendar = ensureToolbelt(state).calendar;
@@ -421,17 +472,34 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
         }
         case 'toolbelt.note.upsert': {
             const toolbelt = ensureToolbelt(state);
+            const id = String(payload.id || makeId('note'));
+            const type = payload.type === 'temp' ? 'temp' : 'note';
+            const existingIndex = toolbelt.notes.findIndex(item => item.id === id);
+            const existing = existingIndex >= 0 ? toolbelt.notes[existingIndex] : null;
+            const completed = payload.completed !== undefined
+                ? Boolean(payload.completed)
+                : Boolean(existing?.completed);
+
             const note = {
-                id: String(payload.id || makeId('note')),
+                id,
+                type,
                 date: String(payload.date || new Date().toISOString().slice(0, 10)),
                 title: String(payload.title || 'Note'),
                 text: String(payload.text || ''),
+                completed,
                 timestamp: new Date().toISOString()
             };
-            const index = toolbelt.notes.findIndex(item => item.id === note.id);
-            if (index >= 0) toolbelt.notes[index] = note;
+            if (existingIndex >= 0) toolbelt.notes[existingIndex] = note;
             else toolbelt.notes.unshift(note);
             return `Note: ${note.title}`;
+        }
+        case 'toolbelt.note.toggleComplete': {
+            const toolbelt = ensureToolbelt(state);
+            const note = toolbelt.notes.find(item => item.id === payload.id);
+            if (note) {
+                note.completed = !note.completed;
+            }
+            return 'Note completion toggled';
         }
         case 'toolbelt.note.remove': {
             const toolbelt = ensureToolbelt(state);
@@ -445,6 +513,9 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
                 ...payload
             });
             state.characters.push(character);
+            if (character.type === 'player' && character.inventory?.magicItems?.length) {
+                linkMagicItemsWithDatabase(state);
+            }
             // If monster has multiple turns, automatically create a secondary turn entry
             if (character.type === 'monster' && character.hasMultipleTurns) {
                 const secondaryId = `${character.id}_turn2`;
@@ -548,9 +619,21 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             // If this is the primary of a multi-turn monster, update secondary initiative too
             if (character.hasMultipleTurns && !character.id.endsWith('_turn2')) {
                 const secondary = findCharacter(state, `${character.id}_turn2`);
-                if (secondary && character.initiative !== null) {
-                    secondary.initiative = character.initiative - 10;
+                if (secondary) {
+                    secondary.initiative = character.initiative === null ? null : character.initiative - 10;
                 }
+            }
+            if (character.groupId && !character.id.endsWith('_turn2')) {
+                state.characters.forEach(other => {
+                    if (other.id === character.id || other.groupId !== character.groupId || other.id.endsWith('_turn2')) return;
+                    other.initiative = character.initiative;
+                    if (other.hasMultipleTurns) {
+                        const otherSecondary = findCharacter(state, `${other.id}_turn2`);
+                        if (otherSecondary) {
+                            otherSecondary.initiative = character.initiative === null ? null : character.initiative - 10;
+                        }
+                    }
+                });
             }
             sortInitiativePreservingTurn(state, payload.characterId);
             return `${character.name}: iniciativa ${character.initiative ?? '-'}`;
@@ -566,7 +649,10 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             const character = findCharacter(state, payload.characterId);
             if (!character) throw new Error('Postava neexistuje.');
             character.maxReactions = Math.max(0, toNumber(character.maxReactions, 1));
-            character.currentReactions = clamp(toNumber(payload.value, character.currentReactions ?? character.maxReactions), 0, character.maxReactions);
+            const targetValue = (payload.refresh || payload.reset)
+                ? character.maxReactions
+                : toNumber(payload.value, character.currentReactions ?? character.maxReactions);
+            character.currentReactions = clamp(targetValue, 0, character.maxReactions);
             return `${character.name}: reactions ${character.currentReactions}/${character.maxReactions}`;
         }
         case 'effect.add': {
@@ -643,9 +729,13 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
         case 'combat.aoe.apply': {
             const targets = prepareAoe(state, payload);
             for (const { character, damage, effects } of targets) {
-                const absorbed = Math.min(character.tempHp || 0, damage);
-                character.tempHp = Math.max(0, (character.tempHp || 0) - absorbed);
-                character.currentHp = clamp((character.currentHp || 0) - (damage - absorbed), 0, effectiveMaxHp(character));
+                if (damage < 0) {
+                    character.currentHp = clamp((character.currentHp || 0) + Math.abs(damage), 0, effectiveMaxHp(character));
+                } else {
+                    const absorbed = Math.min(character.tempHp || 0, damage);
+                    character.tempHp = Math.max(0, (character.tempHp || 0) - absorbed);
+                    character.currentHp = clamp((character.currentHp || 0) - (damage - absorbed), 0, effectiveMaxHp(character));
+                }
                 character.effects = effects;
                 clampCurrentHpToEffectiveMax(character);
                 syncMultiTurnCharacters(state, character.id);
@@ -678,6 +768,7 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             };
             if (Number.isFinite(payload.combatState?.durationRound)) state.combatState.durationRound = Math.max(0, Math.floor(payload.combatState.durationRound));
             if (state.combatState.currentTurn >= state.characters.length) state.combatState.currentTurn = 0;
+            linkMagicItemsWithDatabase(state);
             return `Nacten combat stav (${characters.length} postav)`;
         }
         case 'inventory.currency.set': {
@@ -694,7 +785,11 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             if (!character) throw new Error('Postava neexistuje.');
             const inv = ensureInventory(character);
             const itemType = payload.itemType || 'general';
-            addInventoryItem(inv, itemType, payload.item || {});
+            if (itemType === 'magic') {
+                addLinkedMagicItemToInventory(state, character, payload.item || {});
+            } else {
+                addInventoryItem(inv, itemType, payload.item || {});
+            }
             return `${character.name}: pridan item ${payload.item?.name || payload.item?.spellName || payload.item || itemType}`;
         }
         case 'inventory.item.update': {
@@ -704,7 +799,11 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             const index = Number(payload.index);
             const current = collection[index];
             if (!current) throw new Error('Item neexistuje.');
-            collection[index] = normalizeInventoryItemForCollection(payload.collection, payload.item || {}, current);
+            if (payload.collection === 'magicItems') {
+                updateLinkedMagicItemFromInventory(state, character, index, payload.item || {});
+            } else {
+                collection[index] = normalizeInventoryItemForCollection(payload.collection, payload.item || {}, current);
+            }
             const next = collection[index];
             return `${character.name}: upraven item ${next.name || next.spellName || payload.collection}`;
         }
@@ -1066,6 +1165,32 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             epic.used = clamp(payload.delta !== undefined ? (epic.used || 0) + toNumber(payload.delta) : toNumber(payload.used, epic.used || 0), 0, epic.maxUses || 0);
             return `${character.name}: epic ${epic.name}`;
         }
+        case 'monster.epic.use':
+        case 'monster.epic.option.reset': {
+            const character = findCharacter(state, payload.characterId);
+            if (!character || character.type !== 'monster') throw new Error('Monstrum neexistuje.');
+            const stored = character.monsterAbilities?.epicActions?.actions?.[Number(payload.index)];
+            if (!character.monsterAbilities?.epicActions?.enabled || !stored) throw new Error('Epic action neni aktivni.');
+            // Older undo snapshots can still contain Markdown-only groups.
+            const epic = normalizeEpicAction(stored);
+            const optionIndex = Number(payload.optionIndex);
+            const option = Number.isInteger(optionIndex) ? epic.options?.[optionIndex] : null;
+            if (payload.optionIndex !== undefined && !option) throw new Error('Epic option neexistuje.');
+            if (action.type === 'monster.epic.option.reset') {
+                if (!option) throw new Error('Epic option neexistuje.');
+                option.used = 0;
+                character.monsterAbilities.epicActions.actions[Number(payload.index)] = epic;
+                return `${character.name}: obnoveno ${option.name}`;
+            }
+            if (epic.options?.length && !option) throw new Error('Vyber moznost epic action.');
+            if (epic.maxUses > 0 && epic.used >= epic.maxUses) throw new Error('Sdileny limit epic action je vycerpan.');
+            if (option?.maxUses > 0 && option.used >= option.maxUses) throw new Error('Limit teto moznosti je vycerpan.');
+            // Check all limits before spending either counter; rapid clicks remain atomic.
+            if (epic.maxUses > 0) epic.used = (epic.used || 0) + 1;
+            if (option?.maxUses > 0) option.used = (option.used || 0) + 1;
+            character.monsterAbilities.epicActions.actions[Number(payload.index)] = epic;
+            return `${character.name}: ${option?.name || epic.name}${option ? ` (${epic.name})` : ''}`;
+        }
         case 'encounter.upsert': {
             const encounter = normalizeEncounter(payload.encounter || {});
             const index = (state.encounters || []).findIndex(item => item.id === encounter.id);
@@ -1093,6 +1218,9 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
         case 'encounter.importToCombat': {
             const encounter = (state.encounters || []).find(item => item.id === payload.encounterId);
             if (!encounter) throw new Error('Encounter neexistuje.');
+            if (payload.clearExistingMonsters) {
+                state.characters = state.characters.filter(character => character.type !== 'monster');
+            }
             const added = addEncounterEntriesToCombat(state, encounter.monsters);
             if (!added) throw new Error('Encounter neobsahuje žádná dostupná monstra.');
             state.activeEncounterId = encounter.id;
@@ -1103,10 +1231,88 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             if (!encounter) throw new Error('Encounter neexistuje.');
             const entry = (encounter.reserve || []).find(item => item.id === payload.entryId);
             if (!entry) throw new Error('Rezervní monstrum neexistuje.');
-            const added = addEncounterEntriesToCombat(state, [{ ...entry, quantity: Math.max(1, Number(payload.quantity) || 1) }]);
+            const quantity = Math.max(1, Number(payload.quantity) || Number(entry.quantity) || 1);
+            const groupCount = Math.max(1, Math.min(quantity, Number(payload.groupCount) || Number(entry.groupCount) || 1));
+            const added = addEncounterEntriesToCombat(state, [{ ...entry, quantity, groupCount }]);
             if (!added) throw new Error('Monstrum už není v databázi.');
             state.activeEncounterId = encounter.id;
             return 'Rezerva přidána do boje';
+        }
+        case 'encounter.close': {
+            state.activeEncounterId = null;
+            return 'Encounter poznámky uzavřeny';
+        }
+        case 'encounter.mutateMonster': {
+            const originalMonster = (state.monsterDatabase || []).find(item => item.id === payload.monsterId);
+            if (!originalMonster) throw new Error('Monstrum neexistuje v databázi.');
+            const mutatedId = String(payload.mutatedMonsterId || makeId('monster_db'));
+            const mutatedMonster = normalizeMonsterDbItem({
+                ...clone(originalMonster),
+                id: mutatedId,
+                name: `${originalMonster.name} (Mutated)`,
+                flag: 'active'
+            });
+            state.monsterDatabase = [...(state.monsterDatabase || []), mutatedMonster];
+
+            const mutateEntries = (list) => {
+                const idx = payload.entryId
+                    ? list.findIndex(e => e.id === payload.entryId)
+                    : list.findIndex(e => e.monsterId === payload.monsterId);
+                if (idx >= 0) {
+                    const entry = list[idx];
+                    if (entry.quantity > 1) {
+                        entry.quantity -= 1;
+                        entry.groupCount = Math.min(entry.groupCount || 1, entry.quantity);
+                        list.splice(idx + 1, 0, {
+                            id: makeId('encounter_entry'),
+                            monsterId: mutatedId,
+                            quantity: 1,
+                            groupCount: 1,
+                            ...(entry.groupName ? { groupName: `${entry.groupName} (Mutated)` } : {})
+                        });
+                    } else {
+                        entry.monsterId = mutatedId;
+                    }
+                    return true;
+                }
+                return false;
+            };
+
+            let encounterToSave = payload.encounter ? normalizeEncounter(payload.encounter) : null;
+            if (encounterToSave) {
+                const alreadyMutated =
+                    encounterToSave.monsters.some(e => e.monsterId === mutatedId) ||
+                    (Array.isArray(encounterToSave.reserve) && encounterToSave.reserve.some(e => e.monsterId === mutatedId));
+                if (!alreadyMutated) {
+                    if (payload.targetList === 'reserve' && Array.isArray(encounterToSave.reserve)) {
+                        mutateEntries(encounterToSave.reserve);
+                    } else {
+                        const mutatedInMonsters = mutateEntries(encounterToSave.monsters);
+                        if (!mutatedInMonsters && Array.isArray(encounterToSave.reserve)) {
+                            mutateEntries(encounterToSave.reserve);
+                        }
+                    }
+                }
+                encounterToSave.updatedAt = new Date().toISOString();
+                const encIdx = (state.encounters || []).findIndex(e => e.id === encounterToSave.id);
+                if (encIdx >= 0) state.encounters[encIdx] = encounterToSave;
+                else state.encounters = [...(state.encounters || []), encounterToSave];
+            } else if (payload.encounterId) {
+                const encounter = (state.encounters || []).find(item => item.id === payload.encounterId);
+                if (encounter) {
+                    if (payload.targetList === 'reserve' && Array.isArray(encounter.reserve)) {
+                        mutateEntries(encounter.reserve);
+                    } else {
+                        const mutatedInMonsters = mutateEntries(encounter.monsters);
+                        if (!mutatedInMonsters && Array.isArray(encounter.reserve)) {
+                            mutateEntries(encounter.reserve);
+                        }
+                    }
+                    encounter.updatedAt = new Date().toISOString();
+                }
+            }
+
+            return `Mutated monster: ${mutatedMonster.name}`;
         }
         case 'database.monster.upsert': {
             upsertDatabaseItem(state.monsterDatabase, normalizeMonsterDbItem(payload.monster || {}), 'monster_db');
@@ -1120,9 +1326,17 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
             state.monsterDatabase = normalizeImport(payload.items || payload.monsters).map(normalizeMonsterDbItem);
             return `Databaze monster: import ${state.monsterDatabase.length}`;
         }
+        case 'database.monsterGroup.updateDescription': {
+            if (!state.monsterGroupDescriptions || typeof state.monsterGroupDescriptions !== 'object') {
+                state.monsterGroupDescriptions = {};
+            }
+            const groupName = String(payload.name || payload.group || '').trim();
+            if (!groupName) throw new Error('Nazev skupiny monster je povinny.');
+            state.monsterGroupDescriptions[groupName] = String(payload.description || '');
+            return `Popis skupiny monster: ${groupName}`;
+        }
         case 'database.magic.upsert': {
-            const item = normalizeMagicItem(payload.item || {});
-            upsertDatabaseItem(state.magicItemDatabase, item, 'magic_db');
+            const item = upsertLinkedMagicDatabaseItem(state, payload.item || {});
             return `Databaze magic itemu: ${item.name}`;
         }
         case 'database.magic.remove': {
@@ -1131,6 +1345,7 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
         }
         case 'database.magic.import': {
             state.magicItemDatabase = normalizeImport(payload.items).map(normalizeMagicItem);
+            linkMagicItemsWithDatabase(state);
             return `Databaze magic itemu: import ${state.magicItemDatabase.length}`;
         }
         case 'database.potion.upsert': {
@@ -1198,6 +1413,7 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
                 const monsters = state.characters.filter(character => character.type === 'monster');
                 state.characters = [...monsters, ...data.playerCharacters.map(normalizeCharacter).filter(character => character.type === 'player')];
             }
+            linkMagicItemsWithDatabase(state);
             return 'Databaze: import vsech databazi';
         }
         default:
@@ -1205,15 +1421,30 @@ function applyActionMutation(state, action, client = { id: 'system', role: 'play
     }
 }
 
+function compareCombatantsByInitiative(a, b) {
+    if (isCombatant(a) !== isCombatant(b)) return isCombatant(a) ? -1 : 1;
+    const initDiff = (b.initiative ?? -999) - (a.initiative ?? -999);
+    if (initDiff !== 0) return initDiff;
+    if (a.groupId !== b.groupId) {
+        return String(a.groupId || '').localeCompare(String(b.groupId || ''));
+    }
+    return 0;
+}
+
 function sortInitiativePreservingTurn(state, updatedCharacterId) {
     if (!state.combatState.active) return;
     const current = state.characters[state.combatState.currentTurn];
     const currentId = current?.id || updatedCharacterId;
-    state.characters.sort((a, b) => (b.initiative ?? -999) - (a.initiative ?? -999));
+    const playedIds = new Set(
+        (state.combatState.playedThisRound || [])
+            .map(index => state.characters[index]?.id)
+            .filter(Boolean)
+    );
+    state.characters.sort(compareCombatantsByInitiative);
     state.combatState.currentTurn = Math.max(0, state.characters.findIndex(c => c.id === currentId));
     state.combatState.playedThisRound = state.characters
         .map((character, index) => ({ character, index }))
-        .filter(item => state.combatState.playedThisRound.includes(item.index))
+        .filter(item => playedIds.has(item.character.id))
         .map(item => item.index);
 }
 
@@ -1222,7 +1453,20 @@ function rollInitiative(character) {
 }
 
 function startCombat(state) {
+    state.characters.filter(isCombatant).forEach(character => resetEpicResources(character, 'encounter'));
     const processedGroups = new Set();
+    // Propagate any pre-set group initiatives to unrolled members of the same group first
+    state.characters.forEach(character => {
+        if (!isCombatant(character) || character.id.endsWith('_turn2') || !character.groupId) return;
+        if (character.initiative !== null && character.initiative !== undefined && !processedGroups.has(character.groupId)) {
+            processedGroups.add(character.groupId);
+            state.characters.forEach(other => {
+                if (other.groupId === character.groupId && !other.id.endsWith('_turn2') && (other.initiative === null || other.initiative === undefined)) {
+                    other.initiative = character.initiative;
+                }
+            });
+        }
+    });
     // First pass: roll initiative for primary entries
     state.characters.forEach(character => {
         if (!isCombatant(character)) {
@@ -1257,10 +1501,7 @@ function startCombat(state) {
             character.initiative = rollInitiative(character);
         }
     });
-    state.characters.sort((a, b) => {
-        if (isCombatant(a) !== isCombatant(b)) return isCombatant(a) ? -1 : 1;
-        return (b.initiative ?? -999) - (a.initiative ?? -999);
-    });
+    state.characters.sort(compareCombatantsByInitiative);
     state.combatState = { active: true, currentTurn: firstCombatantIndex(state), round: 1, playedThisRound: [] };
     revealCurrentMonster(state);
 }
@@ -1286,6 +1527,7 @@ function revealCurrentMonster(state) {
     if (current?.type === 'monster') {
         current.revealedToPlayers = true;
         resetMonsterTurnResources(current);
+        syncMultiTurnCharacters(state, current.id);
     }
 }
 
@@ -1297,11 +1539,7 @@ function resetTurnResources(character) {
 function resetMonsterTurnResources(monster) {
     const abilities = monster.monsterAbilities || {};
     if (abilities.legendaryActions?.enabled) abilities.legendaryActions.used = 0;
-    if (abilities.epicActions?.enabled && Array.isArray(abilities.epicActions.actions)) {
-        abilities.epicActions.actions.forEach(action => {
-            action.used = 0;
-        });
-    }
+    if (abilities.epicActions?.enabled) resetEpicResources(monster, 'turn');
     if (Array.isArray(abilities.customFeatures)) {
         abilities.customFeatures.forEach(feature => {
             if (feature.trackerType === 'round') feature.used = 0;
@@ -1364,6 +1602,7 @@ function endCombat(state, close) {
     state.combatState = { active: false, currentTurn: 0, round: 1, playedThisRound: [] };
     if (close) {
         state.characters = state.characters.filter(character => character.type === 'player');
+        state.activeEncounterId = null;
     }
     state.characters.forEach(character => {
         character.initiative = null;
@@ -1399,6 +1638,121 @@ function addInventoryItem(inv, itemType, item) {
     } else {
         inv.generalItems.push(normalizeInventoryItemForCollection('generalItems', item));
     }
+}
+
+function ensureMagicItemDatabase(state) {
+    if (!Array.isArray(state.magicItemDatabase)) state.magicItemDatabase = [];
+    return state.magicItemDatabase;
+}
+
+function findMatchingMagicDbItem(magicDb, { id, name }) {
+    const idKey = String(id || '').trim();
+    if (idKey) {
+        const byId = magicDb.find(entry => entry.id === idKey);
+        if (byId) return byId;
+    }
+    const nameKey = String(name || '').trim().toLowerCase();
+    if (nameKey) {
+        return magicDb.find(entry => String(entry.name || '').trim().toLowerCase() === nameKey) || null;
+    }
+    return null;
+}
+
+function propagateMagicItemToCharacters(state, dbItem, { previousId = '', previousNameKey = '' } = {}) {
+    const currentNameKey = String(dbItem.name || '').trim().toLowerCase();
+    (state.characters || []).forEach(character => {
+        if (!Array.isArray(character.inventory?.magicItems)) return;
+        character.inventory.magicItems = character.inventory.magicItems.map(item => {
+            const source = typeof item === 'string' ? { name: item } : (item || {});
+            const itemId = String(source.magicItemId || source.id || '').trim();
+            const itemNameKey = String(source.name || source.spellName || '').trim().toLowerCase();
+            const matchesId = Boolean(itemId && (itemId === dbItem.id || (previousId && itemId === previousId)));
+            const matchesName = Boolean(!itemId || !state.magicItemDatabase.some(entry => entry.id === itemId && entry.id !== dbItem.id)) &&
+                Boolean(itemNameKey && (itemNameKey === currentNameKey || (previousNameKey && itemNameKey === previousNameKey)));
+            if (matchesId || matchesName) {
+                return syncInventoryMagicItemFromDb(source, dbItem);
+            }
+            return item;
+        });
+    });
+}
+
+function addLinkedMagicItemToInventory(state, character, rawItem) {
+    const inv = ensureInventory(character);
+    const magicDb = ensureMagicItemDatabase(state);
+    const normalized = normalizeInventoryItemForCollection('magicItems', rawItem);
+    const requestedId = rawItem?.magicItemId || rawItem?.id;
+    let dbItem = findMatchingMagicDbItem(magicDb, { id: requestedId, name: normalized.name });
+    if (!dbItem) {
+        dbItem = normalizeMagicItem({
+            ...normalized,
+            id: requestedId && !magicDb.some(entry => entry.id === String(requestedId)) ? String(requestedId) : makeId('magic_db'),
+            source: normalized.source || `Inventory: ${character.name}`
+        });
+        magicDb.push(dbItem);
+    } else if (normalized.description && !dbItem.description) {
+        dbItem.description = normalized.description;
+        propagateMagicItemToCharacters(state, dbItem);
+    }
+    inv.magicItems.push(syncInventoryMagicItemFromDb(normalized, dbItem));
+}
+
+function updateLinkedMagicItemFromInventory(state, character, index, rawUpdate) {
+    const collection = getInventoryCollection(character, 'magicItems');
+    const current = collection[index];
+    if (!current) throw new Error('Item neexistuje.');
+    const previousSource = typeof current === 'string' ? { name: current } : current;
+    const previousId = String(previousSource.magicItemId || previousSource.id || '').trim();
+    const previousNameKey = String(previousSource.name || previousSource.spellName || '').trim().toLowerCase();
+    const updated = normalizeInventoryItemForCollection('magicItems', rawUpdate, current);
+    const magicDb = ensureMagicItemDatabase(state);
+    let dbItem = findMatchingMagicDbItem(magicDb, { id: previousId || updated.magicItemId || updated.id, name: previousSource.name })
+        || findMatchingMagicDbItem(magicDb, { id: '', name: updated.name });
+    if (dbItem) {
+        const nextDbItem = normalizeMagicItem({
+            ...dbItem,
+            name: updated.name,
+            description: updated.description,
+            itemType: updated.itemType || dbItem.itemType,
+            rarity: updated.rarity ?? dbItem.rarity,
+            requiresAttunement: rawUpdate?.requiresAttunement !== undefined ? Boolean(rawUpdate.requiresAttunement) : Boolean(dbItem.requiresAttunement),
+            tags: rawUpdate?.tags !== undefined ? updated.tags : dbItem.tags,
+            source: rawUpdate?.source !== undefined ? updated.source : dbItem.source,
+            id: dbItem.id
+        });
+        const dbIndex = magicDb.findIndex(entry => entry.id === dbItem.id);
+        magicDb[dbIndex] = nextDbItem;
+        dbItem = nextDbItem;
+    } else {
+        dbItem = normalizeMagicItem({
+            ...updated,
+            id: previousId || makeId('magic_db'),
+            source: updated.source || `Inventory: ${character.name}`
+        });
+        magicDb.push(dbItem);
+    }
+    collection[index] = syncInventoryMagicItemFromDb(updated, dbItem);
+    propagateMagicItemToCharacters(state, dbItem, { previousId, previousNameKey });
+}
+
+function upsertLinkedMagicDatabaseItem(state, rawItem) {
+    const magicDb = ensureMagicItemDatabase(state);
+    const existingById = rawItem?.id ? magicDb.find(entry => entry.id === String(rawItem.id)) : null;
+    const existingByName = !existingById && rawItem?.name
+        ? magicDb.find(entry => String(entry.name || '').trim().toLowerCase() === String(rawItem.name || '').trim().toLowerCase())
+        : null;
+    const existing = existingById || existingByName;
+    const previousId = existing?.id || String(rawItem?.id || '');
+    const previousNameKey = String(existing?.name || rawItem?.name || '').trim().toLowerCase();
+    const item = normalizeMagicItem({
+        ...(existing || {}),
+        ...(rawItem || {}),
+        id: existing?.id || rawItem?.id || makeId('magic_db')
+    });
+    upsertDatabaseItem(magicDb, item, 'magic_db');
+    const saved = magicDb.find(entry => entry.id === item.id) || item;
+    propagateMagicItemToCharacters(state, saved, { previousId, previousNameKey });
+    return saved;
 }
 
 function normalizeInventoryItemForCollection(collection, item, current = {}) {
@@ -1556,6 +1910,8 @@ function regainFeatureUses(feature, restType) {
 }
 
 function applyRest(character, restType) {
+    resetEpicResources(character, 'rest');
+    if (restType === 'long') resetEpicResources(character, 'day');
     ensureSpellShape(character);
     character.customFeatures.forEach(feature => {
         regainFeatureUses(feature, restType);
@@ -1622,19 +1978,84 @@ function transferInventoryItem(state, payload) {
     targetInventory[payload.collection].push(clone(item));
 }
 
+function groupLabelForIndex(index) {
+    return `Group ${index + 1}`;
+}
+
 function addEncounterEntriesToCombat(state, entries) {
     let added = 0;
-    (entries || []).forEach(entry => {
+    const validEntries = (entries || []).filter(entry => entry && (state.monsterDatabase || []).some(item => item.id === entry.monsterId));
+    const totalCountByMonsterId = new Map();
+    validEntries.forEach(entry => {
+        const copies = Math.max(1, Math.min(99, Number(entry.quantity) || 1));
+        totalCountByMonsterId.set(entry.monsterId, (totalCountByMonsterId.get(entry.monsterId) || 0) + copies);
+    });
+    const nextNumberByMonsterId = new Map();
+    totalCountByMonsterId.forEach((_, monsterId) => {
+        const monster = (state.monsterDatabase || []).find(item => item.id === monsterId);
+        if (!monster) return;
+        const existingCount = (state.characters || []).filter(
+            c => c.type === 'monster' && !c.id.endsWith('_turn2') && !c.associatedObjectKind && (c.monsterData?.id === monsterId || c.baseMonsterName === monster.name || c.name === monster.name || c.name.startsWith(`${monster.name} `))
+        ).length;
+        nextNumberByMonsterId.set(monsterId, existingCount + 1);
+    });
+
+    let maxGroupNum = 0;
+    (state.characters || []).forEach(c => {
+        const match = c.groupName && String(c.groupName).match(/Group\s+(\d+)/i);
+        if (match) maxGroupNum = Math.max(maxGroupNum, parseInt(match[1], 10));
+    });
+    const existingGroupIds = new Set((state.characters || []).map(c => c.groupId).filter(Boolean));
+    let groupSeq = Math.max(maxGroupNum, existingGroupIds.size);
+
+    validEntries.forEach(entry => {
         const monster = (state.monsterDatabase || []).find(item => item.id === entry.monsterId);
         if (!monster) return;
         const copies = Math.max(1, Math.min(99, Number(entry.quantity) || 1));
+        const isObject = monster.entityKind === 'nonMonster';
+        const groups = isObject ? 1 : Math.min(copies, Math.max(1, Number(entry.groupCount) || 1));
+        const useGrouping = !isObject && ((copies > 1 && groups < copies) || Boolean(entry.groupName));
+        const groupSize = Math.ceil(copies / groups);
+        const groupDefs = [];
+        for (let g = 0; g < groups; g += 1) {
+            if (useGrouping) {
+                const label = entry.groupName
+                    ? (groups > 1 ? `${entry.groupName} ${g + 1}` : String(entry.groupName))
+                    : groupLabelForIndex(groupSeq++);
+                groupDefs.push({
+                    id: makeId('grp'),
+                    name: label,
+                    initiative: state.combatState?.active ? (Math.floor(Math.random() * 20) + 1 + (Number(monster.initBonus) || 0)) : null
+                });
+            } else {
+                groupDefs.push({ id: null, name: null, initiative: null });
+            }
+        }
+
+        const totalPlanned = (totalCountByMonsterId.get(monster.id) || 0) + ((nextNumberByMonsterId.get(monster.id) || 1) - 1);
+
         for (let index = 0; index < copies; index += 1) {
             const power = monster.monsterAbilities?.power;
             const maxPower = Number(power?.max ?? monster.maxPower ?? 0) || 0;
-            const name = copies > 1 ? `${monster.name} ${index + 1}` : monster.name;
+            const num = nextNumberByMonsterId.get(monster.id) || (index + 1);
+            nextNumberByMonsterId.set(monster.id, num + 1);
+            const shouldNumber = totalPlanned > 1;
+            const name = shouldNumber ? `${monster.name} ${num}` : monster.name;
+            const groupIdx = Math.min(groups - 1, Math.floor(index / groupSize));
+            const groupDef = groupDefs[groupIdx] || { id: null, name: null, initiative: null };
+            const initiative = isObject
+                ? Number(monster.fixedInitiative ?? 20)
+                : groupDef.id
+                    ? groupDef.initiative
+                    : state.combatState?.active
+                        ? (Math.floor(Math.random() * 20) + 1 + (Number(monster.initBonus) || 0))
+                        : null;
+
             const character = normalizeCharacter({
                 id: makeId('monster'),
                 name,
+                baseMonsterName: monster.name,
+                monsterNumber: shouldNumber ? num : 0,
                 type: 'monster',
                 activeInCombat: true,
                 maxHp: Number(monster.hp || monster.maxHp || 1),
@@ -1643,12 +2064,15 @@ function addEncounterEntriesToCombat(state, entries) {
                 maxReactions: Number(monster.maxReactions || 1),
                 currentReactions: Number(monster.maxReactions || 1),
                 initBonus: Number(monster.initBonus || 0),
+                initiative,
                 maxPower,
                 currentPower: Number(power?.current ?? maxPower) || 0,
                 powerName: String(power?.name || monster.powerName || 'Power'),
+                groupId: groupDef.id,
+                groupName: groupDef.name,
                 hasMultipleTurns: Boolean(monster.hasMultipleTurns),
-                isNonMonster: monster.entityKind === 'nonMonster',
-                hasHpAc: monster.entityKind !== 'nonMonster' || Boolean(monster.hasHpAc),
+                isNonMonster: isObject,
+                hasHpAc: !isObject || Boolean(monster.hasHpAc),
                 fixedInitiative: monster.fixedInitiative,
                 monsterData: monster,
                 monsterAbilities: monster.monsterAbilities
@@ -1668,6 +2092,9 @@ function addEncounterEntriesToCombat(state, entries) {
             added += 1;
         }
     });
+    if (added > 0 && state.combatState?.active) {
+        sortInitiativePreservingTurn(state);
+    }
     return added;
 }
 
@@ -1866,6 +2293,11 @@ function syncMultiTurnCharacters(state, changedId) {
     target.effects = clone(source.effects);
     target.currentPower = source.currentPower;
     target.maxPower = source.maxPower;
+
+    if (source.monsterAbilities?.epicActions) {
+        if (!target.monsterAbilities) target.monsterAbilities = {};
+        target.monsterAbilities.epicActions = clone(source.monsterAbilities.epicActions);
+    }
 
     // Sync spell slots
     if (source.monsterAbilities?.spellcasting?.spellSlots) {

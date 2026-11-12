@@ -1,10 +1,10 @@
 import { NumberInput } from '../components/NumberInput';
-import { useState, useEffect, useMemo } from 'react';
-import type { GameState, GameAction, AbilityKey, CustomFeature, MonsterDatabaseEntry } from '../shared/types';
+import { useState, useEffect, useMemo, useRef, type ChangeEvent } from 'react';
+import type { GameState, GameAction, AbilityKey, CustomFeature, MonsterDatabaseEntry, MonsterCombatType, MonsterFlag, MonsterEpicAction, MonsterEpicOption, EpicActionReset } from '../shared/types';
 import { MarkdownEditor } from '../components/Markdown';
 import { Modal } from '../components/Modal';
-import { parseMonsterEntries as parseEntriesText, parseMonsterMarkdown, parseMonsterSpellcasting } from '../shared/monsterParser';
-import { SPELL_SLOTS_TABLE } from '../shared/defaults';
+import { parseMonsterEntries as parseEntriesText, parseMonsterMarkdown, parseMonsterSpellcasting, epicActionsToText, parseEpicActionsText } from '../shared/monsterParser';
+import { SPELL_SLOTS_TABLE, epicSlotsForLevel } from '../shared/defaults';
 import { MonsterDetail, monsterDatabaseEntryToPreviewCharacter } from './MonstersPage';
 
 const DAMAGE_TYPES = [
@@ -24,7 +24,9 @@ interface Props {
   state: GameState;
   submitAction: (action: GameAction) => Promise<any>;
   editingMonsterId: string | null;
-  onBackToDatabases: () => void;
+  onBackToDatabases: (savedGroup?: string) => void;
+  initialMarkdown?: string;
+  backLabel?: string;
 }
 
 function SpellSearchInput({
@@ -116,7 +118,7 @@ function SpellSearchInput({
 
 const ABILITY_KEYS: AbilityKey[] = ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'];
 
-export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBackToDatabases }: Props) {
+export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBackToDatabases, initialMarkdown, backLabel }: Props) {
   const isEditing = Boolean(editingMonsterId);
   const spellDatabase = state.spellDatabase || [];
 
@@ -149,6 +151,8 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
   const [proficiency, setProficiency] = useState('');
   const [monsterType, setMonsterType] = useState('');
   const [size, setSize] = useState('Medium');
+  const [combatType, setCombatType] = useState<MonsterCombatType>('monster');
+  const [flag, setFlag] = useState<MonsterFlag>('active');
   const [initBonus, setInitBonus] = useState(0);
   const [description, setDescription] = useState('');
   const [damageResistances, setDamageResistances] = useState('');
@@ -169,13 +173,102 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
   const [hasMythicActions, setHasMythicActions] = useState(false);
   const [hasMultipleTurns, setHasMultipleTurns] = useState(false);
   const [group, setGroup] = useState('');
+  const [groups, setGroups] = useState<string[]>([]);
+  const [newGroupInput, setNewGroupInput] = useState('');
+  const [imageUrl, setImageUrl] = useState('');
+  const [imageFocus, setImageFocus] = useState('center');
+  const [showImageLibrary, setShowImageLibrary] = useState(false);
+  const [libraryImages, setLibraryImages] = useState<string[]>([]);
+  const [librarySearch, setLibrarySearch] = useState('');
+  const [loadingImages, setLoadingImages] = useState(false);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const imageFileInputRef = useRef<HTMLInputElement>(null);
 
   // Extract existing groups for autocomplete
   const existingGroups = useMemo(() => {
-    const groups = new Set<string>();
-    (state.monsterDatabase || []).forEach(m => { if (m.group) groups.add(m.group); });
-    return Array.from(groups).sort();
+    const allGroups = new Set<string>();
+    (state.monsterDatabase || []).forEach(m => {
+      (m.groups || (m.group ? [m.group] : [])).forEach(g => {
+        if (g && g.trim()) allGroups.add(g.trim());
+      });
+    });
+    return Array.from(allGroups).sort();
   }, [state.monsterDatabase]);
+
+  function addGroup(val: string) {
+    const parts = val.split(',').map(s => s.trim()).filter(Boolean);
+    if (!parts.length) return;
+    setGroups(prev => {
+      const next = [...prev];
+      parts.forEach(p => {
+        if (!next.includes(p)) next.push(p);
+      });
+      return next;
+    });
+    setNewGroupInput('');
+  }
+
+  function removeGroup(groupToRemove: string) {
+    setGroups(prev => prev.filter(g => g !== groupToRemove));
+  }
+
+  async function openImageLibrary() {
+    setShowImageLibrary(true);
+    setLoadingImages(true);
+    try {
+      const res = await fetch('/api/monster-images');
+      const data = await res.json();
+      if (data.success && Array.isArray(data.images)) {
+        setLibraryImages(data.images);
+      }
+    } catch (err) {
+      console.error('Failed to load monster images:', err);
+    } finally {
+      setLoadingImages(false);
+    }
+  }
+
+  async function handleImageUploadFile(file: File) {
+    if (!file) return;
+    setIsUploadingImage(true);
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const dataUrl = reader.result as string;
+        const res = await fetch('/api/upload-monster-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename: file.name, dataUrl })
+        });
+        const data = await res.json();
+        if (data.success && data.url) {
+          setImageUrl(data.url);
+        } else {
+          alert(`Nahrání selhalo: ${data.error || 'Neznámá chyba'}`);
+        }
+      } catch (err: any) {
+        alert(`Chyba při nahrávání: ${err.message}`);
+      } finally {
+        setIsUploadingImage(false);
+      }
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function handleImagePaste(e: React.ClipboardEvent) {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith('image/')) {
+        const file = items[i].getAsFile();
+        if (file) {
+          e.preventDefault();
+          handleImageUploadFile(file);
+          return;
+        }
+      }
+    }
+  }
 
   const conditionOptions = useMemo(() => {
     const dbNames = (state.conditionDatabase || []).map(c => String(c.name));
@@ -213,6 +306,17 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
   // Statblock paste
   const [statblockPaste, setStatblockPaste] = useState('');
   const [collapsedPaste, setCollapsedPaste] = useState(false);
+  const markdownFileRef = useRef<HTMLInputElement>(null);
+  const [markdownImportMessage, setMarkdownImportMessage] = useState('');
+  const importedMarkdownRef = useRef<string>();
+
+  useEffect(() => {
+    if (!editingMonsterId && initialMarkdown && importedMarkdownRef.current !== initialMarkdown) {
+      importedMarkdownRef.current = initialMarkdown;
+      setStatblockPaste(initialMarkdown);
+      handleParse(initialMarkdown, false);
+    }
+  }, [initialMarkdown, editingMonsterId]);
 
   // Collapsible panels
   const [openPanel, setOpenPanel] = useState<string>('basic');
@@ -252,6 +356,8 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
         setChallenge(monster.challenge || '');
         setProficiency(monster.proficiency || '');
         setMonsterType(monster.type || '');
+        setCombatType(monster.combatType || 'monster');
+        setFlag(monster.flag || 'active');
         setSize(monster.size || 'Medium');
         setInitBonus(monster.initBonus || 0);
         setDescription(monster.description || '');
@@ -271,7 +377,13 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
         setHasLairActions(Boolean(monster.hasLairActions));
         setHasMythicActions(Boolean(monster.hasMythicActions));
         setHasMultipleTurns(Boolean(monster.hasMultipleTurns));
-        setGroup(monster.group || '');
+        const loadedGroups = Array.isArray(monster.groups) && monster.groups.length
+          ? monster.groups
+          : (monster.group ? [monster.group] : []);
+        setGroups(loadedGroups);
+        setGroup(monster.group || loadedGroups[0] || '');
+        setImageUrl(monster.imageUrl || '');
+        setImageFocus(monster.imageFocus || 'center');
 
         // Load monster abilities
         const ma = monster.monsterAbilities;
@@ -408,10 +520,24 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
     setSpellcastingImportMessage('No spell lists found. Existing spellcasting settings were kept. Use At Will:, 3/Day Each:, or 1st level (4 slots): followed by spell names.');
   }
 
-  function handleParse() {
-    if (!statblockPaste.trim()) return;
+  async function importMarkdownFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
     try {
-      const parsed = parseMonsterMarkdown(statblockPaste, spellDatabase);
+      const text = await file.text();
+      if (!text.trim()) throw new Error('The Markdown file is empty.');
+      setStatblockPaste(text);
+      handleParse(text, false);
+    } catch (error) {
+      setMarkdownImportMessage(`Import failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  function handleParse(text = statblockPaste, notify = true) {
+    if (!text.trim()) return;
+    try {
+      const parsed = parseMonsterMarkdown(text, spellDatabase);
       setName(parsed.name);
       setHp(parsed.hp);
       setEncounterPoints(parsed.encounterPoints || 0.1);
@@ -422,6 +548,7 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
       setLairActionInitiative(parsed.lairActionInitiative ?? 20);
       setMythicActionInitiative(parsed.mythicActionInitiative ?? 20);
       setAc(parsed.ac);
+      setMaxReactions(parsed.maxReactions);
       setSpeed(parsed.speed);
       if (parsed.stats) setStats(parsed.stats);
       setSaves(parsed.saves);
@@ -449,6 +576,14 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
       setMythicActions(parsed.mythicActions ? entriesToText(parsed.mythicActions) : '');
       setHasLairActions(parsed.hasLairActions);
       setHasMythicActions(parsed.hasMythicActions);
+      if (parsed.groups?.length) {
+        setGroups(parsed.groups);
+        setGroup(parsed.groups[0] || '');
+      } else if (parsed.group) {
+        setGroups([parsed.group]);
+        setGroup(parsed.group);
+      }
+      if (parsed.imageUrl) setImageUrl(parsed.imageUrl);
 
       const ma = parsed.monsterAbilities;
       if (ma) {
@@ -459,6 +594,8 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
 
         setLegendaryEnabled(ma.legendaryActions?.enabled);
         setLegendaryMax(ma.legendaryActions?.max || 3);
+        setEpicEnabled(ma.epicActions.enabled);
+        setEpicActionsText(epicActionsToText(ma.epicActions.actions));
 
         const sc = ma.spellcasting;
         if (sc) {
@@ -469,7 +606,8 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
       }
 
       setCollapsedPaste(true);
-      alert('Statblock parsed successfully! Review the extracted traits and fields below.');
+      setMarkdownImportMessage('Statblock loaded into the draft. Review the fields, epic action groups and recovery limits, then Save Monster Entry. Group options share their parent pool and may have their own limits. HP phases and resource costs remain in the rules text.');
+      if (notify) alert('Statblock parsed successfully! Review the extracted traits and fields below.');
     } catch (err: any) {
       alert(`Error parsing statblock: ${err.message}`);
     }
@@ -503,7 +641,7 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
     // Prepare spell slots based on selected type
     let finalSpellSlots: Record<string, { max: number; used: number; atWill?: boolean; spells?: string[] }> = {};
     if (spellcastingType === 'caster-level') {
-      const levelSlots = SPELL_SLOTS_TABLE[spellcastingLevel] || [0, 0, 0, 0, 0, 0, 0, 0, 0];
+      const levelSlots = SPELL_SLOTS_TABLE[spellcastingLevel] || (spellcastingLevel > 20 ? SPELL_SLOTS_TABLE[20] : [0, 0, 0, 0, 0, 0, 0, 0, 0]);
       for (let i = 1; i <= 9; i++) {
         const max = levelSlots[i - 1] || 0;
         if (max > 0) {
@@ -514,6 +652,20 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
           };
         }
       }
+      const epicProg = epicSlotsForLevel(spellcastingLevel);
+      ['epic1', 'epic2', 'epic3'].forEach(lvlKey => {
+        const progMax = epicProg[lvlKey] || 0;
+        const existing = spellSlots[lvlKey];
+        const max = existing?.max !== undefined ? existing.max : progMax;
+        if (max > 0 || (existing && existing.spells && existing.spells.length > 0)) {
+          finalSpellSlots[lvlKey] = {
+            max: max > 0 ? max : progMax,
+            used: existing?.used || 0,
+            atWill: existing?.atWill,
+            spells: existing?.spells || []
+          };
+        }
+      });
     } else if (spellcastingType === 'custom-slots') {
       // Keep only custom slot rows
       Object.keys(spellSlots).forEach(key => {
@@ -552,6 +704,8 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
       challenge,
       proficiency,
       type: monsterType,
+      combatType,
+      flag,
       size,
       initBonus,
       description,
@@ -570,7 +724,10 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
       conditionImmunities,
       damageVulnerabilities,
       hasMultipleTurns,
-      group: group.trim(),
+      group: (groups[0]?.trim() || group.trim()),
+      groups: (groups.length ? groups : (group.trim() ? [group.trim()] : [])).map(g => g.trim()).filter(Boolean),
+      imageUrl: imageUrl.trim() || undefined,
+      imageFocus: imageFocus || 'center',
       maxPower: finalMaxPower,
       currentPower: finalCurrentPower,
       powerName: powerName || 'Power',
@@ -612,7 +769,8 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
       payload: { monster: payload }
     });
 
-    onBackToDatabases();
+    const savedPrimaryGroup = (groups[0]?.trim() || group.trim());
+    onBackToDatabases(savedPrimaryGroup || undefined);
   };
 
   function buildPreviewMonster(): MonsterDatabaseEntry {
@@ -630,7 +788,7 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
       .filter(f => f.trackerType !== 'none');
     let finalSpellSlots: Record<string, { max: number; used: number; atWill?: boolean; spells?: string[] }> = {};
     if (spellcastingType === 'caster-level') {
-      const levelSlots = SPELL_SLOTS_TABLE[spellcastingLevel] || [0, 0, 0, 0, 0, 0, 0, 0, 0];
+      const levelSlots = SPELL_SLOTS_TABLE[spellcastingLevel] || (spellcastingLevel > 20 ? SPELL_SLOTS_TABLE[20] : [0, 0, 0, 0, 0, 0, 0, 0, 0]);
       for (let i = 1; i <= 9; i++) {
         const max = levelSlots[i - 1] || 0;
         if (max > 0) {
@@ -641,6 +799,20 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
           };
         }
       }
+      const epicProg = epicSlotsForLevel(spellcastingLevel);
+      ['epic1', 'epic2', 'epic3'].forEach(lvlKey => {
+        const progMax = epicProg[lvlKey] || 0;
+        const existing = spellSlots[lvlKey];
+        const max = existing?.max !== undefined ? existing.max : progMax;
+        if (max > 0 || (existing && existing.spells && existing.spells.length > 0)) {
+          finalSpellSlots[lvlKey] = {
+            max: max > 0 ? max : progMax,
+            used: existing?.used || 0,
+            atWill: existing?.atWill,
+            spells: existing?.spells || []
+          };
+        }
+      });
     } else if (spellcastingType === 'custom-slots') {
       Object.keys(spellSlots).forEach(key => {
         finalSpellSlots[key] = {
@@ -678,6 +850,8 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
       challenge,
       proficiency,
       type: monsterType,
+      combatType,
+      flag,
       size,
       initBonus,
       description,
@@ -696,7 +870,10 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
       conditionImmunities,
       damageVulnerabilities,
       hasMultipleTurns,
-      group: group.trim(),
+      group: (groups[0]?.trim() || group.trim()),
+      groups: (groups.length ? groups : (group.trim() ? [group.trim()] : [])).map(g => g.trim()).filter(Boolean),
+      imageUrl: imageUrl.trim() || undefined,
+      imageFocus: imageFocus || 'center',
       maxPower: finalMaxPower,
       currentPower: finalCurrentPower,
       powerName: powerName || 'Power',
@@ -764,11 +941,26 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
     });
   }
 
+  const hpPerPoint = state.encounterDifficulty?.hpPerPoint || 150;
+  const dprPerPointMin = state.encounterDifficulty?.dprPerPointMin || 80;
+  const dprPerPointMax = state.encounterDifficulty?.dprPerPointMax || 100;
+
+  const pts = Math.max(0.1, Number(encounterPoints) || 0.1);
+  const expectedHp = Math.round(pts * hpPerPoint);
+  const actualHp = Number(hp) || 0;
+  const hpDiff = actualHp - expectedHp;
+
+  const expectedDprMin = Math.round(pts * dprPerPointMin);
+  const expectedDprMax = Math.round(pts * dprPerPointMax);
+  const actualDpr = Number(dpr) || 0;
+
   return (
     <div className="monster-editor-page" style={{ padding: '20px', maxWidth: '1400px', margin: '0 auto', color: '#e2e8f0' }}>
       {/* Top Bar */}
       <header className="page-sticky-section" style={{
         display: 'flex',
+        flexWrap: 'wrap',
+        gap: '10px',
         justifyContent: 'space-between',
         alignItems: 'center',
         background: '#13131a',
@@ -778,17 +970,75 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
         marginBottom: '20px',
         zIndex: 10
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-          <button className="btn" onClick={onBackToDatabases}>&larr; Back to Databases</button>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '15px' }}>
+          <button className="btn" onClick={() => onBackToDatabases()}>{backLabel || "← Back to Databases"}</button>
           <h2 style={{ margin: 0 }}>{isEditing ? `Edit Monster: ${name}` : 'Create New Monster'}</h2>
         </div>
-        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
           <button className="btn purple" onClick={() => setShowPreview(true)} style={{ padding: '10px 20px', fontSize: '1.1em' }}>
             Preview
           </button>
           <button className="btn success" onClick={handleSave} style={{ padding: '10px 20px', fontSize: '1.1em' }}>
             Save Monster Entry
           </button>
+        </div>
+
+        {/* Top Expected vs Actual Metrics Bar */}
+        <div className="monster-metrics-bar" style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))',
+          gap: '12px',
+          width: '100%',
+          marginTop: '10px',
+          paddingTop: '10px',
+          borderTop: '1px solid #2a2a35'
+        }}>
+          {/* Card 1: Encounter points */}
+          <div className="field-card" style={{ padding: '8px 12px', background: '#0f172a', borderRadius: '6px' }}>
+            <span style={{ fontSize: '0.8rem', color: 'var(--muted, #94a3b8)', display: 'block' }}>Encounter Body (Points)</span>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginTop: '2px' }}>
+              <strong style={{ fontSize: '1.25rem', color: '#fde68a' }}>{pts.toFixed(1)} pt</strong>
+              <span style={{ fontSize: '0.75rem', color: 'var(--muted, #94a3b8)' }}>(1 pt = {hpPerPoint} HP, {dprPerPointMin}–{dprPerPointMax} DPS)</span>
+            </div>
+          </div>
+
+          {/* Card 2: Expected HP vs Actual HP */}
+          <div className="field-card" style={{ padding: '8px 12px', background: '#0f172a', borderRadius: '6px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--muted, #94a3b8)' }}>HP (Skutečné vs. Očekávané)</span>
+              <span style={{
+                fontSize: '0.75rem',
+                fontWeight: 700,
+                color: hpDiff === 0 ? '#4ade80' : Math.abs(hpDiff) <= expectedHp * 0.15 ? '#38bdf8' : hpDiff > 0 ? '#fbbf24' : '#f87171'
+              }}>
+                {hpDiff > 0 ? `+${hpDiff}` : hpDiff < 0 ? `${hpDiff}` : 'Shoda'}
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', marginTop: '2px' }}>
+              <strong style={{ fontSize: '1.25rem', color: '#f8fafc' }}>{actualHp}</strong>
+              <span style={{ color: 'var(--muted, #94a3b8)' }}>/</span>
+              <span style={{ fontSize: '1.05rem', color: '#93c5fd' }}>{expectedHp} oček.</span>
+            </div>
+          </div>
+
+          {/* Card 3: Expected DPS vs Actual DPS */}
+          <div className="field-card" style={{ padding: '8px 12px', background: '#0f172a', borderRadius: '6px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--muted, #94a3b8)' }}>DPS (Skutečný vs. Očekávaný)</span>
+              <span style={{
+                fontSize: '0.75rem',
+                fontWeight: 700,
+                color: actualDpr >= expectedDprMin && actualDpr <= expectedDprMax ? '#4ade80' : actualDpr > expectedDprMax ? '#fbbf24' : '#f87171'
+              }}>
+                {actualDpr >= expectedDprMin && actualDpr <= expectedDprMax ? 'V normě' : actualDpr > expectedDprMax ? `+${actualDpr - expectedDprMax} nad` : `${actualDpr - expectedDprMin} pod`}
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', marginTop: '2px' }}>
+              <strong style={{ fontSize: '1.25rem', color: '#f8fafc' }}>{actualDpr}</strong>
+              <span style={{ color: 'var(--muted, #94a3b8)' }}>/</span>
+              <span style={{ fontSize: '1.05rem', color: '#93c5fd' }}>{expectedDprMin}–{expectedDprMax} oček.</span>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -817,14 +1067,21 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
               value={statblockPaste}
               onChange={e => setStatblockPaste(e.target.value)}
             />
-            <button className="btn success" onClick={handleParse}>Parse Statblock</button>
+            <button className="btn success" onClick={() => handleParse()}>Parse Statblock</button>
           </div>
         )}
-        {spellcastingImportMessage && <p role="status">{spellcastingImportMessage}</p>}
+        <div className="button-row" style={{ marginTop: '10px' }}>
+          <button className="btn warning" onClick={() => markdownFileRef.current?.click()}>Import from .md</button>
+          <input ref={markdownFileRef} className="hidden-input" type="file" accept=".md,.markdown,text/markdown,text/plain" aria-label="Import monster Markdown file" onChange={importMarkdownFile} />
+        </div>
+        {(markdownImportMessage || spellcastingImportMessage) && <div role="status">
+          {markdownImportMessage && <p>{markdownImportMessage}</p>}
+          {spellcastingImportMessage && <p>{spellcastingImportMessage}</p>}
+        </div>}
       </section>
 
       {/* Main Grid */}
-      <div className="monster-editor-columns" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+      <div className="monster-editor-columns" style={{ gap: '20px' }}>
         
         {/* Left Column: Core Fields */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -832,7 +1089,7 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
           {/* General Attributes */}
           <fieldset style={{ background: '#1e1e24', border: '1px solid #2a2a35', borderRadius: '6px', padding: '20px' }}>
             <legend style={{ padding: '0 10px', color: '#60a5fa', fontWeight: 'bold' }}>Attributes & General</legend>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+            <div className="monster-general-fields" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '15px' }}>
               <div>
                 <label>Name:</label>
                 <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Ancient Red Dragon" title="Monster name" />
@@ -849,7 +1106,10 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
                 <NumberInput type="number" value={ac} onChange={e => setAc(Number(e.target.value))} title="Armor class" />
               </div>}
               {(entityKind === 'monster' || hasHpAc) && <div>
-                <label>HP (Hit Points):</label>
+                <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>HP (Hit Points):</span>
+                  <span style={{ fontSize: '0.78rem', color: '#93c5fd' }}>Očekáváno z bodů: {expectedHp}</span>
+                </label>
                 <NumberInput type="number" value={hp} onChange={e => setHp(Number(e.target.value))} title="Maximum HP" />
               </div>}
               {entityKind === 'nonMonster' && <>
@@ -861,7 +1121,10 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
                 <NumberInput type="number" min="0.1" max="20" step="0.1" value={encounterPoints} onChange={e => setEncounterPoints(Number(e.target.value))} title="Difficulty points for encounter planning" />
               </div>
               <div>
-                <label>Expected DPR:</label>
+                <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>Expected DPR / DPS:</span>
+                  <span style={{ fontSize: '0.78rem', color: '#93c5fd' }}>Očekáváno z bodů: {expectedDprMin}–{expectedDprMax}</span>
+                </label>
                 <NumberInput type="number" min="0" value={dpr} onChange={e => setDpr(Number(e.target.value) || 0)} title="Expected damage per round for encounter planning" />
               </div>
               <div>
@@ -888,6 +1151,26 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
                 <label>Monster Type:</label>
                 <input type="text" value={monsterType} onChange={e => setMonsterType(e.target.value)} placeholder="e.g. dragon, fiend" title="Monster subtype/type" />
               </div>
+                            <div>
+                <label>Combat Role (Type):</label>
+                <select value={combatType} onChange={e => setCombatType(e.target.value as MonsterCombatType)} title="Combat role/type">
+                  <option value="monster">Monster (Default)</option>
+                  <option value="spellcaster">Spellcaster</option>
+                  <option value="elite">Elite</option>
+                  <option value="leader">Leader</option>
+                  <option value="ranged">Ranged</option>
+                  <option value="controller">Controller</option>
+                </select>
+              </div>
+              <div>
+                <label>Status Flag:</label>
+                <select value={flag} onChange={e => setFlag(e.target.value as MonsterFlag)} title="Active, Adapt, Inactive, or Unused in database and searches">
+                  <option value="active">Active (Default)</option>
+                  <option value="adapt">Adapt (Visible by default)</option>
+                  <option value="inactive">Inactive</option>
+                  <option value="unused">Unused</option>
+                </select>
+              </div>
               <div>
                 <label>Size:</label>
                 <select value={size} onChange={e => setSize(e.target.value)} title="Size category">
@@ -896,19 +1179,191 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
                   ))}
                 </select>
               </div>
-              <div>
-                <label>Monster Group / Category:</label>
-                <input
-                  type="text"
-                  list="monster-group-list"
-                  value={group}
-                  onChange={e => setGroup(e.target.value)}
-                  placeholder="e.g. Undead, Boss, Bandits..."
-                  title="Group or category for database filtering"
-                />
-                <datalist id="monster-group-list">
-                  {existingGroups.map(g => <option key={g} value={g} />)}
-                </datalist>
+              <div style={{ gridColumn: 'span 2' }}>
+                <label>Monster Groups / Categories:</label>
+                {groups.length > 0 && (
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                    {groups.map(g => (
+                      <span
+                        key={g}
+                        className="badge"
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '4px 8px', background: 'var(--panel-subtle)', border: '1px solid var(--border)' }}
+                      >
+                        <span>{g}</span>
+                        <button
+                          type="button"
+                          onClick={() => removeGroup(g)}
+                          style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: 0, fontSize: '0.9rem', lineHeight: 1 }}
+                          title={`Remove ${g}`}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input
+                    type="text"
+                    list="monster-group-list"
+                    value={newGroupInput}
+                    onChange={e => setNewGroupInput(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        addGroup(newGroupInput);
+                      }
+                    }}
+                    placeholder="Type group and press Add or Enter (comma separated for multiple)..."
+                    title="Add one or more groups"
+                    style={{ flex: 1 }}
+                  />
+                  <datalist id="monster-group-list">
+                    {existingGroups.map(g => <option key={g} value={g} />)}
+                  </datalist>
+                  <button
+                    type="button"
+                    className="btn small"
+                    onClick={() => addGroup(newGroupInput)}
+                  >
+                    + Add group
+                  </button>
+                </div>
+              </div>
+              <div style={{ gridColumn: 'span 2' }} onPaste={handleImagePaste}>
+                <label>Image URL & Asset (Optional):</label>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <input
+                    type="text"
+                    value={imageUrl}
+                    onChange={e => setImageUrl(e.target.value)}
+                    placeholder="e.g. /images/monsters/monster.webp or https://..."
+                    title="Image URL for statblock preview"
+                    style={{ flex: 1, minWidth: '220px' }}
+                  />
+                  <button
+                    type="button"
+                    className="btn small purple"
+                    onClick={openImageLibrary}
+                    title="Browse existing images in public/images/monsters"
+                  >
+                    📁 Browse library
+                  </button>
+                  <button
+                    type="button"
+                    className="btn small"
+                    onClick={() => imageFileInputRef.current?.click()}
+                    disabled={isUploadingImage}
+                    title="Upload an image from your computer to public/images/monsters"
+                  >
+                    {isUploadingImage ? 'Uploading...' : '⬆ Upload file'}
+                  </button>
+                  <input
+                    ref={imageFileInputRef}
+                    type="file"
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    onChange={e => {
+                      const file = e.target.files?.[0];
+                      e.target.value = '';
+                      if (file) handleImageUploadFile(file);
+                    }}
+                  />
+                  {imageUrl && (
+                    <button
+                      type="button"
+                      className="btn danger small"
+                      onClick={() => setImageUrl('')}
+                      title="Clear image"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--muted)', marginTop: '4px' }}>
+                  💡 Tip: Můžeš také přímo sem vložit obrázek ze schránky (<strong>Ctrl+V</strong>) nebo vybrat z knihovny.
+                </div>
+
+                {imageUrl && (
+                  <div style={{ marginTop: '12px', padding: '12px', background: 'var(--panel-subtle)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                    <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '8px', color: 'var(--text-main)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>Fokusovaná oblast ořezu (Crop Focus): <strong style={{ color: 'var(--primary, #38bdf8)' }}>{imageFocus}</strong></span>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>Klikni na obrázek vlevo pro nastavení ohniska</span>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                      {[
+                        { label: 'Top (Hlava)', value: 'center top' },
+                        { label: 'Upper 25%', value: '50% 25%' },
+                        { label: 'Center', value: 'center center' },
+                        { label: 'Lower 75%', value: '50% 75%' },
+                        { label: 'Bottom', value: 'center bottom' },
+                        { label: 'Left', value: 'left center' },
+                        { label: 'Right', value: 'right center' }
+                      ].map(preset => (
+                        <button
+                          key={preset.value}
+                          type="button"
+                          className={`btn small ${imageFocus === preset.value ? 'primary' : ''}`}
+                          style={{ padding: '3px 8px', fontSize: '0.8rem' }}
+                          onClick={() => setImageFocus(preset.value)}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                      <div>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--muted)', marginBottom: '4px' }}>Celý obrázek (klikni pro nastavení fokusu):</div>
+                        <div
+                          style={{ position: 'relative', display: 'inline-block', cursor: 'crosshair', border: '1px solid var(--border)', borderRadius: '6px', overflow: 'hidden', maxHeight: '180px' }}
+                          onClick={e => {
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            const x = Math.max(0, Math.min(100, Math.round(((e.clientX - rect.left) / rect.width) * 100)));
+                            const y = Math.max(0, Math.min(100, Math.round(((e.clientY - rect.top) / rect.height) * 100)));
+                            setImageFocus(`${x}% ${y}%`);
+                          }}
+                          title="Kliknutím sem nastavíš střed ořezu"
+                        >
+                          <img
+                            src={imageUrl}
+                            alt="Full preview for focus"
+                            style={{ maxHeight: '180px', maxWidth: '240px', objectFit: 'contain', display: 'block' }}
+                            onError={e => { (e.target as HTMLElement).style.display = 'none'; }}
+                          />
+                          <div
+                            style={{
+                              position: 'absolute',
+                              left: imageFocus.includes('%') ? imageFocus.split(' ')[0] : imageFocus.includes('left') ? '15%' : imageFocus.includes('right') ? '85%' : '50%',
+                              top: imageFocus.includes('%') ? (imageFocus.split(' ')[1] || '50%') : imageFocus.includes('top') ? '15%' : imageFocus.includes('bottom') ? '85%' : '50%',
+                              width: '18px',
+                              height: '18px',
+                              borderRadius: '50%',
+                              border: '2px solid #ef4444',
+                              background: 'rgba(239, 68, 68, 0.4)',
+                              transform: 'translate(-50%, -50%)',
+                              pointerEvents: 'none',
+                              boxShadow: '0 0 6px rgba(0,0,0,0.8)'
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--muted)', marginBottom: '4px' }}>Výsledný ořez (náhled v kartě):</div>
+                        <div style={{ width: '220px', height: '140px', overflow: 'hidden', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--panel-strong)' }}>
+                          <img
+                            src={imageUrl}
+                            alt="Crop preview"
+                            style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: imageFocus, display: 'block' }}
+                            onError={e => { (e.target as HTMLElement).style.display = 'none'; }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </fieldset>
@@ -917,7 +1372,7 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
           {/* Ability Scores */}
           <fieldset style={{ background: '#1e1e24', border: '1px solid #2a2a35', borderRadius: '6px', padding: '20px' }}>
             <legend style={{ padding: '0 10px', color: '#60a5fa', fontWeight: 'bold' }}>Ability Scores</legend>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '10px' }}>
+            <div className="monster-ability-fields" style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: '10px' }}>
               {ABILITY_KEYS.map(key => (
                 <div key={key} style={{ textAlign: 'center' }}>
                   <label style={{ textTransform: 'capitalize', fontSize: '0.85em' }}>{key.substring(0, 3)}</label>
@@ -1013,7 +1468,7 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           
           {/* Horizontal Collapsible panel switcher */}
-          <div style={{ display: 'flex', gap: '5px', background: '#13131a', padding: '4px', borderRadius: '4px', border: '1px solid #2a2a35' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', background: '#13131a', padding: '4px', borderRadius: '4px', border: '1px solid #2a2a35' }}>
             {[
               { id: 'basic', label: 'Traits & Actions' },
               { id: 'spellcasting', label: 'Spellcasting' },
@@ -1215,13 +1670,13 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
               {spellcastingType === 'caster-level' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
                   <div>
-                    <label>Caster Level (1-20):</label>
+                    <label>Caster Level (1-30):</label>
                     <NumberInput
                       type="number"
                       min={1}
-                      max={20}
+                      max={30}
                       value={spellcastingLevel}
-                      onChange={e => setSpellcastingLevel(Math.max(1, Math.min(20, Number(e.target.value))))}
+                      onChange={e => setSpellcastingLevel(Math.max(1, Math.min(30, Number(e.target.value))))}
                       title="Caster level score"
                     />
                   </div>
@@ -1229,7 +1684,7 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                     <h4 style={{ margin: '5px 0' }}>Spells by Level Slots:</h4>
                     {(() => {
-                      const levelSlots = SPELL_SLOTS_TABLE[spellcastingLevel] || [0, 0, 0, 0, 0, 0, 0, 0, 0];
+                      const levelSlots = SPELL_SLOTS_TABLE[spellcastingLevel] || (spellcastingLevel > 20 ? SPELL_SLOTS_TABLE[20] : [0, 0, 0, 0, 0, 0, 0, 0, 0]);
                       return [1, 2, 3, 4, 5, 6, 7, 8, 9].map(i => {
                         const max = levelSlots[i - 1] || 0;
                         if (max === 0) return null;
@@ -1267,6 +1722,70 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
                         );
                       });
                     })()}
+
+                    {spellcastingLevel >= 21 && (
+                      <div style={{ marginTop: '10px', borderTop: '1px solid #332644', paddingTop: '10px' }}>
+                        <h4 style={{ margin: '5px 0 10px 0', color: '#c084fc' }}>Epic Spell Slots (Tiers 1–3):</h4>
+                        {(() => {
+                          const epicProg = epicSlotsForLevel(spellcastingLevel);
+                          return [
+                            { key: 'epic1', label: 'Epic Tier 1', progMax: epicProg['epic1'] || 0 },
+                            { key: 'epic2', label: 'Epic Tier 2', progMax: epicProg['epic2'] || 0 },
+                            { key: 'epic3', label: 'Epic Tier 3', progMax: epicProg['epic3'] || 0 }
+                          ].map(({ key: levelKey, label, progMax }) => {
+                            const currSlots = spellSlots[levelKey];
+                            const max = currSlots?.max !== undefined ? currSlots.max : progMax;
+                            if (max === 0 && (!currSlots?.spells || currSlots.spells.length === 0)) return null;
+                            const list = currSlots?.spells || [];
+
+                            return (
+                              <div key={levelKey} style={{ border: '1px solid #4a2d68', padding: '10px', borderRadius: '4px', background: '#171123', marginBottom: '10px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', fontSize: '0.9em' }}>
+                                  <strong style={{ color: '#d8b4fe' }}>{label}</strong>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <span style={{ color: '#a855f7', fontSize: '0.85em' }}>Slots:</span>
+                                    <NumberInput
+                                      type="number"
+                                      min={0}
+                                      max={10}
+                                      value={max}
+                                      onChange={e => {
+                                        const newMax = Math.max(0, Number(e.target.value) || 0);
+                                        setSpellSlots(prev => ({
+                                          ...prev,
+                                          [levelKey]: { ...(prev[levelKey] || { used: 0, spells: [] }), max: newMax }
+                                        }));
+                                      }}
+                                      style={{ width: '60px' }}
+                                    />
+                                  </div>
+                                </div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '8px' }}>
+                                  {list.map(s => (
+                                    <span key={s} className="pill small" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#3b1d5c', border: '1px solid #6b21a8', color: '#f3e8ff' }}>
+                                      {s}
+                                      <button
+                                        type="button"
+                                        onClick={() => removeSpellFromLevel(levelKey, s)}
+                                        style={{ border: 'none', background: 'transparent', color: '#f87171', cursor: 'pointer', padding: 0 }}
+                                      >
+                                        &times;
+                                      </button>
+                                    </span>
+                                  ))}
+                                  {list.length === 0 && <span style={{ color: '#888', fontSize: '0.85em' }}>No Epic spells added.</span>}
+                                </div>
+                                <SpellSearchInput
+                                  spellDatabase={spellDatabase}
+                                  onSelectSpell={name => addSpellToLevel(levelKey, name)}
+                                  placeholder={`Add ${label} spell...`}
+                                />
+                              </div>
+                            );
+                          });
+                        })()}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -1515,9 +2034,9 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
                         <div style={{ fontWeight: 'bold', marginBottom: '5px', fontSize: '0.9em', color: '#ec4899' }}>Current Epic Actions:</div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                           {parseEpicActionsText(epicActionsText).map((act, idx) => (
-                            <div key={idx} style={{ fontSize: '0.85em', display: 'flex', justifyContent: 'space-between' }}>
-                              <span><strong>{act.name}</strong> ({act.maxUses} uses)</span>
-                              <span style={{ color: '#888', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '300px' }}>{act.description}</span>
+                            <div key={idx} style={{ minWidth: 0, fontSize: '0.85em', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between' }}>
+                              <span><strong>{act.name}</strong> ({act.maxUses === 0 ? 'unlimited' : `${act.maxUses} uses`}){act.options?.length ? ` · ${act.options.length} shared options` : ''}</span>
+                              <span style={{ minWidth: 0, color: '#888', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '300px' }}>{act.description}</span>
                             </div>
                           ))}
                         </div>
@@ -1685,6 +2204,78 @@ export function MonsterEditorPage({ state, submitAction, editingMonsterId, onBac
         onSave={setEpicActionsText}
       />
 
+      {showImageLibrary && (
+        <Modal>
+          <div className="modal-card" style={{ maxWidth: '780px', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
+            <div className="section-title-row" style={{ marginBottom: '12px' }}>
+              <div>
+                <h2>Knihovna obrázků monster</h2>
+                <p>Vyber obrázek ze složky <code>public/images/monsters/</code> ({libraryImages.length} souborů)</p>
+              </div>
+              <button className="btn" onClick={() => setShowImageLibrary(false)}>Close</button>
+            </div>
+
+            <div style={{ marginBottom: '12px' }}>
+              <input
+                type="text"
+                placeholder="Filtrovat podle názvu obrázku..."
+                value={librarySearch}
+                onChange={e => setLibrarySearch(e.target.value)}
+                style={{ width: '100%' }}
+                autoFocus
+              />
+            </div>
+
+            <div style={{ flex: 1, overflowY: 'auto', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '12px', padding: '4px' }}>
+              {loadingImages ? (
+                <p className="empty">Načítám obrázky...</p>
+              ) : libraryImages.filter(img => !librarySearch || img.toLowerCase().includes(librarySearch.toLowerCase())).length === 0 ? (
+                <p className="empty">Žádné obrázky nenalezeny.</p>
+              ) : (
+                libraryImages
+                  .filter(img => !librarySearch || img.toLowerCase().includes(librarySearch.toLowerCase()))
+                  .map(img => {
+                    const url = `/images/monsters/${encodeURIComponent(img)}`;
+                    const isSelected = imageUrl === url;
+                    return (
+                      <div
+                        key={img}
+                        onClick={() => {
+                          setImageUrl(url);
+                          setShowImageLibrary(false);
+                        }}
+                        style={{
+                          border: isSelected ? '2px solid var(--primary, #38bdf8)' : '1px solid var(--border)',
+                          borderRadius: '8px',
+                          overflow: 'hidden',
+                          background: 'var(--panel-subtle)',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          transition: 'transform 0.15s, border-color 0.15s'
+                        }}
+                        title={img}
+                      >
+                        <div style={{ height: '110px', background: '#0f172a', overflow: 'hidden' }}>
+                          <img
+                            src={url}
+                            alt={img}
+                            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                            onError={e => { (e.target as HTMLElement).style.display = 'none'; }}
+                          />
+                        </div>
+                        <div style={{ padding: '6px 8px', fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: isSelected ? 'var(--primary, #38bdf8)' : 'var(--text-main)', fontWeight: isSelected ? 600 : 'normal' }}>
+                          {img}
+                        </div>
+                      </div>
+                    );
+                  })
+              )}
+            </div>
+          </div>
+        </Modal>
+      )}
+
       {showPreview && (
         <Modal>
           <div className="modal-card monster-preview-modal">
@@ -1723,25 +2314,6 @@ function entriesToText(value: unknown) {
     .join('\n\n');
 }
 
-function epicActionsToText(value: unknown) {
-  if (!Array.isArray(value)) return '';
-  return value.map(item => {
-    const action = item as Record<string, unknown>;
-    return `${action.name || 'Epic Action'} | ${Number(action.maxUses) || 1} | ${action.description || ''}`;
-  }).join('\n');
-}
-
-function parseEpicActionsText(value: string) {
-  return value
-    .split(/\n/)
-    .map(line => line.trim())
-    .filter(Boolean)
-    .map(line => {
-      const [name, uses, ...descriptionParts] = line.split('|').map(part => part.trim());
-      return { name: name || 'Epic Action', maxUses: Number(uses) || 1, used: 0, description: descriptionParts.join(' | ') };
-    });
-}
-
 // EpicActionModal Component
 interface EpicActionModalProps {
   isOpen: boolean;
@@ -1752,7 +2324,7 @@ interface EpicActionModalProps {
 
 function EpicActionModal({ isOpen, onClose, epicActionsText, onSave }: EpicActionModalProps) {
   const [activeTab, setActiveTab] = useState<'grid' | 'raw'>('grid');
-  const [localActions, setLocalActions] = useState<Array<{ name: string; maxUses: number; description: string }>>([]);
+  const [localActions, setLocalActions] = useState<MonsterEpicAction[]>([]);
   const [localRawText, setLocalRawText] = useState('');
 
   useEffect(() => {
@@ -1778,16 +2350,17 @@ function EpicActionModal({ isOpen, onClose, epicActionsText, onSave }: EpicActio
 
   function handlePrefill() {
     const examples = [
-      { name: 'Mythic Phase Trigger', maxUses: 1, description: 'Triggers mythic form when HP drops to 0.' },
-      { name: 'Solar Flare', maxUses: 2, description: 'Deals 4d10 fire damage in a 30ft radius (recharge 5-6).' },
-      { name: 'Epic Spellcasting', maxUses: 3, description: 'Cast an epic tier 1 spell.' }
+      { name: 'Shared Epic Actions', maxUses: 2, used: 0, description: 'Choose one option. Both options spend from the same pool.', options: [
+        { name: 'Arcane Lance', cost: '1 Power', maxUses: 0, used: 0, description: 'Make a spell attack.' },
+        { name: 'Divine Command', cost: '3 Power', maxUses: 1, used: 0, resetOn: 'encounter' as const, description: 'Revive an ally. Usable once per encounter.' }
+      ] }
     ];
     setLocalActions(examples);
     setLocalRawText(epicActionsToText(examples));
   }
 
   function handleAddRow() {
-    const updated = [...localActions, { name: 'New Epic Action', maxUses: 1, description: '' }];
+    const updated = [...localActions, { name: 'New Epic Action', maxUses: 1, used: 0, description: '' }];
     setLocalActions(updated);
     setLocalRawText(epicActionsToText(updated));
   }
@@ -1798,7 +2371,7 @@ function EpicActionModal({ isOpen, onClose, epicActionsText, onSave }: EpicActio
     setLocalRawText(epicActionsToText(updated));
   }
 
-  function handleUpdateRow(index: number, fields: Partial<{ name: string; maxUses: number; description: string }>) {
+  function handleUpdateRow(index: number, fields: Partial<MonsterEpicAction>) {
     const updated = localActions.map((act, i) => {
       if (i === index) {
         return { ...act, ...fields };
@@ -1809,6 +2382,10 @@ function EpicActionModal({ isOpen, onClose, epicActionsText, onSave }: EpicActio
     setLocalRawText(epicActionsToText(updated));
   }
 
+  function updateOption(index: number, optionIndex: number, fields: Partial<MonsterEpicOption>) {
+    handleUpdateRow(index, { options: (localActions[index].options || []).map((option, i) => i === optionIndex ? { ...option, ...fields } : option) });
+  }
+
   function handleRawChange(val: string) {
     setLocalRawText(val);
     setLocalActions(parseEpicActionsText(val));
@@ -1816,22 +2393,22 @@ function EpicActionModal({ isOpen, onClose, epicActionsText, onSave }: EpicActio
 
   return (
     <Modal className="item-modal-backdrop">
-      <div className="modal-card markdown-modal" style={{ width: 'min(980px, 100%)', display: 'flex', flexDirection: 'column', gap: '15px' }}>
+      <div className="modal-card markdown-modal epic-editor-modal" style={{ width: 'min(980px, 100%)', display: 'flex', flexDirection: 'column', gap: '15px' }}>
         <div className="section-title-row" style={{ borderBottom: '1px solid #2a2a35', paddingBottom: '10px' }}>
           <div>
             <h2 style={{ margin: 0, color: '#ec4899' }}>Epic / Mythic Actions Editor</h2>
             <p style={{ margin: '4px 0 0 0', fontSize: '0.9em', color: '#888' }}>
-              Configure actions with restricted usage limits per day/encounter.
+              Add options under an action to share its use pool. Each option can also have its own limit and recovery. Max Uses 0 means unlimited.
             </p>
           </div>
-          <div style={{ display: 'flex', gap: '10px' }}>
+          <div className="button-row">
             <button type="button" className="btn small" onClick={handlePrefill} style={{ background: '#3b82f6', color: '#fff' }}>Prefill Example Table</button>
             <button type="button" className="btn" onClick={onClose}>Cancel</button>
             <button type="button" className="btn success" onClick={handleSave}>Save & Close</button>
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: '10px', borderBottom: '1px solid #2a2a35', paddingBottom: '10px' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', borderBottom: '1px solid #2a2a35', paddingBottom: '10px' }}>
           <button
             type="button"
             className={`nav-btn ${activeTab === 'grid' ? 'active' : ''}`}
@@ -1853,82 +2430,37 @@ function EpicActionModal({ isOpen, onClose, epicActionsText, onSave }: EpicActio
         <div style={{ flex: 1, overflowY: 'auto', minHeight: '350px', maxHeight: '500px' }}>
           {activeTab === 'grid' ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: '2fr 1fr 4fr auto',
-                gap: '10px',
-                fontWeight: 'bold',
-                paddingBottom: '6px',
-                borderBottom: '1px solid #2a2a35',
-                color: '#ec4899',
-                fontSize: '0.9em'
-              }}>
-                <span>Action Name</span>
-                <span>Max Uses</span>
-                <span>Description (Markdown allowed)</span>
-                <span>Actions</span>
-              </div>
-
-              {localActions.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '30px', color: '#555' }}>
-                  No epic actions. Click "+ Add Action" or "Prefill Example Table" to start.
-                </div>
-              ) : (
-                localActions.map((act, index) => (
-                  <div key={index} style={{
-                    display: 'grid',
-                    gridTemplateColumns: '2fr 1fr 4fr auto',
-                    gap: '10px',
-                    alignItems: 'center',
-                    background: '#13131a',
-                    padding: '8px',
-                    borderRadius: '4px',
-                    border: '1px solid #2a2a35'
-                  }}>
-                    <input
-                      type="text"
-                      value={act.name}
-                      onChange={e => handleUpdateRow(index, { name: e.target.value })}
-                      placeholder="e.g. Mythic Surge"
-                      style={{ background: '#1e1e24', border: '1px solid #2a2a35', color: '#e2e8f0', padding: '6px', width: '100%' }}
-                      title="Epic action name"
-                    />
-                    <NumberInput
-                      type="number"
-                      value={act.maxUses}
-                      onChange={e => handleUpdateRow(index, { maxUses: Math.max(1, Number(e.target.value)) })}
-                      min={1}
-                      style={{ background: '#1e1e24', border: '1px solid #2a2a35', color: '#e2e8f0', padding: '6px', width: '100%' }}
-                      title="Epic action max uses"
-                    />
-                    <textarea
-                      value={act.description}
-                      onChange={e => handleUpdateRow(index, { description: e.target.value })}
-                      placeholder="Deals damage, triggers features..."
-                      rows={2}
-                      style={{
-                        background: '#1e1e24',
-                        border: '1px solid #2a2a35',
-                        color: '#e2e8f0',
-                        padding: '6px',
-                        width: '100%',
-                        resize: 'vertical',
-                        fontFamily: 'inherit'
-                      }}
-                      title="Epic action description"
-                    />
-                    <button
-                      type="button"
-                      className="btn danger small"
-                      onClick={() => handleRemoveRow(index)}
-                      style={{ height: '34px', width: '34px', padding: 0, display: 'grid', placeItems: 'center' }}
-                      title="Delete action"
-                    >
-                      &times;
-                    </button>
+              {localActions.length === 0 && <p>No epic actions. Add an action or prefill an example.</p>}
+              {localActions.map((act, index) => (
+                <div key={index} className="epic-editor-group">
+                  <div className="epic-editor-fields">
+                    <label>Name<input value={act.name} onChange={e => handleUpdateRow(index, { name: e.target.value })} title="Epic action name" /></label>
+                    <label>Shared max uses<NumberInput value={act.maxUses} min={0} onChange={e => handleUpdateRow(index, { maxUses: Math.max(0, Number(e.target.value)) })} title="Epic action max uses" /></label>
+                    <label>Pool recovery<select value={act.resetOn || 'turn'} title="Epic action recovery" onChange={e => handleUpdateRow(index, { resetOn: e.target.value as EpicActionReset })}>
+                      <option value="turn">Monster turn</option><option value="encounter">Encounter start</option><option value="day">Long rest / manual</option><option value="rest">Rest / manual</option>
+                    </select></label>
                   </div>
-                ))
-              )}
+                  <label>Rules / group introduction<textarea value={act.description} onChange={e => handleUpdateRow(index, { description: e.target.value })} rows={3} title="Epic action description" /></label>
+                  {(act.options || []).map((option, optionIndex) => (
+                    <div key={optionIndex} className="epic-editor-option">
+                      <div className="epic-editor-fields">
+                        <label>Option name<input value={option.name} title="Epic option name" onChange={e => updateOption(index, optionIndex, { name: e.target.value })} /></label>
+                        <label>Cost label<input value={option.cost || ''} title="Epic option cost" placeholder="e.g. 3 Divine Favor" onChange={e => updateOption(index, optionIndex, { cost: e.target.value })} /></label>
+                        <label>Own max uses (0 = unlimited)<NumberInput value={option.maxUses} min={0} title="Epic option max uses" onChange={e => updateOption(index, optionIndex, { maxUses: Math.max(0, Number(e.target.value)) })} /></label>
+                        <label>Own recovery<select value={option.resetOn || 'turn'} title="Epic option recovery" onChange={e => updateOption(index, optionIndex, { resetOn: e.target.value as EpicActionReset })}>
+                          <option value="turn">Monster turn</option><option value="encounter">Encounter start</option><option value="day">Long rest / manual</option><option value="rest">Rest / manual</option>
+                        </select></label>
+                      </div>
+                      <MarkdownEditor label={`Option rules ${index + 1}.${optionIndex + 1}`} value={option.description} onChange={description => updateOption(index, optionIndex, { description })} />
+                      <button type="button" className="btn danger small" onClick={() => handleUpdateRow(index, { options: act.options!.filter((_, i) => i !== optionIndex) })}>Remove option</button>
+                    </div>
+                  ))}
+                  <div className="button-row">
+                    <button type="button" className="btn purple small" onClick={() => handleUpdateRow(index, { options: [...(act.options || []), { name: 'New option', cost: '', maxUses: 0, used: 0, resetOn: 'turn', description: '' }] })}>Add shared option</button>
+                    <button type="button" className="btn danger small" onClick={() => handleRemoveRow(index)}>Delete action</button>
+                  </div>
+                </div>
+              ))}
 
               <button
                 type="button"
@@ -1942,7 +2474,7 @@ function EpicActionModal({ isOpen, onClose, epicActionsText, onSave }: EpicActio
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <p style={{ margin: 0, fontSize: '0.85em', color: '#aaa' }}>
-                Type epic actions, one per line using the format: <strong>Name | MaxUses | Description</strong>
+                Start each action with <strong>Name | MaxUses/recovery | Description</strong> (recovery: turn, encounter, day, rest). Add shared options as <strong>### Option — Cost (1/Encounter)</strong> followed by their Markdown rules. Use 0 for unlimited uses. Old numeric headers still work.
               </p>
               <textarea
                 value={localRawText}

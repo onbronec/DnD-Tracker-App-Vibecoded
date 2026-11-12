@@ -1,5 +1,5 @@
 import type { AbilityKey, Character } from './types';
-import { ABILITIES, abilityModifier, saveBonus } from './characterSheet';
+import { ABILITIES, abilityModifier, adjustedAbilityScores, saveBonus } from './characterSheet';
 
 export interface AoeCondition {
   remainingRounds?: number;
@@ -9,6 +9,16 @@ export interface AoeCondition {
   diceCount?: number;
   diceSides?: number;
   damageType?: string;
+}
+
+export function auraBonus(state: { characters: Character[] }, name: string, ability: AbilityKey): number {
+  const character = state.characters.find(item => item.type === 'player' && item.name.toLowerCase().includes(name));
+  if (!character) return 0;
+  return abilityModifier(adjustedAbilityScores(character).scores[ability]);
+}
+
+function halfTowardZero(value: number): number {
+  return value < 0 ? -Math.floor(Math.abs(value) / 2) : Math.floor(value / 2);
 }
 
 export function combatSaveBonus(character: Character, ability: AbilityKey): number {
@@ -25,10 +35,10 @@ export function combatSaveBonus(character: Character, ability: AbilityKey): numb
   return Number(explicit) + sheet - abilityModifier(stats[ability]) - proficiency;
 }
 
-export function aoeOutcome(total: number, natural: number | null, dc: number, damage: number, onSuccess: 'half' | 'none', halfDamage: boolean) {
-  const success = natural === 20 || (natural !== 1 && total >= dc);
-  let appliedDamage = success ? onSuccess === 'half' ? Math.floor(damage / 2) : 0 : damage;
-  if (halfDamage) appliedDamage = Math.floor(appliedDamage / 2);
+export function aoeOutcome(total: number, natural: number | null, dc: number, damage: number, onSuccess: 'half' | 'none', halfDamage: boolean, noRoll = false) {
+  const success = noRoll ? false : (natural === 20 || (natural !== 1 && total >= dc));
+  let appliedDamage = success ? onSuccess === 'half' ? halfTowardZero(damage) : 0 : damage;
+  if (halfDamage) appliedDamage = halfTowardZero(appliedDamage);
   return { success, damage: appliedDamage };
 }
 

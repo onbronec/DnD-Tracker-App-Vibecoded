@@ -5,7 +5,7 @@ import { CombatPage } from './pages/CombatPage';
 import { InventoryPage } from './pages/InventoryPage';
 import { SpellsPage } from './pages/SpellsPage';
 import { MonstersPage } from './pages/MonstersPage';
-import { DatabasesPage } from './pages/DatabasesPage';
+import { DatabasesPage, type DatabaseKind } from './pages/DatabasesPage';
 import { MonsterEditorPage } from './pages/MonsterEditorPage';
 import { EncounterPlannerPage } from './pages/EncounterPlannerPage';
 import { HistoryPanel } from './components/HistoryPanel';
@@ -26,7 +26,11 @@ export function App() {
   const [page, setPage] = useState<PageScope>('combat');
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null);
   const [editingMonsterId, setEditingMonsterId] = useState<string | null>(null);
-  const [databaseTab, setDatabaseTab] = useState<'magic' | 'potion' | 'condition' | 'spell' | 'characters' | 'monster'>('magic');
+  const [monsterImportMarkdown, setMonsterImportMarkdown] = useState<string>();
+  const [databaseTab, setDatabaseTab] = useState<DatabaseKind>('magic');
+  const [selectedMonsterGroup, setSelectedMonsterGroup] = useState<string | null>(null);
+  const [monsterEditorReturnPage, setMonsterEditorReturnPage] = useState<PageScope>('databases');
+  const [selectedEncounterId, setSelectedEncounterId] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [diceRequest, setDiceRequest] = useState<DiceRollRequest | null>(null);
 
@@ -198,9 +202,15 @@ export function App() {
               onBackToCombat={() => setPage('combat')}
               initialTab={databaseTab}
               onActiveTabChange={setDatabaseTab}
-              onOpenMonsterEditor={(monsterId) => {
+              initialMonsterGroup={selectedMonsterGroup}
+              onSelectedMonsterGroupChange={setSelectedMonsterGroup}
+              onOpenMonsterEditor={(monsterId, markdown) => {
                 setEditingMonsterId(monsterId);
-                setDatabaseTab('monster');
+                setMonsterImportMarkdown(markdown);
+                if (databaseTab !== 'monsterGroups') {
+                  setDatabaseTab('monster');
+                }
+                setMonsterEditorReturnPage('databases');
                 setPage('monster-editor');
               }}
             />
@@ -209,7 +219,22 @@ export function App() {
             <EncounterPlannerPage
               state={state}
               submitAction={submitPageAction}
-              onCreateMonster={() => { setEditingMonsterId(null); setDatabaseTab('monster'); setPage('monster-editor'); }}
+              selectedEncounterId={selectedEncounterId}
+              onSelectEncounterId={setSelectedEncounterId}
+              onCreateMonster={() => {
+                setEditingMonsterId(null);
+                setMonsterImportMarkdown(undefined);
+                setDatabaseTab('monster');
+                setMonsterEditorReturnPage('encounters');
+                setPage('monster-editor');
+              }}
+              onOpenMonsterEditor={(monsterId) => {
+                setEditingMonsterId(monsterId);
+                setMonsterImportMarkdown(undefined);
+                setDatabaseTab('monster');
+                setMonsterEditorReturnPage('encounters');
+                setPage('monster-editor');
+              }}
               onOpenCombat={() => setPage('combat')}
             />
           )}
@@ -218,9 +243,22 @@ export function App() {
               state={state}
               submitAction={submitPageAction}
               editingMonsterId={editingMonsterId}
-              onBackToDatabases={() => {
-                setPage('databases');
+              initialMarkdown={monsterImportMarkdown}
+              backLabel={
+                monsterEditorReturnPage === 'encounters'
+                  ? '← Back to Encounter Planner'
+                  : databaseTab === 'monsterGroups'
+                    ? '← Back to Monster Groups'
+                    : '← Back to Databases'
+              }
+              onBackToDatabases={(savedGroup?: string) => {
+                if (databaseTab === 'monsterGroups' && savedGroup) {
+                  setSelectedMonsterGroup(savedGroup);
+                }
+                setPage(monsterEditorReturnPage);
                 setEditingMonsterId(null);
+                setMonsterImportMarkdown(undefined);
+                setMonsterEditorReturnPage('databases');
               }}
             />
           )}

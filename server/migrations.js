@@ -2,6 +2,7 @@ const { createEmptyInventory, createInitialState, PAGE_SCOPES } = require('./def
 const { DEFAULT_CONDITIONS } = require('./conditionPresets');
 const { clone, makeId, toNumber } = require('./utils');
 const { normalizeFeatures, normalizeActionSettings, normalizeCasting } = require('./casting');
+const { normalizeEpicAction } = require('./monsterEpic');
 
 function normalizeEffect(effect) {
     if (!effect) return null;
@@ -276,7 +277,7 @@ function normalizeMonsterStats(stats) {
     const legacy = { str: 'strength', dex: 'dexterity', con: 'constitution', int: 'intelligence', wis: 'wisdom', cha: 'charisma' };
     return ABILITY_KEYS.reduce((result, key) => {
         const legacyKey = Object.keys(legacy).find(short => legacy[short] === key);
-        result[key] = Math.max(1, Math.min(30, Math.round(Number(source[key] ?? source[legacyKey]) || 10)));
+        result[key] = Math.max(1, Math.round(Number(source[key] ?? source[legacyKey]) || 10));
         return result;
     }, {});
 }
@@ -320,13 +321,7 @@ function normalizeMonsterAbilities(abilities, source = {}) {
         epicActions: {
             enabled: Boolean(current.epicActions?.enabled),
             actions: Array.isArray(current.epicActions?.actions)
-                ? current.epicActions.actions.map(action => ({
-                    id: String(action.id || makeId('epic')),
-                    name: String(action.name || 'Epic Action'),
-                    description: String(action.description || ''),
-                    maxUses: Math.max(1, Number(action.maxUses) || 1),
-                    used: Math.max(0, Number(action.used) || 0)
-                }))
+                ? current.epicActions.actions.map(normalizeEpicAction)
                 : []
         }
     };
@@ -368,10 +363,21 @@ function normalizeMonsterDbItem(monster) {
     const powerName = source.powerName || source.monsterAbilities?.power?.name || 'Power';
     const entityKind = source.entityKind === 'nonMonster' ? 'nonMonster' : 'monster';
     const hasHpAc = entityKind === 'monster' || Boolean(source.hasHpAc);
+    const COMBAT_TYPES = ['monster', 'spellcaster', 'elite', 'leader', 'ranged', 'controller'];
+    const combatType = COMBAT_TYPES.includes(source.combatType) ? source.combatType : 'monster';
+    const flag = source.flag === 'inactive' ? 'inactive' : source.flag === 'unused' ? 'unused' : source.flag === 'adapt' ? 'adapt' : 'active';
+    const groups = Array.isArray(source.groups)
+        ? source.groups.map(g => String(g).trim()).filter(Boolean)
+        : (source.group ? [String(source.group).trim()] : []);
+    const group = groups[0] || (source.group ? String(source.group).trim() : '');
+    const imageUrl = source.imageUrl ? String(source.imageUrl).trim() : '';
+    const imageFocus = source.imageFocus ? String(source.imageFocus).trim() : 'center';
     return {
         ...clone(source),
         id: String(source.id || makeId('monster_db')),
         name: String(source.name || 'Monster'),
+        combatType,
+        flag,
         hp: hasHpAc ? (Number(source.hp || source.maxHp) || 1) : 0,
         maxHp: hasHpAc ? (Number(source.maxHp || source.hp) || 1) : 0,
         ac: hasHpAc ? (Number(source.ac) || 10) : 0,
@@ -401,7 +407,10 @@ function normalizeMonsterDbItem(monster) {
         hasLairActions: Boolean(source.hasLairActions || (source.lairActions || []).length),
         hasMythicActions: Boolean(source.hasMythicActions || (source.mythicActions || []).length),
         hasMultipleTurns: Boolean(source.hasMultipleTurns),
-        group: source.group ? String(source.group).trim() : '',
+        group,
+        groups,
+        imageUrl,
+        imageFocus,
         monsterAbilities: normalizeMonsterAbilities(source.monsterAbilities, { maxPower, powerName, currentPower: source.currentPower }),
         tags: normalizeTags(source.tags),
         source: source.source || '',
@@ -421,19 +430,26 @@ function normalizeMonsterDbItem(monster) {
 
 function normalizeEncounterEntry(entry) {
     const source = entry || {};
+    const quantity = Math.max(1, Math.min(99, Number(source.quantity) || 1));
+    const groupCount = Math.max(1, Math.min(quantity, Number(source.groupCount) || 1));
     return {
         id: String(source.id || makeId('encounter_entry')),
         monsterId: String(source.monsterId || ''),
-        quantity: Math.max(1, Math.min(99, Number(source.quantity) || 1))
+        quantity,
+        groupCount,
+        ...(source.groupName ? { groupName: String(source.groupName) } : {})
     };
 }
 
 function normalizeEncounter(encounter) {
     const source = encounter || {};
+    const rawStatus = String(source.status || 'active').toLowerCase();
+    const status = ['active', 'done', 'unused'].includes(rawStatus) ? rawStatus : 'active';
     return {
         id: String(source.id || makeId('encounter')),
         name: String(source.name || 'Untitled encounter'),
         groupId: source.groupId ? String(source.groupId) : null,
+        status,
         notes: String(source.notes || ''),
         monsters: (Array.isArray(source.monsters) ? source.monsters : []).map(normalizeEncounterEntry).filter(entry => entry.monsterId),
         reserve: (Array.isArray(source.reserve) ? source.reserve : []).map(normalizeEncounterEntry).filter(entry => entry.monsterId),
@@ -559,6 +575,74 @@ function mergeByName(existing, discovered) {
     return result;
 }
 
+function syncInventoryMagicItemFromDb(invItem, dbItem) {
+    const source = typeof invItem === 'string' ? { name: invItem } : (invItem || {});
+    const synced = {
+        ...clone(source),
+        id: dbItem.id,
+        magicItemId: dbItem.id,
+        name: dbItem.name,
+        itemType: dbItem.itemType || 'Wondrous item',
+        rarity: dbItem.rarity || '',
+        requiresAttunement: Boolean(dbItem.requiresAttunement),
+        description: String(dbItem.description || ''),
+        tags: normalizeTags(dbItem.tags),
+        source: String(dbItem.source || ''),
+        attuned: Boolean(source.attuned)
+    };
+    if (source.quantity !== undefined) {
+        synced.quantity = Math.max(0, Number(source.quantity) || 0);
+    }
+    return synced;
+}
+
+function linkMagicItemsWithDatabase(state) {
+    state.magicItemDatabase = ensureUniqueDatabaseIds(
+        (state.magicItemDatabase || []).map(normalizeMagicItem),
+        'magic_db'
+    );
+    (state.characters || []).forEach(character => {
+        const inventory = normalizeInventory(character.inventory);
+        character.inventory = inventory;
+        inventory.magicItems = inventory.magicItems.map(rawItem => {
+            const source = typeof rawItem === 'string' ? { name: rawItem } : (rawItem || {});
+            const idToMatch = String(source.magicItemId || source.id || '').trim();
+            let dbItem = idToMatch
+                ? state.magicItemDatabase.find(entry => entry.id === idToMatch)
+                : null;
+            const matchedById = Boolean(dbItem);
+            const nameKey = String(source.name || source.spellName || '').trim().toLowerCase();
+            if (!dbItem && nameKey) {
+                dbItem = state.magicItemDatabase.find(entry => String(entry.name || '').trim().toLowerCase() === nameKey);
+            }
+            if (!dbItem) {
+                dbItem = normalizeMagicItem({
+                    ...source,
+                    id: idToMatch && !state.magicItemDatabase.some(entry => entry.id === idToMatch) ? idToMatch : makeId('magic_db'),
+                    source: source.source || `Inventory: ${character.name}`
+                });
+                state.magicItemDatabase.push(dbItem);
+            } else if (!matchedById) {
+                if (String(source.description || '').length > String(dbItem.description || '').length) {
+                    dbItem.description = String(source.description || '');
+                }
+                if (!dbItem.rarity && source.rarity) dbItem.rarity = source.rarity;
+                if ((!dbItem.itemType || dbItem.itemType === 'Wondrous item') && source.itemType) dbItem.itemType = source.itemType;
+                if (!dbItem.requiresAttunement && (source.requiresAttunement || source.attuned)) dbItem.requiresAttunement = true;
+            }
+            return { ...source, id: dbItem.id, magicItemId: dbItem.id };
+        });
+    });
+    const dbById = new Map(state.magicItemDatabase.map(entry => [entry.id, entry]));
+    (state.characters || []).forEach(character => {
+        if (!Array.isArray(character.inventory?.magicItems)) return;
+        character.inventory.magicItems = character.inventory.magicItems.map(item => {
+            const dbItem = dbById.get(item.magicItemId || item.id);
+            return dbItem ? syncInventoryMagicItemFromDb(item, dbItem) : item;
+        });
+    });
+}
+
 function inventoryDatabaseEntries(characters) {
     const magic = [];
     const potions = [];
@@ -586,6 +670,36 @@ function normalizeRedoStacks(redoStacks) {
     return result;
 }
 
+function normalizeCalendarRecord(record) {
+    const source = record || {};
+    const type = source.type === 'trigger' ? 'trigger' : 'event';
+    const dateKey = String(source.dateKey || '');
+    return {
+        id: String(source.id || makeId('cal_rec')),
+        type,
+        dateKey,
+        recordedDateKey: String(source.recordedDateKey || dateKey),
+        text: String(source.text || ''),
+        completed: Boolean(source.completed),
+        notified: Boolean(source.notified),
+        timestamp: String(source.timestamp || new Date().toISOString())
+    };
+}
+
+function normalizeToolbeltNote(note) {
+    const source = note || {};
+    const type = source.type === 'temp' ? 'temp' : 'note';
+    return {
+        id: String(source.id || makeId('note')),
+        type,
+        date: String(source.date || ''),
+        title: String(source.title || ''),
+        text: String(source.text || ''),
+        completed: Boolean(source.completed),
+        timestamp: String(source.timestamp || new Date().toISOString())
+    };
+}
+
 function normalizeToolbelt(toolbelt) {
     const source = toolbelt || {};
     const calendar = source.calendar || {};
@@ -599,9 +713,9 @@ function normalizeToolbelt(toolbelt) {
             day: Number(calendar.day) || 23,
             month: String(calendar.month || 'December'),
             year: calendarYear === 500 ? 502 : calendarYear,
-            records: Array.isArray(calendar.records) ? calendar.records : []
+            records: Array.isArray(calendar.records) ? calendar.records.map(normalizeCalendarRecord) : []
         },
-        notes: Array.isArray(source.notes) ? source.notes : []
+        notes: Array.isArray(source.notes) ? source.notes.map(normalizeToolbeltNote) : []
     };
 }
 
@@ -636,6 +750,9 @@ function migrateAutosave(rawData) {
             : [];
     state.encounters = Array.isArray(data.encounters) ? data.encounters.map(normalizeEncounter) : [];
     state.encounterGroups = Array.isArray(data.encounterGroups) ? data.encounterGroups.map(normalizeEncounterGroup) : [];
+    state.monsterGroupDescriptions = (data.monsterGroupDescriptions && typeof data.monsterGroupDescriptions === 'object')
+        ? { ...data.monsterGroupDescriptions }
+        : {};
     state.activeEncounterId = state.encounters.some(encounter => encounter.id === data.activeEncounterId)
         ? data.activeEncounterId
         : null;
@@ -650,6 +767,7 @@ function migrateAutosave(rawData) {
         : splitItems.potions;
     const inventoryEntries = inventoryDatabaseEntries(state.characters);
     state.magicItemDatabase = mergeByName(state.magicItemDatabase, inventoryEntries.magic);
+    linkMagicItemsWithDatabase(state);
     state.potionDatabase = mergeByName(state.potionDatabase, inventoryEntries.potions);
     state.conditionDatabase = seedConditions(data.conditionDatabase);
     state.spellDatabase = Array.isArray(data.spellDatabase)
@@ -672,6 +790,8 @@ module.exports = {
     normalizeEncounter,
     normalizeEncounterGroup,
     normalizeMagicItem,
+    linkMagicItemsWithDatabase,
+    syncInventoryMagicItemFromDb,
     normalizePotion,
     normalizeCondition,
     normalizeSpell,

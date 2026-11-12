@@ -220,10 +220,12 @@ test('compact sheets search descriptions and support bonus actions and reactions
     await dialog.getByRole('combobox', { name: 'Action type', exact: true }).selectOption('bonus');
     await dialog.getByLabel('Ability notes', { exact: true }).fill('Dash quickly.');
     await dialog.getByRole('button', { name: 'Add action', exact: true }).click();
+    await expect(dialog.getByPlaceholder('Ability heading', { exact: true })).toHaveValue('');
     await dialog.getByPlaceholder('Ability heading', { exact: true }).fill('Opportunity Attack');
     await dialog.getByRole('combobox', { name: 'Action type', exact: true }).selectOption('reaction');
     await dialog.getByLabel('Ability notes', { exact: true }).fill('Attack when enemies leave your reach.');
     await dialog.getByRole('button', { name: 'Add action', exact: true }).click();
+    await expect(dialog.getByPlaceholder('Ability heading', { exact: true })).toHaveValue('');
     await dialog.getByRole('button', { name: 'Close', exact: true }).click();
     await expect(page.locator('#sheet-actions').getByRole('heading', { name: 'Bonus Actions', exact: true })).toBeVisible();
     await expect(page.locator('#sheet-actions').getByRole('heading', { name: 'Reactions', exact: true })).toBeVisible();

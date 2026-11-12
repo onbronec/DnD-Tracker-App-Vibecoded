@@ -1,5 +1,6 @@
 const PLAYER_ALLOWED_TYPES = new Set([
     'character.adjustHp',
+    'character.setTempHp',
     'character.reaction.set',
     'effect.add',
     'effect.remove',
@@ -79,6 +80,12 @@ function canPlayerChangeAction(state, action) {
     for (const id of ids) {
         const character = findCharacter(state, id);
         if (!character) return { ok: false, reason: 'Postava neexistuje.' };
+        if (action.type === 'character.reaction.set') {
+            if (character.type === 'monster' && !character.revealedToPlayers) {
+                return { ok: false, reason: 'Monstrum neni odhaleno hracum.' };
+            }
+            continue;
+        }
         if (character.type !== 'player') {
             return { ok: false, reason: 'Player muze menit pouze hracske postavy.' };
         }

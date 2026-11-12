@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import type { AbilityKey, Character, GameAction, GameState } from '../shared/types';
 import { ABILITIES, signed } from '../shared/characterSheet';
-import { aoeOutcome, combatSaveBonus, conditionPreview, type AoeCondition } from '../shared/aoe';
+import { aoeOutcome, auraBonus, combatSaveBonus, conditionPreview, type AoeCondition } from '../shared/aoe';
 import { rollDiceExpression, type DiceRollMode } from '../shared/dice';
 import { Modal } from './Modal';
 import { NumberInput } from './NumberInput';
@@ -13,7 +13,8 @@ interface Props {
   onClose: () => void;
 }
 type Result = { total: string; natural: number | null; detail: string };
-type TargetOptions = { included: boolean; halfDamage: boolean };
+type TargetOptions = { included: boolean; halfDamage: boolean; crowAura: boolean; astriaAura: boolean };
+const DEFAULT_TARGET_OPTIONS: TargetOptions = { included: true, halfDamage: false, crowAura: false, astriaAura: false };
 
 export function AoeResolver({ state, submitAction, onClose }: Props) {
   const [group, setGroup] = useState('players');
@@ -22,6 +23,7 @@ export function AoeResolver({ state, submitAction, onClose }: Props) {
   const [damage, setDamage] = useState('0');
   const [onSuccess, setOnSuccess] = useState<'half' | 'none'>('half');
   const [rollMode, setRollMode] = useState<DiceRollMode>('normal');
+  const [noRoll, setNoRoll] = useState(false);
   const [conditions, setConditions] = useState<AoeCondition[]>([]);
   const [search, setSearch] = useState('');
   const [results, setResults] = useState<Record<string, Result>>({});
@@ -32,16 +34,33 @@ export function AoeResolver({ state, submitAction, onClose }: Props) {
   const [error, setError] = useState('');
   const pickerRef = useRef<HTMLDetailsElement>(null);
   const characters = state.characters.filter(character => character.activeInCombat !== false && !character.isNonMonster && character.monsterData?.entityKind !== 'nonMonster' && !character.id.endsWith('_turn2') && (group === 'all' || character.type === (group === 'players' ? 'player' : 'monster')));
-  const targetOptions = (id: string): TargetOptions => options[id] || { included: true, halfDamage: false };
+  const targetOptions = (id: string): TargetOptions => options[id] || DEFAULT_TARGET_OPTIONS;
   const included = characters.filter(character => targetOptions(character.id).included);
   const definitions = state.conditionDatabase || [];
   const damageTotal = Number(damage);
   const difficulty = Number(dc);
+  const crowBonus = auraBonus(state, 'crow', 'wisdom');
+  const astriaBonus = auraBonus(state, 'astria', 'intelligence');
   const validConditions = conditions.every(selection => {
     const definition = definitions.find(item => item.id === selection.conditionId);
     return definition && (!definition.hasLevels || (Number.isInteger(selection.level) && selection.level >= 1 && selection.level <= (Number(definition.maxLevel) || 20))) && (!(definition.hasDice || definition.defaultDiceCount) || (Number.isInteger(selection.diceCount) && selection.diceCount! >= 1 && Number.isInteger(selection.diceSides) && selection.diceSides! >= 2));
   });
-  const ready = validConditions && included.length > 0 && difficulty >= 1 && Number.isSafeInteger(damageTotal) && damageTotal >= 0 && included.every(character => results[character.id]?.total !== undefined && results[character.id].total !== '' && Number.isFinite(Number(results[character.id].total)));
+  const ready = validConditions && included.length > 0 && (noRoll || difficulty >= 1) && damage !== '' && Number.isSafeInteger(damageTotal) && (
+    noRoll || included.every(character => results[character.id]?.total !== undefined && results[character.id].total !== '' && Number.isFinite(Number(results[character.id].total)))
+  );
+
+  function targetAuraBonus(character: Character, prefs = targetOptions(character.id)) {
+    if (character.type !== 'player') return 0;
+    return (prefs.crowAura ? crowBonus : 0) + (prefs.astriaAura ? astriaBonus : 0);
+  }
+
+  function auraLabels(character: Character, prefs = targetOptions(character.id)) {
+    if (character.type !== 'player') return [] as string[];
+    const parts: string[] = [];
+    if (prefs.crowAura) parts.push(`Crow aura ${signed(crowBonus)}`);
+    if (prefs.astriaAura) parts.push(`Astria aura ${signed(astriaBonus)}`);
+    return parts;
+  }
 
   function previewConditions(character: Character, success: boolean) {
     if (success || !conditions.length) return 'No conditions';
@@ -52,7 +71,35 @@ export function AoeResolver({ state, submitAction, onClose }: Props) {
   }
 
   function setOption(id: string, update: Partial<TargetOptions>) {
-    setOptions(current => ({ ...current, [id]: { ...(current[id] || { included: true, halfDamage: false }), ...update } }));
+    setOptions(current => ({ ...current, [id]: { ...(current[id] || DEFAULT_TARGET_OPTIONS), ...update } }));
+  }
+
+  function toggleTargetAura(character: Character, key: 'crowAura' | 'astriaAura', checked: boolean) {
+    const currentPrefs = targetOptions(character.id);
+    if (currentPrefs[key] === checked) return;
+    const nextPrefs = { ...currentPrefs, [key]: checked };
+    setOption(character.id, { [key]: checked });
+    const existing = results[character.id];
+    if (existing && existing.total !== '' && Number.isFinite(Number(existing.total))) {
+      const delta = (checked ? 1 : -1) * (key === 'crowAura' ? crowBonus : astriaBonus);
+      const nextTotal = Number(existing.total) + delta;
+      const baseBonus = combatSaveBonus(character, ability);
+      const totalBonus = baseBonus + targetAuraBonus(character, nextPrefs);
+      const auras = auraLabels(character, nextPrefs);
+      const auraSuffix = auras.length > 0 ? ` (base ${signed(baseBonus)}, ${auras.join(', ')})` : '';
+      const detailPrefix = existing.detail.includes('; save ')
+        ? existing.detail.split('; save ')[0]
+        : existing.detail.split(' (')[0];
+      const nextDetail = existing.detail.includes('; save ')
+        ? `${detailPrefix}; save ${signed(totalBonus)}${auraSuffix}`
+        : auras.length > 0
+          ? `${detailPrefix} (${auras.join(', ')})`
+          : detailPrefix;
+      setResults(current => ({
+        ...current,
+        [character.id]: { ...existing, total: String(nextTotal), detail: nextDetail }
+      }));
+    }
   }
 
   function addCondition(definition: Record<string, unknown>) {
@@ -69,11 +116,18 @@ export function AoeResolver({ state, submitAction, onClose }: Props) {
     setConditions(current => current.map(condition => condition.conditionId === id ? { ...condition, ...update } : condition));
   }
 
-  function rolled(character: Character): Result {
+  function rolled(character: Character, prefs = targetOptions(character.id)): Result {
     const roll = rollDiceExpression('1d20', { mode: rollMode });
     const dice = roll.terms[0].dice![0];
-    const bonus = combatSaveBonus(character, ability);
-    return { total: String(roll.total + bonus), natural: roll.total, detail: `d20: ${dice.rolls.join('/')} → ${roll.total}; save ${signed(bonus)}` };
+    const baseBonus = combatSaveBonus(character, ability);
+    const totalBonus = baseBonus + targetAuraBonus(character, prefs);
+    const auras = auraLabels(character, prefs);
+    const auraSuffix = auras.length > 0 ? ` (base ${signed(baseBonus)}, ${auras.join(', ')})` : '';
+    return {
+      total: String(roll.total + totalBonus),
+      natural: roll.total,
+      detail: `d20: ${dice.rolls.join('/')} → ${roll.total}; save ${signed(totalBonus)}${auraSuffix}`
+    };
   }
 
   function rollAll(emptyOnly = false) {
@@ -81,18 +135,35 @@ export function AoeResolver({ state, submitAction, onClose }: Props) {
   }
 
   function manualResult(id: string, total: string) {
-    setResults(current => ({ ...current, [id]: { total, natural: null, detail: 'Manual save total' } }));
+    const character = characters.find(item => item.id === id);
+    const auras = character ? auraLabels(character) : [];
+    const detail = auras.length > 0 ? `Manual save total (${auras.join(', ')})` : 'Manual save total';
+    setResults(current => ({ ...current, [id]: { total, natural: null, detail } }));
   }
 
   async function apply() {
     if (!ready || pending || applied) return;
     setPending(true);
     setError('');
-    const previews = Object.fromEntries(included.map(character => [character.id, previewConditions(character, aoeOutcome(Number(results[character.id].total), results[character.id].natural, difficulty, damageTotal, onSuccess, targetOptions(character.id).halfDamage).success)]));
+    const previews = Object.fromEntries(included.map(character => {
+      const outcome = noRoll
+        ? aoeOutcome(0, 1, difficulty || 15, damageTotal, onSuccess, targetOptions(character.id).halfDamage, true)
+        : aoeOutcome(Number(results[character.id].total), results[character.id].natural, difficulty, damageTotal, onSuccess, targetOptions(character.id).halfDamage, false);
+      return [character.id, previewConditions(character, outcome.success)];
+    }));
     try {
       const result = await submitAction({ type: 'combat.aoe.apply', page: 'combat', payload: {
-        dc: difficulty, damageTotal, onSuccess, conditions,
-        targets: included.map(character => ({ characterId: character.id, saveTotal: Number(results[character.id].total), natural: results[character.id].natural, halfDamage: targetOptions(character.id).halfDamage }))
+        dc: noRoll ? (Number.isFinite(difficulty) && difficulty >= 1 ? difficulty : 15) : difficulty,
+        damageTotal,
+        onSuccess,
+        ...(noRoll ? { noRoll: true } : {}),
+        conditions,
+        targets: included.map(character => ({
+          characterId: character.id,
+          saveTotal: noRoll ? 0 : Number(results[character.id].total),
+          natural: noRoll ? 1 : results[character.id].natural,
+          halfDamage: targetOptions(character.id).halfDamage
+        }))
       } });
       if (result && (result as { ok?: boolean }).ok === false) throw new Error((result as { error?: string }).error || 'AOE could not be applied.');
       setAppliedConditions(previews);
@@ -115,9 +186,10 @@ export function AoeResolver({ state, submitAction, onClose }: Props) {
           <label className="field-card"><span>Targets</span><select value={group} onChange={event => setGroup(event.target.value)}><option value="players">Players</option><option value="enemies">Enemies</option><option value="all">Players and enemies</option></select></label>
           <label className="field-card"><span>Saving throw</span><select value={ability} onChange={event => { setAbility(event.target.value as AbilityKey); setResults({}); }}>{ABILITIES.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}</select></label>
           <label className="field-card"><span>DC</span><NumberInput min={1} value={dc} onChange={event => setDc(event.target.value)} /></label>
-          <label className="field-card"><span>Damage total</span><NumberInput min={0} value={damage} onChange={event => setDamage(event.target.value)} /></label>
+          <label className="field-card"><span>Damage total</span><NumberInput value={damage} onChange={event => setDamage(event.target.value)} /></label>
           <label className="field-card"><span>Successful save</span><select value={onSuccess} onChange={event => setOnSuccess(event.target.value as 'half' | 'none')}><option value="half">Half damage, no conditions</option><option value="none">No damage or conditions</option></select></label>
           <label className="field-card"><span>Roll mode</span><select value={rollMode} onChange={event => setRollMode(event.target.value as DiceRollMode)}><option value="normal">Normal</option><option value="advantage">Advantage</option><option value="disadvantage">Disadvantage</option></select></label>
+          <label className="inline-check"><input type="checkbox" checked={noRoll} onChange={event => setNoRoll(event.target.checked)} />No roll</label>
         </div>
         <details ref={pickerRef} className="aoe-conditions-picker"><summary>Applied conditions ({conditions.length})</summary>
           <SearchPicker items={definitions.filter(definition => !conditions.some(condition => condition.conditionId === definition.id))} query={search} onQueryChange={setSearch} onSelect={addCondition} placeholder="Search AOE conditions" getId={definition => String(definition.id)} getLabel={definition => String(definition.name)} getMeta={definition => definition.hasLevels ? `Levels, max ${definition.maxLevel || 20}` : String(definition.kind || 'neutral')} />
@@ -140,27 +212,45 @@ export function AoeResolver({ state, submitAction, onClose }: Props) {
             </div>;
           })}
         </div>
-        <div className="button-row aoe-roll-actions"><button className="btn success" onClick={() => rollAll()}>Roll all included</button><button className="btn" onClick={() => rollAll(true)}>Roll empty</button></div>
+        <div className="button-row aoe-roll-actions"><button className="btn success" disabled={noRoll} onClick={() => rollAll()}>Roll all included</button><button className="btn" disabled={noRoll} onClick={() => rollAll(true)}>Roll empty</button></div>
         <div className="aoe-targets">
           {characters.length === 0 && <p className="empty">No active creatures in this group.</p>}
           {characters.map(character => {
             const preferences = targetOptions(character.id);
             const result = results[character.id];
-            const outcome = result && result.total !== '' && Number.isFinite(Number(result.total)) && difficulty >= 1 ? aoeOutcome(Number(result.total), result.natural, difficulty, damageTotal, onSuccess, preferences.halfDamage) : null;
+            const baseSave = combatSaveBonus(character, ability);
+            const totalSave = baseSave + targetAuraBonus(character, preferences);
+            const activeAuras = auraLabels(character, preferences);
+            const outcome = noRoll && damage !== '' && Number.isSafeInteger(damageTotal)
+              ? aoeOutcome(0, 1, difficulty || 15, damageTotal, onSuccess, preferences.halfDamage, true)
+              : (result && result.total !== '' && Number.isFinite(Number(result.total)) && difficulty >= 1 && damage !== '' && Number.isSafeInteger(damageTotal)
+                ? aoeOutcome(Number(result.total), result.natural, difficulty, damageTotal, onSuccess, preferences.halfDamage, false)
+                : null);
+            const damageLabel = outcome
+              ? outcome.damage < 0 ? `Healing ${Math.abs(outcome.damage)}` : `Damage ${outcome.damage}`
+              : '';
             return <article className={`aoe-target ${!preferences.included ? 'excluded' : ''}`} key={character.id} aria-label={`${character.name} AOE target`}>
-              <div className="aoe-target-name"><strong>{character.name}</strong><span>{ABILITIES.find(item => item.key === ability)?.short} save {signed(combatSaveBonus(character, ability))}</span></div>
+              <div className="aoe-target-name">
+                <strong>{character.name}</strong>
+                <span>{ABILITIES.find(item => item.key === ability)?.short} save {signed(totalSave)}{activeAuras.length > 0 ? ` (base ${signed(baseSave)}, ${activeAuras.join(', ')})` : ''}</span>
+              </div>
               <div className="aoe-target-toggles">
                 <label className="inline-check"><input type="checkbox" aria-label={`Include ${character.name}`} checked={preferences.included} onChange={event => setOption(character.id, { included: event.target.checked })} />Include</label>
                 <label className="inline-check"><input type="checkbox" checked={preferences.halfDamage} onChange={event => setOption(character.id, { halfDamage: event.target.checked })} />Half damage</label>
+                {character.type === 'player' && <>
+                  <label className="inline-check"><input type="checkbox" aria-label={`${character.name} Crow aura`} checked={preferences.crowAura} onChange={event => toggleTargetAura(character, 'crowAura', event.target.checked)} />Crow aura {signed(crowBonus)}</label>
+                  <label className="inline-check"><input type="checkbox" aria-label={`${character.name} Astria aura`} checked={preferences.astriaAura} onChange={event => toggleTargetAura(character, 'astriaAura', event.target.checked)} />Astria aura {signed(astriaBonus)}</label>
+                </>}
               </div>
               <div className="aoe-target-roll">
-                <label>Save total<input type="number" value={result?.total ?? ''} disabled={!preferences.included} onChange={event => manualResult(character.id, event.target.value)} onBlur={event => { if (event.target.value === '') manualResult(character.id, '0'); }} aria-label={`${character.name} save total`} /></label>
-                <button className="btn small" disabled={!preferences.included} onClick={() => setResults(current => ({ ...current, [character.id]: rolled(character) }))}>Roll save</button>
-                {result && <small>{result.detail}</small>}
+                <label>Save total<input type="number" value={result?.total ?? ''} disabled={!preferences.included || noRoll} onChange={event => manualResult(character.id, event.target.value)} onBlur={event => { if (event.target.value === '') manualResult(character.id, '0'); }} aria-label={`${character.name} save total`} /></label>
+                <button className="btn small" disabled={!preferences.included || noRoll} onClick={() => setResults(current => ({ ...current, [character.id]: rolled(character) }))}>Roll save</button>
+                {result && !noRoll && <small>{result.detail}</small>}
               </div>
               <div className="aoe-target-preview" aria-live="polite">
                 {!preferences.included ? 'Excluded — no changes' : outcome ? <>
-                  <strong className={outcome.success ? 'success-text' : 'warning-text'}>{outcome.success ? 'Success' : 'Failure'} · Damage {outcome.damage}</strong>
+                  <strong className={outcome.success ? 'success-text' : 'warning-text'}>{outcome.success ? 'Success' : 'Failure'} · {damageLabel}</strong>
+                  {activeAuras.length > 0 && !noRoll && <span>Auras: {activeAuras.join(', ')}</span>}
                   <span>{applied ? appliedConditions[character.id] : previewConditions(character, outcome.success)}</span>
                 </> : 'Waiting for save total'}
               </div>

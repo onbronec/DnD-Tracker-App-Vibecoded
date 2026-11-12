@@ -188,12 +188,20 @@ export interface MonsterTextEntry {
   description: string;
 }
 
-export interface MonsterEpicAction {
+export type EpicActionReset = 'turn' | 'encounter' | 'day' | 'rest';
+
+export interface MonsterEpicOption {
   id?: string;
   name: string;
   description: string;
-  maxUses: number;
+  cost?: string;
+  maxUses: number; // 0 means no use limit.
   used: number;
+  resetOn?: EpicActionReset;
+}
+
+export interface MonsterEpicAction extends MonsterEpicOption {
+  options?: MonsterEpicOption[];
 }
 
 export interface MonsterPowerResource {
@@ -256,6 +264,9 @@ export interface MonsterDatabaseEntry {
   hasMythicActions?: boolean;
   hasMultipleTurns?: boolean;
   group?: string;
+  groups?: string[];
+  imageUrl?: string;
+  imageFocus?: string;
   maxPower?: number;
   powerName?: string;
   maxReactions?: number;
@@ -276,12 +287,19 @@ export interface MonsterDatabaseEntry {
   fixedInitiative?: number;
   lairActionInitiative?: number;
   mythicActionInitiative?: number;
+  combatType?: MonsterCombatType;
+  flag?: MonsterFlag;
 }
+
+export type MonsterCombatType = 'monster' | 'spellcaster' | 'elite' | 'leader' | 'ranged' | 'controller';
+export type MonsterFlag = 'active' | 'inactive' | 'unused' | 'adapt';
 
 export interface EncounterMonsterEntry {
   id: string;
   monsterId: string;
   quantity: number;
+  groupCount?: number;
+  groupName?: string;
 }
 
 export interface EncounterGroup {
@@ -299,10 +317,13 @@ export interface EncounterDifficultySettings {
   dprPerPointMax: number;
 }
 
+export type EncounterStatus = 'active' | 'done' | 'unused';
+
 export interface Encounter {
   id: string;
   name: string;
   groupId?: string | null;
+  status?: EncounterStatus;
   notes: string;
   monsters: EncounterMonsterEntry[];
   reserve: EncounterMonsterEntry[];
@@ -339,6 +360,7 @@ export interface GameState {
   monsterDatabase: MonsterDatabaseEntry[];
   encounters: Encounter[];
   encounterGroups: EncounterGroup[];
+  monsterGroupDescriptions?: Record<string, string>;
   activeEncounterId?: string | null;
   encounterDifficulty: EncounterDifficultySettings;
   magicItemDatabase: Array<Record<string, unknown>>;
@@ -398,17 +420,27 @@ export interface WorldCalendarState {
   records: CalendarRecord[];
 }
 
+export type CalendarRecordType = 'event' | 'trigger';
+
 export interface CalendarRecord {
   id: string;
+  type?: CalendarRecordType;
   dateKey: string;
+  recordedDateKey?: string;
   text: string;
+  completed?: boolean;
+  notified?: boolean;
   timestamp: string;
 }
 
+export type ToolbeltNoteType = 'note' | 'temp';
+
 export interface ToolbeltNote {
   id: string;
+  type?: ToolbeltNoteType;
   date: string;
   title: string;
   text: string;
+  completed?: boolean;
   timestamp: string;
 }

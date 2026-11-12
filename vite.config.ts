@@ -13,7 +13,8 @@ export default defineConfig({
         target: `http://localhost:${proxyPort}`,
         ws: true
       },
-      '/api': `http://localhost:${proxyPort}`
+      '/api': `http://localhost:${proxyPort}`,
+      '/images': `http://localhost:${proxyPort}`
     }
   },
   build: {

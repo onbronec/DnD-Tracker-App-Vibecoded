@@ -1,12 +1,14 @@
 import { NumberInput } from '../components/NumberInput';
 import { ChangeEvent, FormEvent, useMemo, useRef, useState } from 'react';
-import type { Character, ClientRole, GameAction, GameState, MonsterDatabaseEntry } from '../shared/types';
+import type { Character, ClientRole, Encounter, EncounterDifficultySettings, EncounterGroup, GameAction, GameState, MonsterDatabaseEntry } from '../shared/types';
 import { effectToString, hpClass, monsterHealthLabel } from '../shared/defaults';
 import { CollapsiblePanelGroup } from '../components/CollapsiblePanel';
 import { MarkdownEditor, MarkdownRenderer } from '../components/Markdown';
 import { Modal } from '../components/Modal';
 import { SearchPicker } from '../components/SearchPicker';
 import { ABILITIES, armorClass, effectiveMaxHp } from '../shared/characterSheet';
+import { getGroupTheme } from '../shared/groupTheme';
+import { calculateEncounterMath } from '../shared/encounterMath';
 
 interface Props {
   state: GameState;
@@ -21,9 +23,13 @@ export function CombatPage({ state, role, submitAction, onOpenSpells, onOpenInve
   const isDM = role === 'dm';
   const current = state.characters[state.combatState.currentTurn];
   const [effectCharacterId, setEffectCharacterId] = useState<string | null>(null);
+  const [showEncounterModal, setShowEncounterModal] = useState(false);
   const combatFileInputRef = useRef<HTMLInputElement | null>(null);
   const effectCharacter = state.characters.find(character => String(character.id) === effectCharacterId) || null;
   const combatCharacters = state.characters.filter(character => character.type === 'monster' || character.activeInCombat !== false);
+  const loadableEncounters = useMemo(() => {
+    return (state.encounters || []).filter(e => (e.status || 'active') !== 'done');
+  }, [state.encounters]);
 
   function saveCombatData() {
     const payload = {
@@ -76,7 +82,22 @@ export function CombatPage({ state, role, submitAction, onOpenSpells, onOpenInve
               id: 'add-monster-db',
               title: 'Add monster / object from database',
               summary: 'Search saved monsters and non-monster objects.',
-              content: <AddMonsterFromDatabase monsters={state.monsterDatabase} submitAction={submitAction} />
+              content: <AddMonsterFromDatabase monsters={state.monsterDatabase} characters={state.characters} submitAction={submitAction} />
+            }] : []),
+            ...(loadableEncounters.length > 0 ? [{
+              id: 'load-encounter-panel',
+              title: 'Load encounter from planner',
+              summary: `Choose from ${loadableEncounters.length} saved encounter${loadableEncounters.length === 1 ? '' : 's'}.`,
+              content: (
+                <LoadEncounterPanel
+                  encounters={loadableEncounters}
+                  groups={state.encounterGroups || []}
+                  database={state.monsterDatabase}
+                  settings={state.encounterDifficulty}
+                  activeEncounterId={state.activeEncounterId}
+                  submitAction={submitAction}
+                />
+              )
             }] : [])
           ]}
         />
@@ -98,9 +119,12 @@ export function CombatPage({ state, role, submitAction, onOpenSpells, onOpenInve
               {state.combatState.active && <button className="btn warning" onClick={() => submitAction({ type: 'combat.previousTurn' })}>Previous</button>}
               {state.combatState.active && <button className="btn warning" onClick={() => submitAction({ type: 'combat.nextTurn' })}>Next turn</button>}
               {state.combatState.active && <button className="btn danger" onClick={() => submitAction({ type: 'combat.end' })}>End</button>}
-              {state.combatState.active && <button className="btn purple" onClick={() => submitAction({ type: 'combat.close' })}>Close</button>}
+              {(state.combatState.active || state.characters.some(c => c.type === 'monster') || Boolean(state.activeEncounterId)) && (
+                <button className="btn purple" onClick={() => submitAction({ type: 'combat.close', page: 'combat' })}>Close</button>
+              )}
               <button className="btn warning" onClick={() => submitAction({ type: 'spell.rest.all', payload: { restType: 'short' } })}>Short Rest All</button>
               <button className="btn success" onClick={() => submitAction({ type: 'spell.rest.all', payload: { restType: 'long' } })}>Long Rest All</button>
+              <button className="btn purple" onClick={() => setShowEncounterModal(true)} title="Load saved encounter from Encounter Planner">Load encounter</button>
               <button className="btn" onClick={saveCombatData}>Save combat</button>
               <button className="btn" onClick={() => combatFileInputRef.current?.click()}>Load combat</button>
               <input ref={combatFileInputRef} className="hidden-input" type="file" accept="application/json,.json" onChange={loadCombatData} />
@@ -142,6 +166,17 @@ export function CombatPage({ state, role, submitAction, onOpenSpells, onOpenInve
           conditions={state.conditionDatabase || []}
           submitAction={submitAction}
           onClose={() => setEffectCharacterId(null)}
+        />
+      )}
+      {showEncounterModal && (
+        <LoadEncounterModal
+          encounters={loadableEncounters}
+          groups={state.encounterGroups || []}
+          database={state.monsterDatabase}
+          settings={state.encounterDifficulty}
+          activeEncounterId={state.activeEncounterId}
+          submitAction={submitAction}
+          onClose={() => setShowEncounterModal(false)}
         />
       )}
     </div>
@@ -224,7 +259,7 @@ function AddCharacterForm({ submitAction }: { submitAction: Props['submitAction'
   );
 }
 
-function AddMonsterFromDatabase({ monsters, submitAction }: { monsters: MonsterDatabaseEntry[]; submitAction: Props['submitAction'] }) {
+function AddMonsterFromDatabase({ monsters, characters = [], submitAction }: { monsters: MonsterDatabaseEntry[]; characters?: Character[]; submitAction: Props['submitAction'] }) {
   const [selectedMonster, setSelectedMonster] = useState<MonsterDatabaseEntry | null>(null);
   const [count, setCount] = useState('1');
   const [groupCount, setGroupCount] = useState('1');
@@ -235,33 +270,55 @@ function AddMonsterFromDatabase({ monsters, submitAction }: { monsters: MonsterD
   // Extract distinct groups from database
   const availableGroups = useMemo(() => {
     const groups = new Set<string>();
-    monsters.forEach(m => { if (m.group) groups.add(m.group); });
+    monsters.forEach(m => {
+      (m.groups || (m.group ? [m.group] : [])).forEach(g => {
+        if (g && g.trim()) groups.add(g.trim());
+      });
+    });
     return Array.from(groups).sort();
   }, [monsters]);
 
   // Pre-filter by group before text search
-  const groupFiltered = monsters.filter(m => (!groupFilter || m.group === groupFilter) && (entityFilter === 'all' || (m.entityKind === 'nonMonster' ? 'objects' : 'monsters') === entityFilter));
+  const activeMonsters = monsters.filter(m => (m.flag || 'active') === 'active' || m.flag === 'adapt');
+  const groupFiltered = activeMonsters.filter(m => {
+    if (groupFilter) {
+      const mGroups = Array.isArray(m.groups) && m.groups.length ? m.groups : (m.group ? [m.group] : []);
+      if (!mGroups.includes(groupFilter)) return false;
+    }
+    return entityFilter === 'all' || (m.entityKind === 'nonMonster' ? 'objects' : 'monsters') === entityFilter;
+  });
   const matchingMonsters = matchingItems(groupFiltered, search);
 
   async function addMonster() {
     const monster = selectedMonster && matchingMonsters.includes(selectedMonster) ? selectedMonster : matchingMonsters[0];
     if (!monster) return;
     const copies = Math.max(1, Number(count) || 1);
-    const groups = monster.entityKind === 'nonMonster' ? 1 : Math.min(copies, Math.max(1, Number(groupCount) || 1));
+    const isObject = monster.entityKind === 'nonMonster';
+    const groups = isObject ? 1 : Math.min(copies, Math.max(1, Number(groupCount) || 1));
+    const useGrouping = !isObject && copies > 1 && groups < copies;
+    const groupSize = Math.ceil(copies / groups);
     // Assign each copy to a group for shared initiative
     const groupIds: string[] = [];
     for (let g = 0; g < groups; g++) {
       groupIds.push(`grp_${Date.now()}_${g}`);
     }
 
+    let maxGroupNum = 0;
+    characters.forEach(c => {
+      const match = c.groupName && String(c.groupName).match(/Group\s+(\d+)/i);
+      if (match) maxGroupNum = Math.max(maxGroupNum, parseInt(match[1], 10));
+    });
+    const existingGroupIds = new Set(characters.map(c => c.groupId).filter(Boolean));
+    const baseGroupNum = Math.max(maxGroupNum, existingGroupIds.size);
+
     for (let index = 0; index < copies; index += 1) {
       const name = copies > 1 ? `${String(monster.name || 'Monster')} ${index + 1}` : String(monster.name || 'Monster');
       const power = monster.monsterAbilities?.power;
       const maxPower = Number(power?.max ?? monster.maxPower ?? 0) || 0;
       const currentPower = Number(power?.current ?? maxPower) || 0;
-      const groupIndex = groups > 1 ? index % groups : 0;
-      const gId = groups > 1 ? groupIds[groupIndex] : null;
-      const gName = groups > 1 ? `Group ${groupIndex + 1}` : null;
+      const groupIndex = Math.min(groups - 1, Math.floor(index / groupSize));
+      const gId = useGrouping ? groupIds[groupIndex] : null;
+      const gName = useGrouping ? `Group ${baseGroupNum + groupIndex + 1}` : null;
       await submitAction({
         type: 'character.add',
         payload: {
@@ -352,7 +409,10 @@ function AddMonsterFromDatabase({ monsters, submitAction }: { monsters: MonsterD
         placeholder="Search monsters / objects"
         getId={monster => String(monster.id)}
         getLabel={monster => String(monster.name || 'Monster')}
-        getMeta={monster => monster.entityKind === 'nonMonster' ? `Non-monster · Initiative ${monster.fixedInitiative ?? 20}` : `HP ${monster.hp || monster.maxHp || '-'} · AC ${monster.ac || '-'}` + (monster.group ? ` · ${monster.group}` : '')}
+        getMeta={monster => {
+          const groupsStr = monster.groups?.length ? monster.groups.join(', ') : (monster.group || '');
+          return monster.entityKind === 'nonMonster' ? `Non-monster · Initiative ${monster.fixedInitiative ?? 20}` : `HP ${monster.hp || monster.maxHp || '-'} · AC ${monster.ac || '-'}` + (groupsStr ? ` · ${groupsStr}` : '');
+        }}
       />
       <div className="button-row">
         <label title="Total number of copies to add" style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.9em' }}>
@@ -370,19 +430,101 @@ function AddMonsterFromDatabase({ monsters, submitAction }: { monsters: MonsterD
 }
 
 function InitiativeLine({ characters, currentTurn, played }: { characters: Character[]; currentTurn: number; played: number[] }) {
+  const combatants = characters
+    .map((character, index) => ({ character, index }))
+    .filter(({ character }) => character.type === 'monster' || character.activeInCombat !== false);
+
+  const clusters: Array<{
+    groupId: string | null;
+    groupName: string | null;
+    items: Array<{ character: Character; index: number }>;
+  }> = [];
+
+  combatants.forEach(item => {
+    const gId = item.character.groupId || null;
+    const gName = item.character.groupName || null;
+    const last = clusters[clusters.length - 1];
+    if (last && gId && last.groupId === gId) {
+      last.items.push(item);
+    } else {
+      clusters.push({ groupId: gId, groupName: gName, items: [item] });
+    }
+  });
+
+  function scrollTo(characterId: string) {
+    const card = document.getElementById(`combatant-${characterId}`);
+    if (!card) return;
+    const headerHeight = document.getElementById('combat-header')?.getBoundingClientRect().height || 0;
+    window.scrollBy({ top: card.getBoundingClientRect().top - headerHeight - 12, behavior: 'auto' });
+    card.focus({ preventScroll: true });
+  }
+
   return (
     <nav className="initiative-line" aria-label="Initiative order">
-      {characters.map((character, index) => (character.type === 'monster' || character.activeInCombat !== false) && (
-        <button type="button" key={character.id} className={index === currentTurn ? 'current' : played.includes(index) ? 'played' : ''} aria-label={`Go to ${character.name}`} aria-current={index === currentTurn ? 'step' : undefined} onClick={() => {
-          const card = document.getElementById(`combatant-${character.id}`);
-          if (!card) return;
-          const headerHeight = document.getElementById('combat-header')?.getBoundingClientRect().height || 0;
-          window.scrollBy({ top: card.getBoundingClientRect().top - headerHeight - 12, behavior: 'auto' });
-          card.focus({ preventScroll: true });
-        }}>
-          {character.name} ({character.initiative ?? '-'})
-        </button>
-      ))}
+      {clusters.map((cluster, cIdx) => {
+        const theme = cluster.groupId ? getGroupTheme(cluster.groupId, cluster.groupName) : null;
+        if (!theme || cluster.items.length <= 1) {
+          return cluster.items.map(({ character, index }) => {
+            const singleTheme = character.groupId ? getGroupTheme(character.groupId, character.groupName) : null;
+            return (
+              <button
+                type="button"
+                key={character.id}
+                className={index === currentTurn ? 'current' : played.includes(index) ? 'played' : ''}
+                style={index !== currentTurn && singleTheme ? { borderColor: singleTheme.border } : undefined}
+                aria-label={`Go to ${character.name}`}
+                aria-current={index === currentTurn ? 'step' : undefined}
+                onClick={() => scrollTo(character.id)}
+              >
+                {character.groupName && (
+                  <span
+                    className="initiative-chip-tag"
+                    style={{
+                      background: singleTheme?.badgeBg,
+                      color: singleTheme?.color,
+                      borderColor: singleTheme?.border
+                    }}
+                  >
+                    {character.groupName}
+                  </span>
+                )}
+                {character.name} ({character.initiative ?? '-'})
+              </button>
+            );
+          });
+        }
+
+        const hasCurrent = cluster.items.some(i => i.index === currentTurn);
+        return (
+          <div
+            key={cluster.groupId || `cluster-${cIdx}`}
+            className={`initiative-group-cluster ${hasCurrent ? 'has-current' : ''}`}
+            style={{
+              borderColor: theme.border,
+              background: theme.clusterBg
+            }}
+          >
+            <span className="initiative-group-cluster-label" style={{ color: theme.color }}>
+              <span className="group-symbol">◈</span> {cluster.groupName}
+            </span>
+            <div className="initiative-group-cluster-items">
+              {cluster.items.map(({ character, index }) => (
+                <button
+                  type="button"
+                  key={character.id}
+                  className={index === currentTurn ? 'current' : played.includes(index) ? 'played' : ''}
+                  style={index !== currentTurn ? { borderColor: theme.border } : undefined}
+                  aria-label={`Go to ${character.name}`}
+                  aria-current={index === currentTurn ? 'step' : undefined}
+                  onClick={() => scrollTo(character.id)}
+                >
+                  {character.name} ({character.initiative ?? '-'})
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })}
     </nav>
   );
 }
@@ -458,14 +600,35 @@ function CharacterCard({
     });
   }
 
+  const theme = character.groupId ? getGroupTheme(character.groupId, character.groupName) : null;
+
   return (
-    <article id={`combatant-${character.id}`} tabIndex={-1} className={`character-card ${active ? 'active' : ''} ${played ? 'played' : ''}`} data-testid={`character-${character.name}`}>
+    <article
+      id={`combatant-${character.id}`}
+      tabIndex={-1}
+      className={`character-card ${active ? 'active' : ''} ${played ? 'played' : ''} ${character.groupId ? 'in-group' : ''}`}
+      style={theme ? ({ '--group-accent': theme.accentBar, '--group-border': theme.border, '--group-bg': theme.badgeBg } as React.CSSProperties) : undefined}
+      data-testid={`character-${character.name}`}
+    >
       <div className="card-header">
         <div>
           <button className="name-button" onClick={onOpenEffects} title="Open conditions and effects">
             {character.name}
           </button>
           <span className="type-pill">{character.type === 'player' ? 'Player' : isNonMonster ? 'Object' : 'Monster'}</span>
+          {character.groupName && (
+            <span
+              className="group-pill"
+              style={{
+                backgroundColor: theme?.badgeBg,
+                borderColor: theme?.border,
+                color: theme?.color
+              }}
+              title={`Initiative group: ${character.groupName}`}
+            >
+              <span className="group-symbol">◈</span> {character.groupName}
+            </span>
+          )}
         </div>
         <div className="button-row compact">
           <button className={`btn small input-toggle ${expanded ? 'active' : ''}`} aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>input</button>
@@ -481,7 +644,7 @@ function CharacterCard({
         {hasHpAc && <Stat label="HP" tone={role === 'player' && character.type === 'monster' ? hpClass(character.currentHp, maxHp) : ''} value={role === 'player' && character.type === 'monster' ? monsterHealthLabel(character.currentHp, maxHp) : `${character.currentHp}/${maxHp}`} />}
         {hasHpAc && <Stat label="Temp" value={String(character.tempHp || 0)} />}
         {hasHpAc && <Stat label="AC" value={String(armorClass(character))} />}
-        <Stat label="Init" value={String(character.initiative ?? '-')} />
+        <Stat label="Init" value={String(character.initiative ?? '-')} hint={character.groupName || ''} />
         {isDM && character.type === 'monster' && <Stat label={character.powerName || 'Power'} value={`${character.currentPower || 0}/${character.maxPower || 0}`} />}
       </div>
 
@@ -555,25 +718,40 @@ function CharacterCard({
           </div>
         </div>
       )}
-      <div className="quick-row">
-        <span>Reakce: {Math.max(0, (character.maxReactions ?? 1) - (character.currentReactions ?? character.maxReactions ?? 1))}/{character.maxReactions ?? 1} used · {character.currentReactions ?? character.maxReactions ?? 1} available</span>
-        {Array.from({ length: Math.max(0, character.maxReactions ?? 1) }, (_, reactionIndex) => {
-          const currentReactions = character.currentReactions ?? character.maxReactions ?? 1;
-          const usedReactions = (character.maxReactions ?? 1) - currentReactions;
-          const isUsed = reactionIndex < usedReactions;
-          return (
+      {(character.maxReactions ?? 1) > 0 && (
+        <div className="quick-row">
+          <span>Reakce: {Math.max(0, (character.maxReactions ?? 1) - (character.currentReactions ?? character.maxReactions ?? 1))}/{character.maxReactions ?? 1} used · {character.currentReactions ?? character.maxReactions ?? 1} available</span>
+          {Array.from({ length: Math.max(0, character.maxReactions ?? 1) }, (_, reactionIndex) => {
+            const currentReactions = character.currentReactions ?? character.maxReactions ?? 1;
+            const usedReactions = (character.maxReactions ?? 1) - currentReactions;
+            const isUsed = reactionIndex < usedReactions;
+            return (
+              <button
+                key={reactionIndex}
+                className={`feature-box ${isUsed ? 'used' : ''}`}
+                aria-pressed={isUsed}
+                onClick={() => submitAction({ type: 'character.reaction.set', payload: { characterId: character.id, value: currentReactions + (isUsed ? 1 : -1) } })}
+                aria-label={`${character.name} reaction ${reactionIndex + 1}`}
+                title={isUsed ? 'Used reaction (click to restore)' : 'Available reaction (click to spend)'}
+              />
+            );
+          })}
+          {((character.maxReactions ?? 1) - (character.currentReactions ?? character.maxReactions ?? 1)) > 0 && (
             <button
-              key={reactionIndex}
-              className={`feature-box ${isUsed ? 'used' : ''}`}
-              disabled={!canEdit}
-              aria-pressed={isUsed}
-              onClick={() => submitAction({ type: 'character.reaction.set', payload: { characterId: character.id, value: currentReactions + (isUsed ? 1 : -1) } })}
-              aria-label={`${character.name} reaction ${reactionIndex + 1}`}
-              title={isUsed ? 'Used reaction' : 'Available reaction'}
-            />
-          );
-        })}
-      </div>
+              type="button"
+              className="btn small"
+              style={{ padding: '1px 7px', fontSize: '0.75rem', marginLeft: '6px' }}
+              title={`Refresh reactions for ${character.name}`}
+              onClick={() => submitAction({
+                type: 'character.reaction.set',
+                payload: { characterId: character.id, value: character.maxReactions ?? 1, refresh: true }
+              })}
+            >
+              Refresh
+            </button>
+          )}
+        </div>
+      )}
       {expanded && canEdit && (
         <div className="card-controls">
           {hasHpAc && <div className="input-action-row">
@@ -620,14 +798,312 @@ function ActiveEncounterBrief({ state, submitAction }: { state: GameState; submi
   if (!encounter) return null;
   return (
     <section className="section encounter-brief">
-      <div className="section-title-row"><div><h2>Encounter: {encounter.name}</h2><p>DM notes and available reinforcements.</p></div></div>
+      <div className="section-title-row">
+        <div>
+          <h2>Encounter: {encounter.name}</h2>
+          <p>DM notes and available reinforcements.</p>
+        </div>
+        <div className="button-row">
+          <button
+            className="btn small"
+            onClick={() => submitAction({ type: 'encounter.close', page: 'combat' })}
+            title="Close encounter notes"
+          >
+            Close encounter
+          </button>
+        </div>
+      </div>
       <MarkdownRenderer text={encounter.notes} emptyLabel="No encounter notes." />
       {encounter.reserve.length > 0 && <div className="reserve-row"><strong>Monster reserve</strong>{encounter.reserve.map(entry => {
         const monster = state.monsterDatabase.find(item => item.id === entry.monsterId);
         if (!monster) return null;
-        return <span className="reserve-entry" key={entry.id}>{monster.name} ×{entry.quantity}<button className="btn success small" onClick={() => submitAction({ type: 'encounter.reserve.addToCombat', page: 'encounters', payload: { encounterId: encounter.id, entryId: entry.id, quantity: 1 } })}>Add</button></span>;
+        const groups = Math.max(1, Math.min(entry.quantity, Number(entry.groupCount) || 1));
+        const groupLabel = entry.quantity > 1
+          ? (groups === 1 ? ' (1 group)' : groups < entry.quantity ? ` (${groups} groups)` : ' (indiv.)')
+          : '';
+        return (
+          <span className="reserve-entry" key={entry.id}>
+            {monster.name} ×{entry.quantity}{groupLabel}
+            <button className="btn success small" onClick={() => submitAction({ type: 'encounter.reserve.addToCombat', page: 'encounters', payload: { encounterId: encounter.id, entryId: entry.id, quantity: 1, groupCount: 1 } })}>Add</button>
+            {entry.quantity > 1 && (
+              <button className="btn warning small" onClick={() => submitAction({ type: 'encounter.reserve.addToCombat', page: 'encounters', payload: { encounterId: encounter.id, entryId: entry.id, quantity: entry.quantity, groupCount: groups } })}>
+                Add ×{entry.quantity}
+              </button>
+            )}
+          </span>
+        );
       })}</div>}
     </section>
+  );
+}
+
+function LoadEncounterPanel({
+  encounters,
+  groups,
+  database,
+  settings,
+  activeEncounterId,
+  submitAction
+}: {
+  encounters: Encounter[];
+  groups: EncounterGroup[];
+  database: MonsterDatabaseEntry[];
+  settings: EncounterDifficultySettings;
+  activeEncounterId?: string | null;
+  submitAction: Props['submitAction'];
+}) {
+  const [selectedId, setSelectedId] = useState<string>(encounters[0]?.id || '');
+  const [clearMonsters, setClearMonsters] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const selected = encounters.find(e => e.id === selectedId) || encounters[0] || null;
+
+  async function handleLoad() {
+    if (!selected) return;
+    setLoading(true);
+    try {
+      await submitAction({
+        type: 'encounter.importToCombat',
+        page: 'combat',
+        payload: {
+          encounterId: selected.id,
+          clearExistingMonsters: clearMonsters
+        }
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (encounters.length === 0) {
+    return <p className="empty">No saved encounters yet. Create encounters in the Encounter Planner.</p>;
+  }
+
+  const math = selected ? calculateEncounterMath(selected, database, settings) : null;
+  const monsterNames = selected ? selected.monsters.map(entry => {
+    const m = database.find(item => item.id === entry.monsterId);
+    return `${m?.name || 'Monster'} ×${entry.quantity}`;
+  }).join(', ') : '';
+
+  return (
+    <div className="load-encounter-panel stack">
+      <div className="form-grid">
+        <label className="field-card">
+          <span>Saved Encounter</span>
+          <select value={selectedId} onChange={e => setSelectedId(e.target.value)} aria-label="Select saved encounter">
+            {encounters.map(e => {
+              const g = groups.find(group => group.id === e.groupId);
+              return (
+                <option key={e.id} value={e.id}>
+                  {e.name} {g ? `(${g.name})` : ''} · {e.monsters.reduce((sum, item) => sum + item.quantity, 0)} monsters
+                </option>
+              );
+            })}
+          </select>
+        </label>
+        <div style={{ display: 'flex', alignItems: 'center' }}>
+          <label className="inline-check" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <input
+              type="checkbox"
+              checked={clearMonsters}
+              onChange={e => setClearMonsters(e.target.checked)}
+              aria-label="Clear previous monsters"
+            />
+            <span>Clear existing monsters</span>
+          </label>
+        </div>
+      </div>
+
+      {selected && math && (
+        <div className="field-card" style={{ padding: '10px' }}>
+          <div>
+            <strong>{selected.name}</strong>
+            {selected.id === activeEncounterId && <span className="type-pill" style={{ marginLeft: '8px', color: '#4ade80' }}>Active in combat</span>}
+          </div>
+          <div style={{ color: 'var(--muted)', fontSize: '0.86rem', marginTop: '4px' }}>
+            {math.points.toFixed(1)} pt · {math.totalHp} HP · {math.totalDpr.toFixed(0)} DPR · {selected.monsters.reduce((sum, e) => sum + e.quantity, 0)} monsters
+          </div>
+          {monsterNames && <div style={{ fontSize: '0.86rem', marginTop: '4px' }}>{monsterNames}</div>}
+        </div>
+      )}
+
+      <button
+        className="btn success"
+        disabled={!selected || loading}
+        onClick={handleLoad}
+      >
+        {loading ? 'Loading…' : `Load "${selected?.name || 'encounter'}" into combat`}
+      </button>
+    </div>
+  );
+}
+
+export function LoadEncounterModal({
+  encounters,
+  groups,
+  database,
+  settings,
+  activeEncounterId,
+  submitAction,
+  onClose
+}: {
+  encounters: Encounter[];
+  groups: EncounterGroup[];
+  database: MonsterDatabaseEntry[];
+  settings: EncounterDifficultySettings;
+  activeEncounterId?: string | null;
+  submitAction: Props['submitAction'];
+  onClose: () => void;
+}) {
+  const [search, setSearch] = useState('');
+  const [selectedGroupId, setSelectedGroupId] = useState('');
+  const [clearMonsters, setClearMonsters] = useState(false);
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return encounters.filter(enc => {
+      if (selectedGroupId && enc.groupId !== selectedGroupId) return false;
+      if (!q) return true;
+      if (enc.name.toLowerCase().includes(q)) return true;
+      if (enc.notes && enc.notes.toLowerCase().includes(q)) return true;
+      return enc.monsters.some(entry => {
+        const m = database.find(item => item.id === entry.monsterId);
+        return m && m.name.toLowerCase().includes(q);
+      });
+    });
+  }, [encounters, search, selectedGroupId, database]);
+
+  async function handleLoad(encounter: Encounter) {
+    setLoadingId(encounter.id);
+    try {
+      await submitAction({
+        type: 'encounter.importToCombat',
+        page: 'combat',
+        payload: {
+          encounterId: encounter.id,
+          clearExistingMonsters: clearMonsters
+        }
+      });
+      onClose();
+    } finally {
+      setLoadingId(null);
+    }
+  }
+
+  return (
+    <Modal>
+      <div className="modal-card encounter-loader-modal" role="dialog" aria-label="Load encounter from planner">
+        <div className="section-title-row">
+          <div>
+            <h2>Load Encounter from Planner</h2>
+            <p>Import saved encounter monsters into combat with initiative groups and notes.</p>
+          </div>
+          <button className="btn" onClick={onClose}>Close</button>
+        </div>
+
+        <div className="form-grid" style={{ marginBottom: '12px' }}>
+          <input
+            type="search"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search encounters or monsters…"
+            aria-label="Search encounters"
+          />
+          {groups.length > 0 && (
+            <select
+              value={selectedGroupId}
+              onChange={e => setSelectedGroupId(e.target.value)}
+              aria-label="Filter story arc"
+            >
+              <option value="">All story arcs</option>
+              {groups.map(g => (
+                <option key={g.id} value={g.id}>{g.name}</option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        <label className="inline-check" style={{ marginBottom: '14px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <input
+            type="checkbox"
+            checked={clearMonsters}
+            onChange={e => setClearMonsters(e.target.checked)}
+            aria-label="Clear existing monsters"
+          />
+          <span>Clear existing monsters before loading (keeps player characters)</span>
+        </label>
+
+        {encounters.length === 0 ? (
+          <p className="empty">No saved encounters yet. Create encounters in the Encounter Planner.</p>
+        ) : filtered.length === 0 ? (
+          <p className="empty">No encounters matching current filter.</p>
+        ) : (
+          <div className="encounter-loader-list">
+            {filtered.map(encounter => {
+              const math = calculateEncounterMath(encounter, database, settings);
+              const group = groups.find(g => g.id === encounter.groupId);
+              const isActive = encounter.id === activeEncounterId;
+              const monsterNames = encounter.monsters.map(entry => {
+                const m = database.find(item => item.id === entry.monsterId);
+                const name = m?.name || 'Monster';
+                const gCount = Math.max(1, Math.min(entry.quantity, Number(entry.groupCount) || 1));
+                const grpLabel = entry.quantity > 1 ? (gCount === 1 ? ' · 1 group' : gCount < entry.quantity ? ` · ${gCount} grps` : '') : '';
+                return `${name} ×${entry.quantity}${grpLabel}`;
+              });
+              const reserveNames = (encounter.reserve || []).map(entry => {
+                const m = database.find(item => item.id === entry.monsterId);
+                return `${m?.name || 'Monster'} ×${entry.quantity}`;
+              });
+
+              return (
+                <div key={encounter.id} className={`encounter-loader-card ${isActive ? 'is-active' : ''}`}>
+                  <div className="encounter-loader-header">
+                    <div>
+                      <strong className="encounter-loader-name">{encounter.name}</strong>
+                      {group && <span className="type-pill" style={{ marginLeft: '8px' }}>{group.name}</span>}
+                      {isActive && <span className="type-pill" style={{ marginLeft: '8px', background: 'rgba(34, 197, 94, 0.2)', color: '#4ade80' }}>Active in combat</span>}
+                    </div>
+                    <button
+                      className="btn success small"
+                      disabled={loadingId === encounter.id}
+                      onClick={() => handleLoad(encounter)}
+                      aria-label={`Load encounter ${encounter.name}`}
+                    >
+                      {loadingId === encounter.id ? 'Loading…' : 'Load into combat'}
+                    </button>
+                  </div>
+                  <div className="encounter-loader-metrics">
+                    <span>{math.points.toFixed(1)} pt</span>
+                    <span>·</span>
+                    <span>{math.totalHp} HP</span>
+                    <span>·</span>
+                    <span>{math.totalDpr.toFixed(0)} DPR</span>
+                    <span>·</span>
+                    <span>{encounter.monsters.reduce((sum, e) => sum + e.quantity, 0)} monsters</span>
+                  </div>
+                  {monsterNames.length > 0 && (
+                    <div className="encounter-loader-monsters">
+                      <strong>Monsters:</strong> {monsterNames.join(', ')}
+                    </div>
+                  )}
+                  {reserveNames.length > 0 && (
+                    <div className="encounter-loader-reserve">
+                      <strong>Reserve:</strong> {reserveNames.join(', ')}
+                    </div>
+                  )}
+                  {encounter.notes && (
+                    <div className="encounter-loader-notes">
+                      <small>{encounter.notes.slice(0, 140)}{encounter.notes.length > 140 ? '…' : ''}</small>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </Modal>
   );
 }
 
@@ -924,11 +1400,12 @@ function entriesToDescription(entries?: Array<{ name: string; description: strin
   return (entries || []).map(entry => entry.description || `**${entry.name}.**`).join('\n\n');
 }
 
-function Stat({ label, value, tone = '' }: { label: string; value: string; tone?: string }) {
+function Stat({ label, value, tone = '', hint = '' }: { label: string; value: string; tone?: string; hint?: string }) {
   return (
-    <div className={`stat ${tone ? `health-${tone}` : ''}`}>
+    <div className={`stat ${tone ? `health-${tone}` : ''}`} title={hint || undefined}>
       <span>{label}</span>
       <strong>{value}</strong>
+      {hint && <small className="stat-hint">{hint}</small>}
     </div>
   );
 }

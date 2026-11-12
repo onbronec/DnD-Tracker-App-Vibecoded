@@ -1,23 +1,27 @@
 import { NumberInput } from '../components/NumberInput';
-import { ChangeEvent, FormEvent, useMemo, useRef, useState } from 'react';
-import type { Character, ClientRole, GameAction, GameState, MonsterDatabaseEntry } from '../shared/types';
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import type { Character, ClientRole, GameAction, GameState, MonsterDatabaseEntry, MonsterCombatType, MonsterFlag } from '../shared/types';
 import { CollapsiblePanel } from '../components/CollapsiblePanel';
 import { MarkdownEditor, MarkdownRenderer } from '../components/Markdown';
-import { parseMonsterEntries as parseEntriesText, parseMonsterMarkdown } from '../shared/monsterParser';
+import { parseMonsterEntries as parseEntriesText, parseMonsterMarkdown, epicActionsToText, parseEpicActionsText } from '../shared/monsterParser';
 import { Modal } from '../components/Modal';
+import { monsterRoleClass } from '../shared/defaults';
 import { MonsterDetail, monsterDatabaseEntryToPreviewCharacter } from './MonstersPage';
+import { MonsterEditorPage } from './MonsterEditorPage';
 
 interface Props {
   state: GameState;
   role: ClientRole;
   submitAction: (action: GameAction) => Promise<unknown>;
   onBackToCombat: () => void;
-  onOpenMonsterEditor?: (monsterId: string | null) => void;
+  onOpenMonsterEditor?: (monsterId: string | null, markdown?: string) => void;
   initialTab?: DatabaseKind;
   onActiveTabChange?: (tab: DatabaseKind) => void;
+  initialMonsterGroup?: string | null;
+  onSelectedMonsterGroupChange?: (group: string) => void;
 }
 
-type DatabaseKind = 'magic' | 'potion' | 'condition' | 'spell' | 'characters' | 'monster';
+export type DatabaseKind = 'magic' | 'potion' | 'condition' | 'spell' | 'characters' | 'monster' | 'monsterGroups';
 
 const DB_LABELS: Record<DatabaseKind, string> = {
   magic: 'Magic Items',
@@ -25,15 +29,31 @@ const DB_LABELS: Record<DatabaseKind, string> = {
   condition: 'Conditions',
   spell: 'Spells',
   characters: 'Player Characters',
-  monster: 'Monsters'
+  monster: 'Monsters',
+  monsterGroups: 'Monster Groups'
 };
 
-export function DatabasesPage({ state, role, submitAction, onBackToCombat, onOpenMonsterEditor, initialTab, onActiveTabChange }: Props) {
+export function DatabasesPage({
+  state,
+  role,
+  submitAction,
+  onBackToCombat,
+  onOpenMonsterEditor,
+  initialTab,
+  onActiveTabChange,
+  initialMonsterGroup,
+  onSelectedMonsterGroupChange
+}: Props) {
   const isDM = role === 'dm';
   const visibleTabs: DatabaseKind[] = isDM
-    ? ['magic', 'potion', 'condition', 'spell', 'characters', 'monster']
+    ? ['magic', 'potion', 'condition', 'spell', 'characters', 'monster', 'monsterGroups']
     : ['magic', 'potion', 'condition', 'spell', 'characters'];
   const [active, setActive] = useState<DatabaseKind>(() => initialTab && visibleTabs.includes(initialTab) ? initialTab : visibleTabs[0]);
+  useEffect(() => {
+    if (initialTab && visibleTabs.includes(initialTab) && active !== initialTab) {
+      setActive(initialTab);
+    }
+  }, [initialTab]);
   const [query, setQuery] = useState('');
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState<Record<string, unknown> | null>(null);
@@ -41,6 +61,14 @@ export function DatabasesPage({ state, role, submitAction, onBackToCombat, onOpe
   const [modalOpen, setModalOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const allFileInputRef = useRef<HTMLInputElement | null>(null);
+  const markdownFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [monsterMarkdown, setMonsterMarkdown] = useState<string | null>(null);
+  const [markdownImportError, setMarkdownImportError] = useState('');
+  const [visibleCount, setVisibleCount] = useState(20);
+
+  useEffect(() => {
+    setVisibleCount(20);
+  }, [active, query, filters]);
 
   const items = itemsForKind(state, active);
   const previewMonster = previewMonsterId
@@ -91,7 +119,11 @@ export function DatabasesPage({ state, role, submitAction, onBackToCombat, onOpe
       });
       options.size = Array.from(new Set(items.map(i => String(i.size || '')).filter(Boolean))).sort();
       options.type = Array.from(new Set(items.map(i => String(i.type || i.monsterType || '')).filter(Boolean))).sort();
-      options.group = Array.from(new Set(items.map(i => String(i.group || '')).filter(Boolean))).sort();
+      options.group = Array.from(new Set(items.flatMap(i => {
+        const itemGroups = Array.isArray(i.groups) && i.groups.length ? i.groups : (i.group ? [i.group] : []);
+        return itemGroups.map(g => String(g || '').trim()).filter(Boolean);
+      }))).sort();
+      options.combatType = ['monster', 'spellcaster', 'elite', 'leader', 'ranged', 'controller'];
     }
     return options;
   }, [items, active]);
@@ -111,9 +143,29 @@ export function DatabasesPage({ state, role, submitAction, onBackToCombat, onOpe
       });
     }
 
+    // Apply monster flag and combatType filters
+    if (active === 'monster') {
+      const flagMode = filters.flag || 'active';
+      if (flagMode === 'active') {
+        result = result.filter(item => (item.flag || 'active') === 'active' || item.flag === 'adapt');
+      } else if (flagMode === 'activeOnly') {
+        result = result.filter(item => (item.flag || 'active') === 'active');
+      } else if (flagMode === 'adapt') {
+        result = result.filter(item => item.flag === 'adapt');
+      } else if (flagMode === 'inactive') {
+        result = result.filter(item => item.flag === 'inactive');
+      } else if (flagMode === 'unused') {
+        result = result.filter(item => item.flag === 'unused');
+      }
+      if (filters.combatType) {
+        result = result.filter(item => (item.combatType || 'monster') === filters.combatType);
+      }
+    }
+
     // Apply filters
     Object.entries(filters).forEach(([key, val]) => {
       if (!val) return;
+      if (active === 'monster' && (key === 'flag' || key === 'combatType')) return;
       result = result.filter(item => {
         if (key === 'classes') {
           const cls = item.classes;
@@ -134,6 +186,10 @@ export function DatabasesPage({ state, role, submitAction, onBackToCombat, onOpe
         if (key === 'type' && active === 'monster') {
           return String(item.type || item.monsterType || '') === val;
         }
+        if (key === 'group' && active === 'monster') {
+          const itemGroups = Array.isArray(item.groups) && item.groups.length ? item.groups : (item.group ? [item.group] : []);
+          return itemGroups.includes(val);
+        }
         return String(item[key] || '') === val;
       });
     });
@@ -141,11 +197,38 @@ export function DatabasesPage({ state, role, submitAction, onBackToCombat, onOpe
     return result;
   }, [items, query, filters, active]);
 
+  const { matchingInactiveCount, matchingUnusedCount } = useMemo(() => {
+    if (active !== 'monster') return { matchingInactiveCount: 0, matchingUnusedCount: 0 };
+    const parsed = parseQuery(query);
+    let inactive = 0;
+    let unused = 0;
+    (state.monsterDatabase || []).forEach(item => {
+      if (item.flag !== 'inactive' && item.flag !== 'unused') return;
+      if (filters.combatType && (item.combatType || 'monster') !== filters.combatType) return;
+      if (filters.challenge && String(item.challenge || '') !== filters.challenge) return;
+      if (filters.size && String(item.size || '') !== filters.size) return;
+      if (filters.type && String(item.type || item.monsterType || '') !== filters.type) return;
+      if (filters.group) {
+        const itemGroups = Array.isArray(item.groups) && item.groups.length ? item.groups : (item.group ? [item.group] : []);
+        if (!itemGroups.includes(filters.group)) return;
+      }
+      if (parsed.needle) {
+        const matches = parsed.nameOnly
+          ? String(item.name || '').toLowerCase().includes(parsed.needle)
+          : searchableText(item).includes(parsed.needle);
+        if (!matches) return;
+      }
+      if (item.flag === 'inactive') inactive += 1;
+      if (item.flag === 'unused') unused += 1;
+    });
+    return { matchingInactiveCount: inactive, matchingUnusedCount: unused };
+  }, [state.monsterDatabase, active, query, filters]);
+
   const canEditCurrent = active === 'spell' ? isDM : isDM || active !== 'monster';
   const canRemoveCurrent = isDM && active !== 'characters';
 
   function openCreate() {
-    if (active === 'monster' && onOpenMonsterEditor) {
+    if ((active === 'monster' || active === 'monsterGroups') && onOpenMonsterEditor) {
       onOpenMonsterEditor(null);
       return;
     }
@@ -154,10 +237,11 @@ export function DatabasesPage({ state, role, submitAction, onBackToCombat, onOpe
   }
 
   function exportDatabase(kind: DatabaseKind) {
-    downloadJson(`dnd-${kind}-database.json`, {
+    const targetKind = kind === 'monsterGroups' ? 'monster' : kind;
+    downloadJson(`dnd-${targetKind}-database.json`, {
       schemaVersion: state.schemaVersion,
-      kind,
-      items: itemsForKind(state, kind)
+      kind: targetKind,
+      items: itemsForKind(state, targetKind)
     });
   }
 
@@ -192,6 +276,21 @@ export function DatabasesPage({ state, role, submitAction, onBackToCombat, onOpe
     await submitAction({ type: 'database.importAll', payload: { data: parsed.data || parsed } });
   }
 
+  async function importMonsterMarkdown(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setMarkdownImportError('');
+    try {
+      const markdown = await file.text();
+      if (!markdown.trim()) throw new Error('The Markdown file is empty.');
+      if (onOpenMonsterEditor) onOpenMonsterEditor(null, markdown);
+      else setMonsterMarkdown(markdown);
+    } catch (error) {
+      setMarkdownImportError(`Import failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   return (
     <div className="stack">
       <section className="section page-sticky-section">
@@ -214,10 +313,28 @@ export function DatabasesPage({ state, role, submitAction, onBackToCombat, onOpe
             </button>
           ))}
         </div>
-        <div className="database-toolbar">
-          <input value={query} onChange={event => setQuery(event.target.value)} placeholder={`Search ${DB_LABELS[active]}`} />
-          {active === 'magic' && (
-            <>
+        {active !== 'monsterGroups' && (
+          <div className="database-toolbar">
+            <input value={query} onChange={event => setQuery(event.target.value)} placeholder={`Search ${DB_LABELS[active]}`} />
+            {active === 'magic' && (
+              <>
+                <select
+                  value={filters.rarity || ''}
+                  onChange={e => setFilters(prev => ({ ...prev, rarity: e.target.value }))}
+                >
+                  <option value="">All Rarities</option>
+                  {filterOptions.rarity?.map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+                <select
+                  value={filters.itemType || ''}
+                  onChange={e => setFilters(prev => ({ ...prev, itemType: e.target.value }))}
+                >
+                  <option value="">All Types</option>
+                  {filterOptions.itemType?.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </>
+            )}
+            {active === 'potion' && (
               <select
                 value={filters.rarity || ''}
                 onChange={e => setFilters(prev => ({ ...prev, rarity: e.target.value }))}
@@ -225,113 +342,126 @@ export function DatabasesPage({ state, role, submitAction, onBackToCombat, onOpe
                 <option value="">All Rarities</option>
                 {filterOptions.rarity?.map(r => <option key={r} value={r}>{r}</option>)}
               </select>
+            )}
+            {active === 'condition' && (
               <select
-                value={filters.itemType || ''}
-                onChange={e => setFilters(prev => ({ ...prev, itemType: e.target.value }))}
+                value={filters.kind || ''}
+                onChange={e => setFilters(prev => ({ ...prev, kind: e.target.value }))}
               >
-                <option value="">All Types</option>
-                {filterOptions.itemType?.map(t => <option key={t} value={t}>{t}</option>)}
+                <option value="">All Kinds</option>
+                {filterOptions.kind?.map(k => <option key={k} value={k}>{k}</option>)}
               </select>
-            </>
-          )}
-          {active === 'potion' && (
-            <select
-              value={filters.rarity || ''}
-              onChange={e => setFilters(prev => ({ ...prev, rarity: e.target.value }))}
-            >
-              <option value="">All Rarities</option>
-              {filterOptions.rarity?.map(r => <option key={r} value={r}>{r}</option>)}
-            </select>
-          )}
-          {active === 'condition' && (
-            <select
-              value={filters.kind || ''}
-              onChange={e => setFilters(prev => ({ ...prev, kind: e.target.value }))}
-            >
-              <option value="">All Kinds</option>
-              {filterOptions.kind?.map(k => <option key={k} value={k}>{k}</option>)}
-            </select>
-          )}
-          {active === 'spell' && (
-            <>
-              <select
-                value={filters.level || ''}
-                onChange={e => setFilters(prev => ({ ...prev, level: e.target.value }))}
-              >
-                <option value="">All Levels</option>
-                {filterOptions.level?.map(l => <option key={l} value={l}>{l}</option>)}
-              </select>
-              <select
-                value={filters.school || ''}
-                onChange={e => setFilters(prev => ({ ...prev, school: e.target.value }))}
-              >
-                <option value="">All Schools</option>
-                {filterOptions.school?.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-              <select
-                value={filters.classes || ''}
-                onChange={e => setFilters(prev => ({ ...prev, classes: e.target.value }))}
-              >
-                <option value="">All Classes</option>
-                {filterOptions.classes?.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-              <select
-                value={filters.isCounterspell || ''}
-                onChange={e => setFilters(prev => ({ ...prev, isCounterspell: e.target.value }))}
-              >
-                <option value="">All Spells</option>
-                <option value="yes">Only Counterspells</option>
-                <option value="no">Exclude Counterspells</option>
-              </select>
-            </>
-          )}
-          {active === 'monster' && (
-            <>
-              <select
-                value={filters.challenge || ''}
-                onChange={e => setFilters(prev => ({ ...prev, challenge: e.target.value }))}
-              >
-                <option value="">All CRs</option>
-                {filterOptions.challenge?.map(c => <option key={c} value={c}>CR {c}</option>)}
-              </select>
-              <select
-                value={filters.size || ''}
-                onChange={e => setFilters(prev => ({ ...prev, size: e.target.value }))}
-              >
-                <option value="">All Sizes</option>
-                {filterOptions.size?.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-              <select
-                value={filters.type || ''}
-                onChange={e => setFilters(prev => ({ ...prev, type: e.target.value }))}
-              >
-                <option value="">All Types</option>
-                {filterOptions.type?.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-              {(filterOptions.group?.length ?? 0) > 0 && (
+            )}
+            {active === 'spell' && (
+              <>
                 <select
-                  value={filters.group || ''}
-                  onChange={e => setFilters(prev => ({ ...prev, group: e.target.value }))}
+                  value={filters.level || ''}
+                  onChange={e => setFilters(prev => ({ ...prev, level: e.target.value }))}
                 >
-                  <option value="">All Groups</option>
-                  {filterOptions.group?.map(g => <option key={g} value={g}>{g}</option>)}
+                  <option value="">All Levels</option>
+                  {filterOptions.level?.map(l => <option key={l} value={l}>{l}</option>)}
                 </select>
-              )}
-            </>
-          )}
-        </div>
+                <select
+                  value={filters.school || ''}
+                  onChange={e => setFilters(prev => ({ ...prev, school: e.target.value }))}
+                >
+                  <option value="">All Schools</option>
+                  {filterOptions.school?.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <select
+                  value={filters.classes || ''}
+                  onChange={e => setFilters(prev => ({ ...prev, classes: e.target.value }))}
+                >
+                  <option value="">All Classes</option>
+                  {filterOptions.classes?.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <select
+                  value={filters.isCounterspell || ''}
+                  onChange={e => setFilters(prev => ({ ...prev, isCounterspell: e.target.value }))}
+                >
+                  <option value="">All Spells</option>
+                  <option value="yes">Only Counterspells</option>
+                  <option value="no">Exclude Counterspells</option>
+                </select>
+              </>
+            )}
+            {active === 'monster' && (
+              <>
+                <select
+                  value={filters.challenge || ''}
+                  onChange={e => setFilters(prev => ({ ...prev, challenge: e.target.value }))}
+                >
+                  <option value="">All CRs</option>
+                  {filterOptions.challenge?.map(c => <option key={c} value={c}>CR {c}</option>)}
+                </select>
+                <select
+                  value={filters.size || ''}
+                  onChange={e => setFilters(prev => ({ ...prev, size: e.target.value }))}
+                >
+                  <option value="">All Sizes</option>
+                  {filterOptions.size?.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <select
+                  value={filters.type || ''}
+                  onChange={e => setFilters(prev => ({ ...prev, type: e.target.value }))}
+                >
+                  <option value="">All Types</option>
+                  {filterOptions.type?.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <select
+                  value={filters.combatType || ''}
+                  onChange={e => setFilters(prev => ({ ...prev, combatType: e.target.value }))}
+                  aria-label="Filter monster combat role"
+                >
+                  <option value="">All Combat Roles</option>
+                  <option value="monster">Monster</option>
+                  <option value="spellcaster">Spellcaster</option>
+                  <option value="elite">Elite</option>
+                  <option value="leader">Leader</option>
+                  <option value="ranged">Ranged</option>
+                  <option value="controller">Controller</option>
+                </select>
+                <select
+                  value={filters.flag || 'active'}
+                  onChange={e => setFilters(prev => ({ ...prev, flag: e.target.value }))}
+                  aria-label="Filter monster status flag"
+                >
+                  <option value="active">Active & Adapt (Default)</option>
+                  <option value="activeOnly">Active only</option>
+                  <option value="adapt">Adapt only</option>
+                  <option value="all">All (Active, Adapt, Inactive & Unused)</option>
+                  <option value="inactive">Inactive only</option>
+                  <option value="unused">Unused only</option>
+                </select>
+                {(filterOptions.group?.length ?? 0) > 0 && (
+                  <select
+                    value={filters.group || ''}
+                    onChange={e => setFilters(prev => ({ ...prev, group: e.target.value }))}
+                  >
+                    <option value="">All Groups</option>
+                    {filterOptions.group?.map(g => <option key={g} value={g}>{g}</option>)}
+                  </select>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </section>
 
       <CollapsiblePanel title="Database actions" summary="Add entries, export backups and import DM database files.">
         <div className="button-row">
           <button className="btn" onClick={() => exportDatabase(active)}>Export this DB</button>
           <button className="btn" onClick={exportAll}>Export visible backup</button>
-          {canEditCurrent && active !== 'characters' && <button className="btn success" onClick={openCreate}>Add {DB_LABELS[active].slice(0, -1)}</button>}
+          {canEditCurrent && active !== 'characters' && (
+            <button className="btn success" onClick={openCreate}>
+              Add {active === 'monsterGroups' ? 'Monster' : DB_LABELS[active].slice(0, -1)}
+            </button>
+          )}
           {isDM && (
             <button
               className="btn warning"
               onClick={() => fileInputRef.current?.click()}
-              disabled={active === 'characters'}
+              disabled={active === 'characters' || active === 'monsterGroups'}
             >
               Import current DB
             </button>
@@ -343,22 +473,54 @@ export function DatabasesPage({ state, role, submitAction, onBackToCombat, onOpe
             </button>
           )}
           <input ref={fileInputRef} className="hidden-input" type="file" accept="application/json,.json" onChange={importDatabase} />
+          {isDM && active === 'monster' && <button className="btn warning" onClick={() => markdownFileInputRef.current?.click()}>Import from .md</button>}
+          {isDM && active === 'monster' && <input ref={markdownFileInputRef} className="hidden-input" type="file" accept=".md,.markdown,text/markdown,text/plain" aria-label="Import monster Markdown file" onChange={importMonsterMarkdown} />}
           <input ref={allFileInputRef} className="hidden-input" type="file" accept="application/json,.json" onChange={importAll} />
         </div>
+        {markdownImportError && <p role="alert">{markdownImportError}</p>}
       </CollapsiblePanel>
+
+      {isDM && monsterMarkdown && (
+        <Modal>
+          <div className="modal-card monster-preview-modal">
+            <MonsterEditorPage state={state} submitAction={submitAction} editingMonsterId={null} initialMarkdown={monsterMarkdown} onBackToDatabases={() => setMonsterMarkdown(null)} />
+          </div>
+        </Modal>
+      )}
 
       {active === 'characters' ? (
         <CharacterDatabase
           key={active}
-          characters={filtered as Character[]}
+          characters={filtered.slice(0, visibleCount) as Character[]}
           isDM={isDM}
           submitAction={submitAction}
+        />
+      ) : active === 'monsterGroups' ? (
+        <MonsterGroupsView
+          monsters={(state.monsterDatabase || []) as MonsterDatabaseEntry[]}
+          groupDescriptions={state.monsterGroupDescriptions || {}}
+          submitAction={submitAction}
+          canEdit={canEditCurrent}
+          canRemove={canRemoveCurrent}
+          initialGroup={initialMonsterGroup}
+          onSelectedGroupChange={onSelectedMonsterGroupChange}
+          onView={item => setPreviewMonsterId(String(item.id || ''))}
+          onEdit={item => {
+            if (onOpenMonsterEditor) {
+              onOpenMonsterEditor(String(item.id || ''));
+              return;
+            }
+            setEditing(item);
+            setModalOpen(true);
+          }}
+          onDuplicate={item => submitAction(upsertActionFor('monster', duplicateDatabaseItem('monster', item, (state.monsterDatabase || []) as unknown as Array<Record<string, unknown>>)))}
+          onRemove={id => submitAction(removeActionFor('monster', id))}
         />
       ) : (
         <DatabaseGrid
           key={active}
           kind={active}
-          items={filtered}
+          items={filtered.slice(0, visibleCount)}
           canEdit={canEditCurrent}
           canRemove={canRemoveCurrent}
           onView={active === 'monster' ? item => setPreviewMonsterId(String(item.id || '')) : undefined}
@@ -373,6 +535,27 @@ export function DatabasesPage({ state, role, submitAction, onBackToCombat, onOpe
           onDuplicate={item => submitAction(upsertActionFor(active, duplicateDatabaseItem(active, item, items)))}
           onRemove={id => submitAction(removeActionFor(active, id))}
         />
+      )}
+
+      {active !== 'monsterGroups' && visibleCount < filtered.length && (
+        <div style={{ display: 'flex', justifyContent: 'center', margin: '20px 0' }}>
+          <button
+            className="btn primary"
+            onClick={() => setVisibleCount(prev => prev + 20)}
+            style={{ padding: '10px 24px', fontSize: '0.95rem', fontWeight: 600 }}
+          >
+            Load more (+20) · Showing {Math.min(visibleCount, filtered.length)} of {filtered.length}
+          </button>
+        </div>
+      )}
+
+      {active === 'monster' && (
+        <div className="monster-flag-footer" style={{ marginTop: '16px', padding: '12px 16px', background: 'var(--panel-strong)', border: '1px solid var(--border)', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.9rem', color: 'var(--muted-strong)', flexWrap: 'wrap', gap: '8px' }}>
+          <span>Zobrazeno {Math.min(visibleCount, filtered.length)} z {filtered.length} monster (filtr: {(filters.flag || 'active') === 'active' ? 'aktivní & adapt' : (filters.flag || 'active') === 'activeOnly' ? 'pouze aktivní' : (filters.flag || 'active') === 'adapt' ? 'pouze adapt' : (filters.flag || 'active') === 'inactive' ? 'pouze neaktivní' : (filters.flag || 'active') === 'unused' ? 'pouze nepoužité (unused)' : 'všechna monstra'}).</span>
+          <span style={{ color: (matchingInactiveCount + matchingUnusedCount) > 0 ? 'var(--warning, #f59e0b)' : 'var(--muted)', fontWeight: (matchingInactiveCount + matchingUnusedCount) > 0 ? '600' : 'normal' }}>
+            Počet neaktivních monster (inactive) odpovídajících podmínkám: <strong>{matchingInactiveCount}</strong> · Nepoužitých (unused): <strong>{matchingUnusedCount}</strong>
+          </span>
+        </div>
       )}
 
       {modalOpen && active !== 'characters' && (
@@ -429,7 +612,7 @@ function itemsForKind(state: GameState, kind: DatabaseKind): Array<Record<string
   if (kind === 'potion') return state.potionDatabase || [];
   if (kind === 'condition') return state.conditionDatabase || [];
   if (kind === 'spell') return state.spellDatabase || [];
-  if (kind === 'monster') return state.monsterDatabase || [];
+  if (kind === 'monster' || kind === 'monsterGroups') return (state.monsterDatabase || []) as unknown as Array<Record<string, unknown>>;
   return state.characters.filter(character => character.type === 'player') as unknown as Array<Record<string, unknown>>;
 }
 
@@ -512,8 +695,42 @@ function DatabaseGrid({
       {items.length === 0 && <div className="section"><p className="empty">No entries found.</p></div>}
       {items.map((item, index) => (
         <article key={databaseCardKey(kind, item, index)} className="database-card">
+          {kind === 'monster' && item.imageUrl ? (
+            <div style={{ marginBottom: '8px', maxHeight: '120px', overflow: 'hidden', borderRadius: '6px', background: 'var(--panel-strong)' }}>
+              <img
+                src={String(item.imageUrl)}
+                alt={String(item.name || 'Monster')}
+                style={{ width: '100%', height: '120px', objectFit: 'cover', objectPosition: String(item.imageFocus || 'center'), display: 'block' }}
+                onError={e => { (e.target as HTMLElement).style.display = 'none'; }}
+              />
+            </div>
+          ) : null}
           <div>
-            <h3>{String(item.name || 'Unnamed')}</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <h3>{String(item.name || 'Unnamed')}</h3>
+              {kind === 'monster' && (
+                <>
+                  <span className={`badge role-badge ${monsterRoleClass(String(item.combatType || 'monster'))}`}>
+                    {String(item.combatType || 'monster')}
+                  </span>
+                  {item.flag === 'adapt' && (
+                    <span className="badge" style={{ fontSize: '0.75rem', padding: '2px 6px', borderRadius: '4px', background: 'rgba(20, 184, 166, 0.25)', color: '#2dd4bf', border: '1px solid rgba(20, 184, 166, 0.5)' }}>
+                      Adapt
+                    </span>
+                  )}
+                  {item.flag === 'inactive' && (
+                    <span className="badge warning" style={{ fontSize: '0.75rem', padding: '2px 6px', borderRadius: '4px' }}>
+                      Inactive
+                    </span>
+                  )}
+                  {item.flag === 'unused' && (
+                    <span className="badge" style={{ fontSize: '0.75rem', padding: '2px 6px', borderRadius: '4px', background: 'rgba(148, 163, 184, 0.2)', color: '#cbd5e1', border: '1px solid rgba(148, 163, 184, 0.4)' }}>
+                      Unused
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
             <p>{summaryFor(kind, item)}</p>
           </div>
           {kind !== 'monster' && (item.description || item.effect) ? <MarkdownRenderer text={String(item.description || item.effect)} /> : null}
@@ -526,6 +743,478 @@ function DatabaseGrid({
         </article>
       ))}
     </section>
+  );
+}
+
+function MonsterGroupsView({
+  monsters,
+  groupDescriptions,
+  submitAction,
+  canEdit,
+  canRemove,
+  onView,
+  onEdit,
+  onDuplicate,
+  onRemove,
+  initialGroup,
+  onSelectedGroupChange
+}: {
+  monsters: MonsterDatabaseEntry[];
+  groupDescriptions: Record<string, string>;
+  submitAction: (action: GameAction) => Promise<unknown>;
+  canEdit: boolean;
+  canRemove: boolean;
+  onView?: (item: Record<string, unknown>) => void;
+  onEdit: (item: Record<string, unknown>) => void;
+  onDuplicate: (item: Record<string, unknown>) => void;
+  onRemove: (id: string) => void;
+  initialGroup?: string | null;
+  onSelectedGroupChange?: (group: string) => void;
+}) {
+  const availableGroups = useMemo(() => {
+    const set = new Set<string>();
+    monsters.forEach(m => {
+      const groups = Array.isArray(m.groups) && m.groups.length ? m.groups : (m.group ? [m.group] : []);
+      groups.forEach(g => {
+        const trimmed = String(g || '').trim();
+        if (trimmed) set.add(trimmed);
+      });
+    });
+    Object.keys(groupDescriptions || {}).forEach(g => {
+      const trimmed = String(g || '').trim();
+      if (trimmed) set.add(trimmed);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  }, [monsters, groupDescriptions]);
+
+  const hasUngrouped = useMemo(() => {
+    return monsters.some(m => {
+      const groups = Array.isArray(m.groups) && m.groups.length ? m.groups : (m.group ? [m.group] : []);
+      return groups.length === 0;
+    });
+  }, [monsters]);
+
+  const allSelectableGroups = useMemo(() => {
+    const list = [...availableGroups];
+    if (hasUngrouped) {
+      list.push('__ungrouped__');
+    }
+    return list;
+  }, [availableGroups, hasUngrouped]);
+
+  const [selectedGroup, setSelectedGroup] = useState<string>(() => {
+    if (initialGroup && allSelectableGroups.includes(initialGroup)) {
+      return initialGroup;
+    }
+    return allSelectableGroups[0] || '';
+  });
+
+  useEffect(() => {
+    if (initialGroup && allSelectableGroups.includes(initialGroup) && selectedGroup !== initialGroup) {
+      setSelectedGroup(initialGroup);
+    } else if (!selectedGroup && allSelectableGroups.length > 0) {
+      const fallback = allSelectableGroups[0];
+      setSelectedGroup(fallback);
+      onSelectedGroupChange?.(fallback);
+    } else if (selectedGroup && !allSelectableGroups.includes(selectedGroup) && allSelectableGroups.length > 0) {
+      const fallback = allSelectableGroups[0];
+      setSelectedGroup(fallback);
+      onSelectedGroupChange?.(fallback);
+    }
+  }, [allSelectableGroups, initialGroup]);
+
+  const groupCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    monsters.forEach(m => {
+      const groups = Array.isArray(m.groups) && m.groups.length ? m.groups : (m.group ? [m.group] : []);
+      if (groups.length === 0) {
+        counts['__ungrouped__'] = (counts['__ungrouped__'] || 0) + 1;
+      } else {
+        groups.forEach(g => {
+          const trimmed = String(g || '').trim();
+          if (trimmed) counts[trimmed] = (counts[trimmed] || 0) + 1;
+        });
+      }
+    });
+    return counts;
+  }, [monsters]);
+
+  const isSpecialUngrouped = selectedGroup === '__ungrouped__';
+  const groupDescription = (!isSpecialUngrouped && selectedGroup)
+    ? (groupDescriptions[selectedGroup] || '')
+    : '';
+  const [isEditingDesc, setIsEditingDesc] = useState(false);
+  const [descDraft, setDescDraft] = useState('');
+
+  useEffect(() => {
+    setIsEditingDesc(false);
+    setDescDraft(groupDescription);
+  }, [selectedGroup, groupDescription]);
+
+  async function handleSaveDescription() {
+    if (!selectedGroup || isSpecialUngrouped) return;
+    await submitAction({
+      type: 'database.monsterGroup.updateDescription',
+      payload: { group: selectedGroup, description: descDraft }
+    });
+    setIsEditingDesc(false);
+  }
+
+  const [viewMode, setViewMode] = useState<'normal' | 'roles'>('normal');
+  const [groupSearchQuery, setGroupSearchQuery] = useState('');
+  const [monsterSearchQuery, setMonsterSearchQuery] = useState('');
+  const [flagFilter, setFlagFilter] = useState('active');
+  const [visibleCount, setVisibleCount] = useState(20);
+
+  useEffect(() => {
+    setVisibleCount(20);
+  }, [selectedGroup, monsterSearchQuery, flagFilter, viewMode]);
+
+  const rawGroupMonsters = useMemo(() => {
+    if (!selectedGroup) return [];
+    return monsters.filter(m => {
+      const groups = Array.isArray(m.groups) && m.groups.length ? m.groups : (m.group ? [m.group] : []);
+      if (selectedGroup === '__ungrouped__') {
+        return groups.length === 0;
+      }
+      return groups.includes(selectedGroup);
+    });
+  }, [monsters, selectedGroup]);
+
+  const filteredMonsters = useMemo(() => {
+    let result = rawGroupMonsters;
+
+    if (flagFilter === 'active') {
+      result = result.filter(item => (item.flag || 'active') === 'active' || item.flag === 'adapt');
+    } else if (flagFilter === 'activeOnly') {
+      result = result.filter(item => (item.flag || 'active') === 'active');
+    } else if (flagFilter === 'adapt') {
+      result = result.filter(item => item.flag === 'adapt');
+    } else if (flagFilter === 'inactive') {
+      result = result.filter(item => item.flag === 'inactive');
+    } else if (flagFilter === 'unused') {
+      result = result.filter(item => item.flag === 'unused');
+    }
+
+    if (monsterSearchQuery.trim()) {
+      const parsed = parseQuery(monsterSearchQuery);
+      if (parsed.needle) {
+        result = result.filter(item => {
+          if (parsed.nameOnly) {
+            return String(item.name || '').toLowerCase().includes(parsed.needle);
+          }
+          return searchableText(item as unknown as Record<string, unknown>).includes(parsed.needle);
+        });
+      }
+    }
+
+    return result;
+  }, [rawGroupMonsters, flagFilter, monsterSearchQuery]);
+
+  const displayedGroupPills = useMemo(() => {
+    if (!groupSearchQuery.trim()) return allSelectableGroups;
+    const q = groupSearchQuery.toLowerCase().trim();
+    return allSelectableGroups.filter(g => {
+      const name = g === '__ungrouped__' ? 'ungrouped bez skupiny' : g;
+      return name.toLowerCase().includes(q);
+    });
+  }, [allSelectableGroups, groupSearchQuery]);
+
+  const ROLES_ORDER: Array<{ key: MonsterCombatType; label: string }> = [
+    { key: 'monster', label: 'Monster' },
+    { key: 'spellcaster', label: 'Spellcaster' },
+    { key: 'leader', label: 'Leader' },
+    { key: 'elite', label: 'Elite' },
+    { key: 'ranged', label: 'Ranged' },
+    { key: 'controller', label: 'Controller' },
+  ];
+
+  if (allSelectableGroups.length === 0) {
+    return (
+      <div className="section">
+        <p className="empty">V databázi zatím nejsou žádné skupiny monster. Přidejte nebo upravte monstrum a přiřaďte mu skupinu.</p>
+      </div>
+    );
+  }
+
+  const groupDisplayName = selectedGroup === '__ungrouped__' ? 'Bez skupiny (Ungrouped)' : selectedGroup;
+
+  return (
+    <div className="monster-groups-view stack">
+      <section className="section" style={{ background: 'var(--panel-strong)', border: '1px solid var(--border)', borderRadius: '10px', padding: '16px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '10px' }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Monster Groups</h3>
+            <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
+              Celkem {availableGroups.length} skupin · Vyberte skupinu pro zobrazení monster a poznámek
+            </span>
+          </div>
+          {allSelectableGroups.length > 5 && (
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <input
+                type="text"
+                value={groupSearchQuery}
+                onChange={e => setGroupSearchQuery(e.target.value)}
+                placeholder="Filtrovat skupiny..."
+                style={{ fontSize: '0.85rem', padding: '4px 10px', maxWidth: '180px' }}
+              />
+              <select
+                value={selectedGroup}
+                onChange={e => {
+                  setSelectedGroup(e.target.value);
+                  onSelectedGroupChange?.(e.target.value);
+                }}
+                aria-label="Select monster group"
+                style={{ fontSize: '0.85rem', padding: '4px 8px' }}
+              >
+                {allSelectableGroups.map(g => (
+                  <option key={g} value={g}>
+                    {g === '__ungrouped__' ? '(Ungrouped)' : g} ({groupCounts[g] || 0})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+
+        <div className="group-pills-container" style={{ maxHeight: '180px', overflowY: 'auto', padding: '2px' }}>
+          {displayedGroupPills.map(g => {
+            const isSelected = selectedGroup === g;
+            const count = groupCounts[g] || 0;
+            const label = g === '__ungrouped__' ? '(Ungrouped)' : g;
+            return (
+              <button
+                key={g}
+                type="button"
+                className={`group-pill ${isSelected ? 'active' : ''}`}
+                onClick={() => {
+                  setSelectedGroup(g);
+                  onSelectedGroupChange?.(g);
+                }}
+              >
+                <span>{label}</span>
+                <span style={{ fontSize: '0.75rem', opacity: isSelected ? 0.9 : 0.65, fontWeight: 700 }}>
+                  ({count})
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="monster-group-header-card">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <h2 style={{ margin: 0, fontSize: '1.4rem', color: 'var(--text)' }}>{groupDisplayName}</h2>
+              <span className="badge" style={{ fontSize: '0.8rem', padding: '3px 8px' }}>
+                {rawGroupMonsters.length} {rawGroupMonsters.length === 1 ? 'monster' : 'monsters'}
+              </span>
+            </div>
+            <div style={{ fontSize: '0.85rem', color: 'var(--muted)', marginTop: '4px' }}>
+              Popis a taktické poznámky ke skupině monster
+            </div>
+          </div>
+
+          {!isSpecialUngrouped && (
+            <div className="button-row" style={{ margin: 0 }}>
+              {!isEditingDesc ? (
+                <button
+                  type="button"
+                  className="btn small"
+                  onClick={() => {
+                    setDescDraft(groupDescription);
+                    setIsEditingDesc(true);
+                  }}
+                >
+                  {groupDescription ? 'Edit Description' : 'Add Description'}
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="btn success small"
+                    onClick={handleSaveDescription}
+                  >
+                    Save Description
+                  </button>
+                  <button
+                    type="button"
+                    className="btn small"
+                    onClick={() => {
+                      setIsEditingDesc(false);
+                      setDescDraft(groupDescription);
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div style={{ marginTop: '14px' }}>
+          {isSpecialUngrouped ? (
+            <p style={{ color: 'var(--muted)', fontStyle: 'italic', margin: 0 }}>
+              Monstra bez přiřazené skupiny. Upravte monstrum v Monster Editoru pro přiřazení do skupiny.
+            </p>
+          ) : isEditingDesc ? (
+            <div style={{ display: 'grid', gap: '10px' }}>
+              <MarkdownEditor
+                value={descDraft}
+                onChange={setDescDraft}
+                placeholder={`Napište Markdown popis, pozadí, taktiku nebo poznámky pro skupinu ${selectedGroup}...`}
+              />
+            </div>
+          ) : groupDescription ? (
+            <div style={{ background: 'var(--panel)', padding: '14px 18px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+              <MarkdownRenderer text={groupDescription} />
+            </div>
+          ) : (
+            <div style={{ background: 'var(--panel)', padding: '12px 16px', borderRadius: '8px', border: '1px dashed var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ color: 'var(--muted)', fontStyle: 'italic', fontSize: '0.9rem' }}>
+                Tato skupina zatím nemá žádný popis. Klikněte na &quot;Add Description&quot; pro přidání lore, taktiky nebo poznámek.
+              </span>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="section" style={{ padding: '12px 16px', background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: '8px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', flex: '1 1 300px' }}>
+            <input
+              type="text"
+              value={monsterSearchQuery}
+              onChange={e => setMonsterSearchQuery(e.target.value)}
+              placeholder={`Search in ${groupDisplayName}...`}
+              style={{ flex: '1 1 200px' }}
+            />
+            <select
+              value={flagFilter}
+              onChange={e => setFlagFilter(e.target.value)}
+              aria-label="Filter monster status in group"
+            >
+              <option value="active">Active & Adapt (Default)</option>
+              <option value="activeOnly">Active only</option>
+              <option value="adapt">Adapt only</option>
+              <option value="all">All (Active, Adapt, Inactive & Unused)</option>
+              <option value="inactive">Inactive only</option>
+              <option value="unused">Unused only</option>
+            </select>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '0.85rem', color: 'var(--muted-strong)', fontWeight: 600 }}>Zobrazení:</span>
+            <div className="button-row" style={{ margin: 0 }}>
+              <button
+                type="button"
+                className={`btn small ${viewMode === 'normal' ? 'primary' : ''}`}
+                onClick={() => setViewMode('normal')}
+              >
+                ▦ Všechna monstra
+              </button>
+              <button
+                type="button"
+                className={`btn small ${viewMode === 'roles' ? 'primary' : ''}`}
+                onClick={() => setViewMode('roles')}
+              >
+                🏷 Rozdělené podle rolí
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {filteredMonsters.length === 0 ? (
+        <div className="section">
+          <p className="empty">V této skupině nebyla nalezena žádná monstra odpovídající zadaným filtrům.</p>
+        </div>
+      ) : viewMode === 'normal' ? (
+        <>
+          <DatabaseGrid
+            kind="monster"
+            items={filteredMonsters.slice(0, visibleCount) as unknown as Array<Record<string, unknown>>}
+            canEdit={canEdit}
+            canRemove={canRemove}
+            onView={onView}
+            onEdit={onEdit}
+            onDuplicate={onDuplicate}
+            onRemove={onRemove}
+          />
+          {visibleCount < filteredMonsters.length && (
+            <div style={{ display: 'flex', justifyContent: 'center', margin: '20px 0' }}>
+              <button
+                type="button"
+                className="btn primary"
+                onClick={() => setVisibleCount(prev => prev + 20)}
+                style={{ padding: '10px 24px', fontSize: '0.95rem', fontWeight: 600 }}
+              >
+                Load more (+20) · Showing {Math.min(visibleCount, filteredMonsters.length)} of {filteredMonsters.length}
+              </button>
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="stack" style={{ gap: '20px' }}>
+          {ROLES_ORDER.map(role => {
+            const roleMonsters = filteredMonsters.filter(m => (m.combatType || 'monster') === role.key);
+            if (roleMonsters.length === 0) return null;
+            return (
+              <div key={role.key} className="monster-role-group-section">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px', paddingBottom: '6px', borderBottom: '1px solid var(--border)' }}>
+                  <span className={`badge role-badge ${monsterRoleClass(role.key)}`} style={{ fontSize: '0.85rem', padding: '4px 10px' }}>
+                    {role.label}
+                  </span>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
+                    ({roleMonsters.length} {roleMonsters.length === 1 ? 'monster' : 'monsters'})
+                  </span>
+                </div>
+                <DatabaseGrid
+                  kind="monster"
+                  items={roleMonsters as unknown as Array<Record<string, unknown>>}
+                  canEdit={canEdit}
+                  canRemove={canRemove}
+                  onView={onView}
+                  onEdit={onEdit}
+                  onDuplicate={onDuplicate}
+                  onRemove={onRemove}
+                />
+              </div>
+            );
+          })}
+
+          {(() => {
+            const known = new Set(ROLES_ORDER.map(r => r.key));
+            const other = filteredMonsters.filter(m => !known.has((m.combatType || 'monster') as MonsterCombatType));
+            if (other.length === 0) return null;
+            return (
+              <div key="other" className="monster-role-group-section">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px', paddingBottom: '6px', borderBottom: '1px solid var(--border)' }}>
+                  <span className="badge role-badge role-monster" style={{ fontSize: '0.85rem', padding: '4px 10px' }}>
+                    Other Roles
+                  </span>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
+                    ({other.length})
+                  </span>
+                </div>
+                <DatabaseGrid
+                  kind="monster"
+                  items={other as unknown as Array<Record<string, unknown>>}
+                  canEdit={canEdit}
+                  canRemove={canRemove}
+                  onView={onView}
+                  onEdit={onEdit}
+                  onDuplicate={onDuplicate}
+                  onRemove={onRemove}
+                />
+              </div>
+            );
+          })()}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -679,6 +1368,8 @@ function DatabaseEditorModal({
     challenge: String(initial?.challenge || ''),
     proficiency: String(initial?.proficiency || ''),
     monsterType: String(initial?.type || ''),
+    combatType: String((initial as MonsterDatabaseEntry)?.combatType || 'monster'),
+    flag: String((initial as MonsterDatabaseEntry)?.flag || 'active'),
     size: String(initial?.size || ''),
     initBonus: String(initial?.initBonus || '0'),
     maxPower: String(initial?.maxPower || '0'),
@@ -788,6 +1479,8 @@ function DatabaseEditorModal({
         challenge: form.challenge,
         proficiency: form.proficiency,
         type: form.monsterType,
+        combatType: (form.combatType as MonsterCombatType) || 'monster',
+        flag: (form.flag as MonsterFlag) || 'active',
         size: form.size,
         initBonus: Number(form.initBonus) || 0,
         maxPower,
@@ -870,6 +1563,8 @@ function DatabaseEditorModal({
       hasMythicActions: parsed.hasMythicActions,
       legendaryEnabled: Boolean(parsed.monsterAbilities.legendaryActions?.enabled),
       legendaryMax: String(parsed.monsterAbilities.legendaryActions?.max || 0),
+      epicEnabled: parsed.monsterAbilities.epicActions.enabled,
+      epicActions: epicActionsToText(parsed.monsterAbilities.epicActions.actions),
       spellcastingEnabled: Boolean(parsed.monsterAbilities.spellcasting?.enabled),
       spellSlots: spellSlotsToText(parsed.monsterAbilities.spellcasting?.spellSlots),
       atWillSpells: listToText(parsed.monsterAbilities.spellcasting?.atWillSpells),
@@ -983,6 +1678,19 @@ function DatabaseEditorModal({
               <input value={String(form.challenge)} onChange={event => update('challenge', event.target.value)} placeholder="Challenge" />
               <input value={String(form.proficiency)} onChange={event => update('proficiency', event.target.value)} placeholder="Proficiency" />
               <input value={String(form.monsterType)} onChange={event => update('monsterType', event.target.value)} placeholder="Type" />
+              <select value={String(form.combatType || 'monster')} onChange={event => update('combatType', event.target.value)}>
+                <option value="monster">Role: Monster</option>
+                <option value="spellcaster">Role: Spellcaster</option>
+                <option value="elite">Role: Elite</option>
+                <option value="leader">Role: Leader</option>
+                <option value="ranged">Role: Ranged</option>
+                <option value="controller">Role: Controller</option>
+              </select>
+              <select value={String(form.flag || 'active')} onChange={event => update('flag', event.target.value)}>
+                <option value="active">Flag: Active</option>
+                <option value="inactive">Flag: Inactive</option>
+                <option value="unused">Flag: Unused</option>
+              </select>
               <input value={String(form.size)} onChange={event => update('size', event.target.value)} placeholder="Size" />
               <NumberInput value={String(form.initBonus)} onChange={event => update('initBonus', event.target.value)} type="number" placeholder="Initiative bonus" />
               <label className="inline-check">
@@ -1100,7 +1808,7 @@ function parseStatsText(value: string) {
   };
   for (const match of value.matchAll(/\b(str(?:ength)?|dex(?:terity)?|con(?:stitution)?|int(?:elligence)?|wis(?:dom)?|cha(?:risma)?)\b\s*[:=]?\s*(\d{1,2})/gi)) {
     const key = mapping[match[1].toLowerCase()];
-    if (key) stats[key] = Math.max(1, Math.min(30, Number(match[2]) || 10));
+    if (key) stats[key] = Math.max(1, Number(match[2]) || 10);
   }
   return stats;
 }
@@ -1152,25 +1860,6 @@ function parsePerDaySpellsText(value: string) {
     });
 }
 
-function epicActionsToText(value: unknown) {
-  if (!Array.isArray(value)) return '';
-  return value.map(item => {
-    const action = item as Record<string, unknown>;
-    return `${action.name || 'Epic Action'} | ${Number(action.maxUses) || 1} | ${action.description || ''}`;
-  }).join('\n');
-}
-
-function parseEpicActionsText(value: string) {
-  return value
-    .split(/\n/)
-    .map(line => line.trim())
-    .filter(Boolean)
-    .map(line => {
-      const [name, uses, ...descriptionParts] = line.split('|').map(part => part.trim());
-      return { name: name || 'Epic Action', maxUses: Number(uses) || 1, used: 0, description: descriptionParts.join(' | ') };
-    });
-}
-
 function extractResourceFeatures(entries: Array<{ name: string; description: string }>) {
   return entries.map(entry => {
     const match = entry.name.match(/(.+?)\s*\((\d+)\/(?:rest|day|long rest|short rest)\)/i);
@@ -1200,7 +1889,8 @@ function summaryFor(kind: DatabaseKind, item: Record<string, unknown>) {
     return `${item.kind || 'neutral'}${item.hasLevels ? ` · levels 1-${item.maxLevel || 6}` : ''}${dice}`;
   }
   if (kind === 'spell') return `${item.levelLabel || 'Spell'} · ${item.school || 'Unknown school'} · ${Array.isArray(item.classes) ? item.classes.join(', ') : item.classes || 'No classes'}${item.isCounterspell ? ' · Counterspell' : ''}`;
-  return `HP ${item.hp || item.maxHp || '-'} · ${Number(item.encounterPoints) || 0.1} pt${item.dpr ? ` · DPR ${item.dpr}` : ''}${item.group ? ` · ${item.group}` : ''}`;
+  const groupsList = Array.isArray(item.groups) && item.groups.length ? item.groups.join(', ') : (item.group ? String(item.group) : '');
+  return `HP ${item.hp || item.maxHp || '-'} · ${Number(item.encounterPoints) || 0.1} pt${item.dpr ? ` · DPR ${item.dpr}` : ''}${groupsList ? ` · ${groupsList}` : ''}`;
 }
 
 function inventoryCount(character: Character) {

@@ -132,6 +132,17 @@ describe('permissions', () => {
         expect(result.ok).toBe(false);
     });
 
+    it('allows player reaction changes on revealed monsters, but blocks unrevealed monsters', () => {
+        const state = createInitialState();
+        const m = monster('Orc');
+        state.characters.push(m);
+        // Unrevealed monster is blocked
+        expect(authorizeAction(state, { type: 'character.reaction.set', payload: { characterId: 'orc', value: 0 } }, { role: 'player' }).ok).toBe(false);
+        // Revealed monster is allowed
+        m.revealedToPlayers = true;
+        expect(authorizeAction(state, { type: 'character.reaction.set', payload: { characterId: 'orc', value: 0 } }, { role: 'player' }).ok).toBe(true);
+    });
+
     it('allows player non-secret database edits but blocks monster database edits', () => {
         const state = createInitialState();
         expect(authorizeAction(state, { type: 'database.magic.upsert', payload: { item: { name: 'Moon Blade' } } }, { role: 'player' }).ok).toBe(true);
@@ -487,6 +498,31 @@ describe('actions and history', () => {
         expect(state.characters[0].currentReactions).toBe(2);
     });
 
+    it('allows players to use and refresh reactions on revealed monsters', () => {
+        const state = createInitialState();
+        const m = monster('Dragon');
+        m.revealedToPlayers = true;
+        m.maxReactions = 3;
+        m.currentReactions = 3;
+        state.characters.push(m);
+
+        // Player spends 1 reaction
+        applyGameAction(state, { type: 'character.reaction.set', payload: { characterId: 'dragon', value: 2 } }, { id: 'player', role: 'player' });
+        expect(state.characters[0].currentReactions).toBe(2);
+
+        // Player spends another reaction
+        applyGameAction(state, { type: 'character.reaction.set', payload: { characterId: 'dragon', value: 1 } }, { id: 'player', role: 'player' });
+        expect(state.characters[0].currentReactions).toBe(1);
+
+        // Player clicks a used reaction to restore 1 reaction
+        applyGameAction(state, { type: 'character.reaction.set', payload: { characterId: 'dragon', value: 2 } }, { id: 'player', role: 'player' });
+        expect(state.characters[0].currentReactions).toBe(2);
+
+        // Player refreshes all reactions using refresh: true
+        applyGameAction(state, { type: 'character.reaction.set', payload: { characterId: 'dragon', refresh: true } }, { id: 'player', role: 'player' });
+        expect(state.characters[0].currentReactions).toBe(3);
+    });
+
     it('applies short and long rests to spell resources', () => {
         const state = createInitialState();
         const hero = player();
@@ -681,6 +717,187 @@ describe('actions and history', () => {
         expect(state.toolbelt.notes[0]).toEqual(expect.objectContaining({ title: 'Session', text: 'Prep' }));
     });
 
+    it('manages calendar triggers with recorded dates, completion toggle and acknowledgment', () => {
+        const state = createInitialState();
+        applyGameAction(state, {
+            type: 'toolbelt.calendar.record.upsert',
+            payload: {
+                type: 'trigger',
+                text: 'Dragon attack',
+                dateKey: '502-December-25',
+                recordedDateKey: '502-December-23'
+            }
+        }, { id: 'dm', role: 'dm' });
+
+        expect(state.toolbelt.calendar.records).toHaveLength(1);
+        const trigger = state.toolbelt.calendar.records[0];
+        expect(trigger.type).toBe('trigger');
+        expect(trigger.dateKey).toBe('502-December-25');
+        expect(trigger.recordedDateKey).toBe('502-December-23');
+        expect(trigger.completed).toBe(false);
+        expect(trigger.notified).toBe(false);
+
+        applyGameAction(state, {
+            type: 'toolbelt.calendar.record.acknowledge',
+            payload: { id: trigger.id }
+        }, { id: 'dm', role: 'dm' });
+        expect(state.toolbelt.calendar.records[0].notified).toBe(true);
+
+        applyGameAction(state, {
+            type: 'toolbelt.calendar.record.toggleComplete',
+            payload: { id: trigger.id }
+        }, { id: 'dm', role: 'dm' });
+        expect(state.toolbelt.calendar.records[0].completed).toBe(true);
+
+        applyGameAction(state, {
+            type: 'toolbelt.calendar.record.toggleComplete',
+            payload: { id: trigger.id }
+        }, { id: 'dm', role: 'dm' });
+        expect(state.toolbelt.calendar.records[0].completed).toBe(false);
+    });
+
+    it('manages notepad temp notes and toggles completion', () => {
+        const state = createInitialState();
+        applyGameAction(state, {
+            type: 'toolbelt.note.upsert',
+            payload: {
+                type: 'temp',
+                title: 'Check potion stash',
+                text: 'Transfer to alchemy bag',
+                date: '2026-06-04'
+            }
+        }, { id: 'dm', role: 'dm' });
+
+        expect(state.toolbelt.notes).toHaveLength(1);
+        const note = state.toolbelt.notes[0];
+        expect(note.type).toBe('temp');
+        expect(note.completed).toBe(false);
+
+        applyGameAction(state, {
+            type: 'toolbelt.note.toggleComplete',
+            payload: { id: note.id }
+        }, { id: 'dm', role: 'dm' });
+        expect(state.toolbelt.notes[0].completed).toBe(true);
+
+        // Edit note and change type to permanent note
+        applyGameAction(state, {
+            type: 'toolbelt.note.upsert',
+            payload: {
+                id: note.id,
+                type: 'note',
+                title: 'Potion stash note',
+                text: 'Moved to alchemy bag',
+                date: '2026-06-04'
+            }
+        }, { id: 'dm', role: 'dm' });
+        expect(state.toolbelt.notes[0].type).toBe('note');
+        expect(state.toolbelt.notes[0].title).toBe('Potion stash note');
+    });
+
+    it('mutates encounter monster: clones in database and replaces 1 instance in encounter', () => {
+        const state = createInitialState();
+        state.monsterDatabase = [
+            { id: 'goblin', name: 'Goblin', type: 'humanoid', combatType: 'monster', flag: 'active', hp: 7, ac: 15 }
+        ];
+        state.encounters = [
+            {
+                id: 'ambush',
+                name: 'Goblin Ambush',
+                monsters: [
+                    { id: 'entry-1', monsterId: 'goblin', quantity: 3, groupCount: 1 }
+                ],
+                reserve: [],
+                notes: '# Shrnutí'
+            }
+        ];
+
+        applyGameAction(state, {
+            type: 'encounter.mutateMonster',
+            payload: {
+                encounterId: 'ambush',
+                monsterId: 'goblin',
+                mutatedMonsterId: 'goblin_mutated'
+            }
+        }, { id: 'dm', role: 'dm' });
+
+        // Database now has original + mutated clone
+        expect(state.monsterDatabase).toHaveLength(2);
+        const mutated = state.monsterDatabase.find(m => m.id === 'goblin_mutated');
+        expect(mutated).toBeTruthy();
+        expect(mutated.name).toBe('Goblin (Mutated)');
+        expect(mutated.flag).toBe('active');
+
+        // Encounter monsters: original decreased from 3 to 2, mutated added with quantity 1
+        const encounter = state.encounters.find(e => e.id === 'ambush');
+        expect(encounter.monsters).toHaveLength(2);
+        const originalEntry = encounter.monsters.find(m => m.monsterId === 'goblin');
+        const mutatedEntry = encounter.monsters.find(m => m.monsterId === 'goblin_mutated');
+        expect(originalEntry.quantity).toBe(2);
+        expect(mutatedEntry.quantity).toBe(1);
+
+        // Mutating again when client already supplies the split encounter draft in payload.encounter
+        // should NOT double-mutate the remaining 1 original goblin!
+        applyGameAction(state, {
+            type: 'encounter.mutateMonster',
+            payload: {
+                encounterId: 'ambush',
+                monsterId: 'goblin',
+                entryId: 'entry-1',
+                targetList: 'monsters',
+                mutatedMonsterId: 'goblin_mutated_2',
+                encounter: {
+                    id: 'ambush',
+                    name: 'Goblin Ambush',
+                    monsters: [
+                        { id: 'entry-1', monsterId: 'goblin', quantity: 1, groupCount: 1 },
+                        { id: 'entry-mut-1', monsterId: 'goblin_mutated', quantity: 1, groupCount: 1 },
+                        { id: 'entry-mut-2', monsterId: 'goblin_mutated_2', quantity: 1, groupCount: 1 }
+                    ],
+                    reserve: [],
+                    notes: '# Shrnutí'
+                }
+            }
+        }, { id: 'dm', role: 'dm' });
+
+        const updatedEncounter = state.encounters.find(e => e.id === 'ambush');
+        expect(updatedEncounter.monsters).toEqual([
+            expect.objectContaining({ monsterId: 'goblin', quantity: 1 }),
+            expect.objectContaining({ monsterId: 'goblin_mutated', quantity: 1 }),
+            expect.objectContaining({ monsterId: 'goblin_mutated_2', quantity: 1 })
+        ]);
+    });
+
+    it('manages encounter status (active, done, unused)', () => {
+        const state = createInitialState();
+        applyGameAction(state, {
+            type: 'encounter.upsert',
+            payload: {
+                encounter: {
+                    id: 'enc_test',
+                    name: 'Test Encounter',
+                    status: 'done',
+                    monsters: []
+                }
+            }
+        }, { id: 'dm', role: 'dm' });
+
+        expect(state.encounters[0].status).toBe('done');
+
+        // Normalizes invalid or omitted status to active
+        applyGameAction(state, {
+            type: 'encounter.upsert',
+            payload: {
+                encounter: {
+                    id: 'enc_test_2',
+                    name: 'Test Encounter 2',
+                    status: 'invalid_status',
+                    monsters: []
+                }
+            }
+        }, { id: 'dm', role: 'dm' });
+        expect(state.encounters[1].status).toBe('active');
+    });
+
 
     it('changes leveled condition effects and supports undo', () => {
         const state = createInitialState();
@@ -700,6 +917,195 @@ describe('actions and history', () => {
         expect(state.characters[0].effects[0]).toEqual({ name: 'Burning', level: null, diceCount: 3, diceSides: 6, damageType: 'acid' });
         undoPage(state, 'combat', { id: 'dm', role: 'dm' });
         expect(state.characters[0].effects[0]).toEqual({ name: 'Burning', level: null, diceCount: 2, diceSides: 4, damageType: 'fire' });
+    });
+
+    it('allows players to set temp HP on player characters but not monsters', () => {
+        const state = createInitialState();
+        state.characters.push(player(), monster());
+        expect(authorizeAction(state, { type: 'character.setTempHp', payload: { characterId: 'nif', value: 15 } }, { id: 'player', role: 'player' }).ok).toBe(true);
+        expect(authorizeAction(state, { type: 'character.setTempHp', payload: { characterId: 'goblin', value: 15 } }, { id: 'player', role: 'player' }).ok).toBe(false);
+        applyGameAction(state, { type: 'character.setTempHp', payload: { characterId: 'nif', value: 15 } }, { id: 'player', role: 'player' });
+        expect(state.characters[0].tempHp).toBe(15);
+    });
+
+    it('links magic items between character inventories and magicItemDatabase in both directions', () => {
+        const p1 = player('Ariamus');
+        p1.id = 'ariamus';
+        p1.inventory.magicItems = [{ id: 'old_inv_id', name: 'Nightblood', rarity: 'Artifact', description: 'Destroy evil', attuned: true }];
+        const p2 = player('Crow');
+        p2.id = 'crow';
+        p2.inventory.magicItems = [{ id: 'other_id', name: 'Nightblood', rarity: 'Artifact', description: 'Short', attuned: false }];
+
+        const state = migrateAutosave({
+            characters: [p1, p2],
+            magicItemDatabase: [{ id: 'db_nightblood', name: 'Nightblood', rarity: 'Artifact', description: 'Short' }]
+        });
+
+        // Migration links both characters' Nightblood to db_nightblood and preserves longer description
+        expect(state.magicItemDatabase).toHaveLength(1);
+        expect(state.magicItemDatabase[0].id).toBe('db_nightblood');
+        expect(state.magicItemDatabase[0].description).toBe('Destroy evil');
+        expect(state.characters[0].inventory.magicItems[0]).toEqual(expect.objectContaining({
+            id: 'db_nightblood',
+            magicItemId: 'db_nightblood',
+            description: 'Destroy evil',
+            attuned: true
+        }));
+        expect(state.characters[1].inventory.magicItems[0]).toEqual(expect.objectContaining({
+            id: 'db_nightblood',
+            magicItemId: 'db_nightblood',
+            description: 'Destroy evil',
+            attuned: false
+        }));
+
+        // Editing in one player's inventory updates the database AND the other player's inventory
+        applyGameAction(state, {
+            type: 'inventory.item.update',
+            payload: {
+                characterId: 'ariamus',
+                collection: 'magicItems',
+                index: 0,
+                item: { ...state.characters[0].inventory.magicItems[0], description: 'Updated from inventory' }
+            }
+        }, { id: 'player', role: 'player' });
+
+        expect(state.magicItemDatabase[0].description).toBe('Updated from inventory');
+        expect(state.characters[0].inventory.magicItems[0].description).toBe('Updated from inventory');
+        expect(state.characters[1].inventory.magicItems[0].description).toBe('Updated from inventory');
+        expect(state.characters[0].inventory.magicItems[0].attuned).toBe(true);
+        expect(state.characters[1].inventory.magicItems[0].attuned).toBe(false);
+
+        // Editing in the database updates all players' inventories
+        applyGameAction(state, {
+            type: 'database.magic.upsert',
+            payload: {
+                item: { ...state.magicItemDatabase[0], name: 'Nightblood Awakened', description: 'Updated from DB' }
+            }
+        }, { id: 'dm', role: 'dm' });
+
+        expect(state.characters[0].inventory.magicItems[0]).toEqual(expect.objectContaining({
+            name: 'Nightblood Awakened',
+            description: 'Updated from DB',
+            attuned: true
+        }));
+        expect(state.characters[1].inventory.magicItems[0]).toEqual(expect.objectContaining({
+            name: 'Nightblood Awakened',
+            description: 'Updated from DB',
+            attuned: false
+        }));
+    });
+
+    it('imports encounter monsters in shared-initiative groups and keeps group members together', () => {
+        const state = createInitialState();
+        state.characters.push(player('Nif'));
+        state.monsterDatabase.push({
+            id: 'skeleton',
+            name: 'Skeleton',
+            hp: 13,
+            ac: 13,
+            initBonus: 2
+        });
+
+        applyGameAction(state, {
+            type: 'encounter.upsert',
+            payload: {
+                encounter: {
+                    id: 'crypt_ambush',
+                    name: 'Crypt Ambush',
+                    monsters: [
+                        { id: 'e1', monsterId: 'skeleton', quantity: 4, groupCount: 2 },
+                        { id: 'e2', monsterId: 'skeleton', quantity: 2, groupCount: 1 }
+                    ],
+                    reserve: []
+                }
+            }
+        }, { id: 'dm', role: 'dm' });
+
+        applyGameAction(state, {
+            type: 'encounter.importToCombat',
+            payload: { encounterId: 'crypt_ambush' }
+        }, { id: 'dm', role: 'dm' });
+
+        const skeletons = state.characters.filter(c => c.type === 'monster');
+        expect(skeletons.map(c => c.name)).toEqual([
+            'Skeleton 1',
+            'Skeleton 2',
+            'Skeleton 3',
+            'Skeleton 4',
+            'Skeleton 5',
+            'Skeleton 6'
+        ]);
+        expect(skeletons.map(c => c.groupName)).toEqual([
+            'Group 1',
+            'Group 1',
+            'Group 2',
+            'Group 2',
+            'Group 3',
+            'Group 3'
+        ]);
+        expect(skeletons[0].groupId).toBe(skeletons[1].groupId);
+        expect(skeletons[2].groupId).toBe(skeletons[3].groupId);
+        expect(skeletons[4].groupId).toBe(skeletons[5].groupId);
+        expect(skeletons[0].groupId).not.toBe(skeletons[2].groupId);
+
+        // Start combat and ensure each group rolls once and shares initiative
+        applyGameAction(state, { type: 'combat.start' }, { id: 'dm', role: 'dm' });
+        const afterStart = state.characters.filter(c => c.type === 'monster');
+        const group1 = afterStart.filter(c => c.groupName === 'Group 1');
+        const group2 = afterStart.filter(c => c.groupName === 'Group 2');
+        const group3 = afterStart.filter(c => c.groupName === 'Group 3');
+        expect(group1[0].initiative).toBe(group1[1].initiative);
+        expect(group2[0].initiative).toBe(group2[1].initiative);
+        expect(group3[0].initiative).toBe(group3[1].initiative);
+
+        // Manually setting initiative on one member of Group 1 updates all of Group 1
+        applyGameAction(state, {
+            type: 'character.setInitiative',
+            payload: { characterId: group1[0].id, value: 25 }
+        }, { id: 'dm', role: 'dm' });
+        expect(group1[0].initiative).toBe(25);
+        expect(group1[1].initiative).toBe(25);
+
+        // Loading another encounter with clearExistingMonsters replaces old monsters
+        state.monsterDatabase.push({ id: 'zombie', name: 'Zombie', hp: 22, ac: 8 });
+        applyGameAction(state, {
+            type: 'encounter.upsert',
+            payload: {
+                encounter: {
+                    id: 'zombie_horde',
+                    name: 'Zombie Horde',
+                    monsters: [{ id: 'z1', monsterId: 'zombie', quantity: 2, groupCount: 1 }],
+                    reserve: []
+                }
+            }
+        }, { id: 'dm', role: 'dm' });
+        applyGameAction(state, {
+            type: 'encounter.importToCombat',
+            page: 'combat',
+            payload: { encounterId: 'zombie_horde', clearExistingMonsters: true }
+        }, { id: 'dm', role: 'dm' });
+
+        expect(new Set(state.characters.map(c => c.name))).toEqual(new Set(['Nif', 'Zombie 1', 'Zombie 2']));
+        expect(state.activeEncounterId).toBe('zombie_horde');
+
+        // Closing the encounter via encounter.close clears activeEncounterId without deleting monsters
+        applyGameAction(state, { type: 'encounter.close', page: 'combat' }, { id: 'dm', role: 'dm' });
+        expect(state.activeEncounterId).toBeNull();
+        expect(state.characters.some(c => c.type === 'monster')).toBe(true);
+
+        // Re-importing and closing combat (combat.close) clears monsters, combat state and activeEncounterId
+        applyGameAction(state, {
+            type: 'encounter.importToCombat',
+            page: 'combat',
+            payload: { encounterId: 'zombie_horde' }
+        }, { id: 'dm', role: 'dm' });
+        expect(state.activeEncounterId).toBe('zombie_horde');
+
+        applyGameAction(state, { type: 'combat.close', page: 'combat' }, { id: 'dm', role: 'dm' });
+        expect(state.activeEncounterId).toBeNull();
+        expect(state.combatState.active).toBe(false);
+        expect(state.characters.some(c => c.type === 'monster')).toBe(false);
+        expect(state.characters.map(c => c.name)).toEqual(['Nif']);
     });
 });
 

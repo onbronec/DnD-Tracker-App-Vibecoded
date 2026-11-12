@@ -114,6 +114,32 @@ u stolu, citelnost pri session a spolehlivost dat pred "enterprise" slozitosti.
 - Monster spellcasting drzi spelly a sloty na jednom miste v monster trackeru.
   Spell names v popisech zobrazuj jako Markdown reference na spell database,
   kdyz je to mozne.
+
+## AI Knowledge Base a synchronizace tvorby monster
+
+- Složka `docs/AI Knowledge Base/` je autoritativní a jediný zdroj informací o
+  tvorbě monster pro externí AI agenty. Agenti vidí pouze tuto složku.
+- Kdykoli se v kódu mění:
+  - `src/shared/monsterParser.ts` (regexy hlaviček, automatické inferování
+    trackerů, spellcasting blok, counterspelly, epic actions, non-monster
+    entity);
+  - `src/shared/monsterEpic.ts` (epic actions struktura, limity, suboptions s
+    `###`, reset intervaly);
+  - `src/shared/types.ts` (`Monster`, `MonsterAbilities`, `MonsterEpicAction`,
+    `entityKind`, `hasHpAc`);
+  - `src/pages/MonsterEditorPage.tsx`, `src/pages/MonstersPage.tsx` nebo
+    `src/components/MonsterEpicActions.tsx` (pole, zobrazení, trackery);
+  - pravidla balance (Encounter Points, DPR/HP přepočty, kosmologická
+    Righteous/Vile/Arcane damage, Creation-Bound/Imateria-Tainted);
+  je **POVINNOSTÍ** v téže úloze prověřit a zaktualizovat dokumenty v
+  `docs/AI Knowledge Base/` (zejména `00_Epic_System_Rules.md`,
+  `01_Statblock_Template.md`, `02_Reference_Monsters.md` a
+  `06_Non_Monster_Entities.md`).
+- Všechny ukázkové a referenční statblocky v této složce musí validně parsovat
+  přes parser. Validaci ověřuj přes
+  `npm.cmd test -- tests/unit/knowledgeBase.test.ts`.
+  Postup a auditní checklist k této synchronizaci je v
+  `.agents/skills/monster-knowledge-sync/SKILL.md`.
 - Page scope `spells` je v UI pojmenovany Character Sheets. Zustava jako
   `spells` kvuli socket/history kompatibilite.
 - Spell database je sesta databaze ve state (`spellDatabase`, schema v4).

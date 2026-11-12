@@ -59,7 +59,17 @@ export const SPELL_SLOTS_TABLE: Record<number, number[]> = {
   17: [4, 3, 3, 3, 2, 1, 1, 1, 1],
   18: [4, 3, 3, 3, 3, 1, 1, 1, 1],
   19: [4, 3, 3, 3, 3, 2, 1, 1, 1],
-  20: [4, 3, 3, 3, 3, 2, 2, 1, 1]
+  20: [4, 3, 3, 3, 3, 2, 2, 1, 1],
+  21: [4, 3, 3, 3, 3, 2, 2, 1, 1],
+  22: [4, 3, 3, 3, 3, 2, 2, 1, 1],
+  23: [4, 3, 3, 3, 3, 2, 2, 1, 1],
+  24: [4, 3, 3, 3, 3, 2, 2, 1, 1],
+  25: [4, 3, 3, 3, 3, 2, 2, 1, 1],
+  26: [4, 3, 3, 3, 3, 2, 2, 1, 1],
+  27: [4, 3, 3, 3, 3, 2, 2, 1, 1],
+  28: [4, 3, 3, 3, 3, 2, 2, 1, 1],
+  29: [4, 3, 3, 3, 3, 2, 2, 1, 1],
+  30: [4, 3, 3, 3, 3, 2, 2, 1, 1]
 };
 
 export const EPIC_SLOTS_TABLE: Record<number, Record<string, number>> = {
@@ -74,3 +84,27 @@ export const EPIC_SLOTS_TABLE: Record<number, Record<string, number>> = {
   29: { epic1: 3, epic2: 2, epic3: 1 },
   30: { epic1: 3, epic2: 2, epic3: 1 }
 };
+
+export function epicSlotsForLevel(level: number): Record<string, number> {
+  const normalized = Math.max(0, Math.min(30, Number(level) || 0));
+  const key = Object.keys(EPIC_SLOTS_TABLE)
+    .map(Number)
+    .filter(item => item <= normalized)
+    .sort((a, b) => b - a)[0];
+  return key ? EPIC_SLOTS_TABLE[key] : {};
+}
+
+export function monsterRoleClass(role?: string): string {
+  const normalized = (role || 'monster').toLowerCase().trim();
+  switch (normalized) {
+    case 'spellcaster': return 'role-spellcaster';
+    case 'elite': return 'role-elite';
+    case 'leader': return 'role-leader';
+    case 'ranged': return 'role-ranged';
+    case 'controller': return 'role-controller';
+    case 'monster':
+    default:
+      return 'role-monster';
+  }
+}
+

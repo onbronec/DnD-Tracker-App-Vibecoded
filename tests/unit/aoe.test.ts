@@ -110,4 +110,22 @@ describe('AOE resolution', () => {
     expect(object.fixedInitiative).toBe(0);
     expect(object.maxReactions).toBe(0);
   });
+
+  it('resolves negative damageTotal as healing and supports noRoll auto-failure', () => {
+    const { state, payload } = fixture();
+    state.characters[0].currentHp = 40;
+    state.characters[0].tempHp = 5;
+    state.characters[1].currentHp = 60;
+    payload.damageTotal = -50;
+    (payload as Record<string, unknown>).noRoll = true;
+    payload.targets = [
+      { characterId: 'failed', saveTotal: 0, natural: 1, halfDamage: false },
+      { characterId: 'success', saveTotal: 0, natural: 1, halfDamage: true }
+    ];
+    applyGameAction(state, { type: 'combat.aoe.apply', page: 'combat', payload }, dm);
+    expect(state.characters[0].currentHp).toBe(90);
+    expect(state.characters[0].tempHp).toBe(5);
+    expect(state.characters[0].effects).toEqual([{ name: 'Exhaustion', level: 4 }, { name: 'Stunned', level: null }]);
+    expect(state.characters[1].currentHp).toBe(85);
+  });
 });

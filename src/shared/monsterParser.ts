@@ -1,14 +1,18 @@
-import type { AbilityKey } from './types';
+import type { AbilityKey, MonsterEpicAction } from './types';
+import { epicLimit, epicOptionMarkdown, structureEpicAction } from './monsterEpic';
 
 const ABILITY_ORDER: AbilityKey[] = ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'];
 const LEGACY_KEYS = ['str', 'dex', 'con', 'int', 'wis', 'cha'] as const;
 
 export function parseMonsterMarkdown(text: string, spellDatabase?: any[]) {
-  const source = text || '';
+  const source = (text || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').trim()
+    .replace(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/i, '$1');
+  // Metadata belongs to this monster, never to an embedded minion statblock.
+  const header = source.split(/^#+\s+(?:Protective Traits|Defensive Traits|Regular Traits|Traits|Actions|Bonus Actions|Reactions|Legendary Actions|Epic Actions|Mythic Actions|Lair Actions)\b/im)[0];
   const stats = { strength: 10, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: 10 };
   const firstLine = source.split('\n').map(line => line.trim()).find(line => line && !line.startsWith('|')) || 'Monster';
   const name = firstLine.replace(/^#+\s*/, '').replace(/\*\*/g, '').trim() || 'Monster';
-  const statMatch = source.match(/\|\s*(\d+)\s*\([^)]+\)\s*\|\s*(\d+)\s*\([^)]+\)\s*\|\s*(\d+)\s*\([^)]+\)\s*\|\s*(\d+)\s*\([^)]+\)\s*\|\s*(\d+)\s*\([^)]+\)\s*\|\s*(\d+)\s*\([^)]+\)\s*\|/);
+  const statMatch = header.match(/\|\s*(\d+)\s*\([^)]+\)\s*\|\s*(\d+)\s*\([^)]+\)\s*\|\s*(\d+)\s*\([^)]+\)\s*\|\s*(\d+)\s*\([^)]+\)\s*\|\s*(\d+)\s*\([^)]+\)\s*\|\s*(\d+)\s*\([^)]+\)\s*\|/);
   if (statMatch) {
     ABILITY_ORDER.forEach((ability, index) => {
       stats[ability] = Number(statMatch[index + 1]) || 10;
@@ -23,6 +27,12 @@ export function parseMonsterMarkdown(text: string, spellDatabase?: any[]) {
   const legendaryActionEntries = parseSection(source, 'Legendary Actions');
   const mythicActions = parseSection(source, 'Mythic Actions');
   const lairActions = parseSection(source, 'Lair Actions');
+  const epicActions = parseSection(source, 'Epic Actions').map(entry => structureEpicAction({
+    ...entry,
+    name: entry.description.startsWith('**') ? entry.name : 'Epic Action Rules',
+    ...epicLimit(entry.name),
+    used: 0
+  }));
   const spellcastingBlock = [...features, ...actions].find(entry => /^(?:innate\s+)?spellcasting\b/i.test(entry.name));
   const spellcasting = parseMonsterSpellcasting(spellcastingBlock?.description || '', spellDatabase);
 
@@ -36,38 +46,49 @@ export function parseMonsterMarkdown(text: string, spellDatabase?: any[]) {
     ...mythicActions,
     ...lairActions
   ];
-  const entityKind = /\*\*Entity Type:\*\*\s*non-?monster|\*\*Non-Monster:\*\*\s*(?:yes|true)/i.test(source) ? 'nonMonster' : 'monster';
-  const hasHpAc = entityKind === 'monster' || /\*\*Has HP\/AC:\*\*\s*(?:yes|true)/i.test(source);
-  const fixedInitiative = numberAfter(source, /\*\*Fixed Initiative:\*\*\s*(-?\d+)/i, 20);
+  const entityKind = /\*\*Entity Type:\*\*\s*non-?monster|\*\*Non-Monster:\*\*\s*(?:yes|true)/i.test(header) ? 'nonMonster' : 'monster';
+  const hasHpAc = entityKind === 'monster' || /\*\*Has HP\/AC:\*\*\s*(?:yes|true)/i.test(header);
+  const fixedInitiative = numberAfter(header, /\*\*Fixed Initiative:\*\*\s*(-?\d+)/i, 20);
+
+  const mythicPointsMatch = header.match(/Points \*10 for Mythic:\s*(\d+(?:\.\d+)?)/i);
+  const mythicPoints = mythicPointsMatch ? Number(mythicPointsMatch[1]) / 10 : undefined;
+  const groupMatch = header.match(/^Group:\s*([^\n]+)/im);
+  const parsedGroup = groupMatch ? groupMatch[1].trim() : '';
+  const imageMatch = source.match(/!\[.*?\]\((.+?)\)/);
+  const parsedImageUrl = imageMatch ? imageMatch[1].trim() : undefined;
 
   return {
     name,
-    ac: numberAfter(source, /\*\*Armor Class:\*\*\s*(\d+)/i, 10),
-    hp: numberAfter(source, /\*\*Hit Points:\*\*\s*(\d+)/i, 10),
-    maxHp: numberAfter(source, /\*\*Hit Points:\*\*\s*(\d+)/i, 10),
-    encounterPoints: numberAfter(source, /\*\*Encounter Points:\*\*\s*(\d+(?:\.\d+)?)/i, 0.1),
-    dpr: numberAfter(source, /\*\*(?:Expected )?DPR:\*\*\s*(\d+(?:\.\d+)?)/i, 0),
+    ac: numberAfter(header, /\*\*Armor Class\b:?\*{0,2}:?\s*(\d+)/i, 10),
+    hp: numberAfter(header, /\*\*Hit Points\b:?\*{0,2}:?\s*(\d+)/i, 10),
+    maxHp: numberAfter(header, /\*\*Hit Points\b:?\*{0,2}:?\s*(\d+)/i, 10),
+    encounterPoints: mythicPoints ?? numberAfter(header, /\*\*Encounter Points:\*\*\s*(\d+(?:\.\d+)?)/i, numberAfter(header, /\((\d+(?:\.\d+)?)\s+points?\b/i, 0.1)),
+    dpr: numberAfter(header, /\*\*(?:Expected )?DPR:\*\*\s*(\d+(?:\.\d+)?)/i, 0),
     entityKind,
     hasHpAc,
     fixedInitiative,
-    lairActionInitiative: numberAfter(source, /\*\*Lair Action Initiative:\*\*\s*(-?\d+)/i, 20),
-    mythicActionInitiative: numberAfter(source, /\*\*Mythic Action Initiative:\*\*\s*(-?\d+)/i, 20),
-    speed: textAfter(source, /\*\*Speed:\*\*\s*([^\n]+)/i),
+    maxReactions: numberAfter(header, /\*\*Max Reactions:\*\*\s*(\d+)/i, 1),
+    lairActionInitiative: numberAfter(header, /\*\*Lair Action Initiative:\*\*\s*(-?\d+)/i, 20),
+    mythicActionInitiative: numberAfter(header, /\*\*Mythic Action Initiative:\*\*\s*(-?\d+)/i, 20),
+    speed: textAfter(header, /\*\*Speed\b:?\*{0,2}:?\s*([^\n*]+)/i),
     stats,
-    saves: textAfter(source, /\*\*Saving Throws:\*\*\s*([^\n]+)/i),
-    skills: textAfter(source, /\*\*Skills:\*\*\s*([^\n]+)/i),
-    senses: textAfter(source, /\*\*Senses:\*\*\s*([^\n]+)/i),
-    languages: textAfter(source, /\*\*Languages:\*\*\s*([^\n]+)/i),
-    challenge: textAfter(source, /\*\*Challenge\*\*\s*([^\n]+)/i),
-    proficiency: textAfter(source, /\*\*Proficiency:\*\*\s*([+-]?\d+)/i),
-    type: textAfter(source, /\*\*Type:\*\*\s*([^\n]+)/i),
-    size: textAfter(source, /\*\*Size:\*\*\s*([^\n]+)/i),
-    damageResistances: textAfter(source, /\*\*Damage Resistances:?\*\*:?\s*([^\n]+)/i),
-    damageImmunities: textAfter(source, /\*\*Damage Immunities:?\*\*:?\s*([^\n]+)/i),
-    conditionImmunities: textAfter(source, /\*\*Condition Immunities:?\*\*:?\s*([^\n]+)/i),
-    damageVulnerabilities: textAfter(source, /\*\*Damage Vulnerabilities:?\*\*:?\s*([^\n]+)/i),
+    saves: textAfter(header, /\*\*Saving Throws:\*\*\s*([^\n]+)/i),
+    skills: textAfter(header, /\*\*Skills:\*\*\s*([^\n]+)/i),
+    senses: textAfter(header, /\*\*Senses:\*\*\s*([^\n]+)/i),
+    languages: textAfter(header, /\*\*Languages:\*\*\s*([^\n]+)/i),
+    challenge: textAfter(header, /\*\*Challenge:?\*\*:?\s*([^\n]+)/i),
+    proficiency: textAfter(header, /\*\*Proficiency:\*\*\s*([+-]?\d+)/i),
+    type: textAfter(header, /\*\*Type:\*\*\s*([^\n]+)/i),
+    size: textAfter(header, /\*\*Size:\*\*\s*([^\n]+)/i),
+    damageResistances: textAfter(header, /\*\*Damage Resistances:?\*\*:?\s*([^\n]+)/i),
+    damageImmunities: textAfter(header, /\*\*Damage Immunities:?\*\*:?\s*([^\n]+)/i),
+    conditionImmunities: textAfter(header, /\*\*Condition Immunities:?\*\*:?\s*([^\n]+)/i),
+    damageVulnerabilities: textAfter(header, /\*\*Damage Vulnerabilities:?\*\*:?\s*([^\n]+)/i),
     initBonus: abilityModifier(stats.dexterity),
     description: source,
+    group: parsedGroup,
+    groups: parsedGroup ? [parsedGroup] : [],
+    imageUrl: parsedImageUrl,
     defensiveFeatures,
     features,
     actions,
@@ -86,24 +107,39 @@ export function parseMonsterMarkdown(text: string, spellDatabase?: any[]) {
       perDaySpells: spellcasting.perDaySpells,
       customFeatures: extractResourceFeatures(allFeatures),
       legendaryActions: { enabled: legendaryActionEntries.length > 0, max: legendaryActionEntries.length > 0 ? 3 : 0, used: 0 },
-      epicActions: { enabled: false, actions: [] }
+      epicActions: { enabled: epicActions.length > 0, actions: epicActions }
     }
   };
 }
 
 function parseSection(source: string, heading: string) {
   const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = source.match(new RegExp(`^#+\\s+${escaped}\\s*\\n([\\s\\S]*?)(?=^#+\\s+|^---\\s*$|(?![\\s\\S]))`, 'im'));
+  const match = source.match(new RegExp(`^(#+)\\s+${escaped}(?:\\s*(?:[—–:-]|\\().*)?[\\t ]*$`, 'im'));
   if (!match) return [];
-  return parseMonsterEntries(match[1]);
+  const remainder = source.slice(match.index! + match[0].length);
+  const end = remainder.search(new RegExp(`^#{1,${match[1].length}}\\s+|^---\\s*$`, 'm'));
+  return parseMonsterEntries(end < 0 ? remainder : remainder.slice(0, end));
 }
 
 export function parseMonsterEntries(text: string) {
   // Keep lists and continuation paragraphs with their named trait/action.
   const hasNamedEntries = /^\*\*[^*\n]+?\.\*\*|^\*\*(?:Innate\s+)?Spellcasting\b[^*\n]*\*\*/im.test(text);
-  const blocks = hasNamedEntries ? text
-    .split(/(?=^\*\*[^*\n]+?\.\*\*|^\*\*(?:Innate\s+)?Spellcasting\b[^*\n]*\*\*)/im)
-    : text.split(/\r?\n\s*\r?\n/);
+  const blocks: string[] = [];
+  if (hasNamedEntries) {
+    let block = '';
+    let nestedHeading = false;
+    for (const line of text.split(/\r?\n/)) {
+      if (/^#+\s+/.test(line)) nestedHeading = true;
+      if (!nestedHeading && /^(?:\*\*[^*\n]+?\.\*\*|\*\*(?:Innate\s+)?Spellcasting\b[^*\n]*\*\*)/i.test(line) && block.trim()) {
+        blocks.push(block);
+        block = '';
+      }
+      block += `${line}\n`;
+    }
+    blocks.push(block);
+  } else {
+    blocks.push(...text.split(/\r?\n\s*\r?\n/));
+  }
   return blocks
     .map(block => block.trim())
     .filter(Boolean)
@@ -114,6 +150,29 @@ export function parseMonsterEntries(text: string) {
         description: block
       };
     });
+}
+
+export function epicActionsToText(value: unknown) {
+  if (!Array.isArray(value)) return '';
+  return value.map(item => {
+    const action = structureEpicAction(item);
+    return `${action.name || 'Epic Action'} | ${action.maxUses ?? 1}/${action.resetOn || 'turn'} | ${action.description || ''}${action.options?.length ? '\n\n' + action.options.map(epicOptionMarkdown).join('\n\n') : ''}`;
+  }).join('\n');
+}
+
+export function parseEpicActionsText(value: string): MonsterEpicAction[] {
+  const actions: MonsterEpicAction[] = [];
+  for (const line of value.replace(/\r\n?/g, '\n').split('\n')) {
+    const header = line.match(/^([^|\n]+?)\s*\|\s*(\d+)(?:\/(turn|encounter|day|rest))?\s*\|(.*)$/);
+    if (header) {
+      actions.push({ name: header[1].trim(), maxUses: Number(header[2]), resetOn: header[3] as MonsterEpicAction['resetOn'], used: 0, description: header[4].trim() });
+    } else if (actions.length) {
+      actions[actions.length - 1].description += `\n${line}`;
+    } else if (line.trim()) {
+      actions.push({ name: line.trim(), maxUses: 1, used: 0, description: '' });
+    }
+  }
+  return actions.map(action => structureEpicAction({ ...action, description: action.description.trim() }));
 }
 
 function extractSpellsFromLine(lineText: string, spellDatabase?: { name: string }[]): string[] {
@@ -211,8 +270,8 @@ export function parseMonsterSpellcasting(text: string, spellDatabase?: any[]) {
       return;
     }
 
-    // 2. Epic Tiers line, e.g. "Epic Tier 1 (3 slots): Antimagic Ray..."
-    const epicMatch = line.match(/^(?:Epic\s+Tier\s+(\d+)\s*\(([^)]+)\))\s*:?\s*(.+)$/i);
+    // 2. Epic Tiers line, e.g. "Epic Tier 1 (3 slots): Antimagic Ray..." or "Epic Spell Tier 1 (3 slots): ..."
+    const epicMatch = line.match(/^(?:Epic\s+(?:Spell\s+)?Tier\s+(\d+)\s*\(([^)]+)\))\s*:?\s*(.+)$/i);
     if (epicMatch) {
       const tier = epicMatch[1];
       const slotDesc = epicMatch[2].toLowerCase().trim();
@@ -252,8 +311,8 @@ export function parseMonsterSpellcasting(text: string, spellDatabase?: any[]) {
       return;
     }
 
-    // 4. Cantrip line, e.g. "Cantrips (at will): fire bolt, light"
-    const cantripMatch = line.match(/^(?:Cantrips\s*\(at\s+will\))\s*:?\s*(.+)$/i);
+    // 4. Cantrip line, e.g. "Cantrips (at will): fire bolt, light" or "Cantrips: fire bolt, light"
+    const cantripMatch = line.match(/^(?:Cantrips(?:\s*\(at\s+will\))?)\s*:?\s*(.+)$/i);
     if (cantripMatch) {
       const spellsStr = cantripMatch[1];
       const spells = extractSpellsFromLine(spellsStr, spellDatabase);
@@ -397,7 +456,9 @@ function extractResourceFeatures(entries: Array<{ name: string; description: str
 }
 
 function findSpellInString(str: string, spellDatabase?: { name: string }[]): string {
-  const cleaned = str.replace(/\*+/g, '').trim();
+  let cleaned = str.replace(/\*+/g, '').trim();
+  // Strip markdown links [Name](url) -> Name
+  cleaned = cleaned.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').trim();
   if (spellDatabase && spellDatabase.length > 0) {
     // Sort spellDatabase by length descending to match longest spell first
     const sortedDb = [...spellDatabase].sort((a, b) => b.name.length - a.name.length);
@@ -433,7 +494,8 @@ function textAfter(source: string, regex: RegExp) {
 }
 
 function numberAfter(source: string, regex: RegExp, fallback: number) {
-  return Number(source.match(regex)?.[1]) || fallback;
+  const match = source.match(regex);
+  return match ? Number(match[1]) : fallback;
 }
 
 function abilityModifier(score: number) {

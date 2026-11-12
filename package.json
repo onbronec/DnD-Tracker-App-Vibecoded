@@ -13,7 +13,10 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "check": "npm.cmd run build && npm.cmd test",
-    "link:spell-refs": "node scripts/link-spell-markdown-references.js"
+    "import:monsters": "node scripts/import-legacy-monsters.js",
+    "link:spell-refs": "node scripts/link-spell-markdown-references.js",
+    "shortcut": "node scripts/create-shortcut.js",
+    "package:player": "node scripts/build-player-usb.js"
   },
   "keywords": [
     "dnd",

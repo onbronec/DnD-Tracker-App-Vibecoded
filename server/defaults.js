@@ -27,6 +27,7 @@ function createInitialState() {
         monsterDatabase: [],
         encounters: [],
         encounterGroups: [],
+        monsterGroupDescriptions: {},
         activeEncounterId: null,
         encounterDifficulty: { ...ENCOUNTER_DIFFICULTY },
         magicItemDatabase: [],

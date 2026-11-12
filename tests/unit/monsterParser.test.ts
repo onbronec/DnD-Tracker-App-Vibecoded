@@ -1,8 +1,38 @@
 import { describe, expect, it } from 'vitest';
-import { parseMonsterEntries, parseMonsterMarkdown, parseMonsterSpellcasting } from '../../src/shared/monsterParser';
+import { epicActionsToText, parseEpicActionsText, parseMonsterEntries, parseMonsterMarkdown, parseMonsterSpellcasting } from '../../src/shared/monsterParser';
 import { weirdboyActions } from '../fixtures/monsterSpellcasting';
+import { epicMonsterStatblock } from '../fixtures/epicMonster';
 
 describe('monster Markdown parser', () => {
+  it('imports epic actions, round limits and nested options without losing tables or minion rules', () => {
+    const parsed = parseMonsterMarkdown(epicMonsterStatblock);
+    expect(parsed).toMatchObject({ hp: 450, ac: 22, encounterPoints: 8, challenge: '30 (8 points, empowered final encounter)', damageImmunities: '', stats: { intelligence: 34 } });
+    const epic = parsed.monsterAbilities.epicActions;
+    expect(epic.enabled).toBe(true);
+    expect(epic.actions.map(action => [action.name, action.maxUses])).toEqual([
+      ['Epic Action Rules', 0], ['Arcane Spellcasting', 0], ['Arcane Lance', 0], ['Divine Intervention (2/Round)', 2]
+    ]);
+    expect(epic.actions[3].description).toBe('**Divine Intervention (2/Round).** Spend Divine Favor to use one of these options.');
+    expect(epic.actions[3].options).toHaveLength(3);
+    expect(epic.actions[3].options?.[0]).toMatchObject({ name: 'Divine Command', cost: '3 Divine Favor', maxUses: 1, resetOn: 'encounter' });
+    expect(epic.actions[3].options?.[1].description).toContain('| Tier 1 Epic spell | 3 |');
+    expect(epic.actions[3].options?.[2].description).toContain('**Overwhelm Magic.**');
+    expect(epic.actions[3].description).not.toContain('Sovereignty');
+    expect(parsed.hasLairActions).toBe(true);
+    expect(parsed.lairActions[parsed.lairActions.length - 1]?.description).toContain('**Soul Turn (Initiative 10).**');
+    expect(parsed.lairActions[parsed.lairActions.length - 1]?.description).not.toContain('Encounter Running Notes');
+    expect(parseMonsterEntries(parsed.lairActions.map(entry => entry.description).join('\n\n'))).toEqual(parsed.lairActions);
+    expect(parseEpicActionsText(epicActionsToText(epic.actions))).toEqual(epic.actions);
+  });
+
+  it('accepts fenced Markdown, CRLF, zero initiative, explicit points and legacy Challenge labels', () => {
+    const parsed = parseMonsterMarkdown('```markdown\r\n' + epicMonsterStatblock.replace('**Challenge:**', '**Encounter Points:** 5\n**Fixed Initiative:** 0\n**Challenge**').replace(/\n/g, '\r\n') + '\r\n```');
+    expect(parsed.name).toBe('Epic Priest Import Test');
+    expect(parsed.encounterPoints).toBe(5);
+    expect(parsed.fixedInitiative).toBe(0);
+    expect(parsed.monsterAbilities.epicActions.actions).toHaveLength(4);
+  });
+
   it('keeps spell lists and continuation paragraphs inside one action through editor round-trips', () => {
     const entries = parseMonsterEntries(weirdboyActions);
     expect(entries.map(entry => entry.name)).toEqual(['Spellcasting — LOUDER! BIGGER!', 'Bonecracking Staff']);
@@ -355,5 +385,92 @@ Demon Lord
     expect(parsed.monsterAbilities.customFeatures).toContainEqual(
       expect.objectContaining({ name: "Gruumsh's Gaze", trackerType: 'round', maxUses: 1 })
     );
+  });
+
+  it('correctly parses all archetypal example spell lists (Weirdboy, Urzha, Belial, Archmage, Librarian)', () => {
+    // 1. Urzha: Innate / Per-day + Epic slots
+    const urzha = parseMonsterSpellcasting(`Spellcasting. Urzha casts one of the following spells, using its normal casting time. Her Epic spells use the actual campaign spell rules; their effects are not reproduced here.
+At will: Blight, Command, Counterspell, Dispel Magic, Misty Step, Shield.
+3/day each: Chain Lightning, Disintegrate, Hold Monster, Scatter, Synaptic Static, Telekinesis, Wall of Force.
+2/day each: Dominate Monster, Feeblemind, Maze, Power Word Stun, Reverse Gravity.
+1/day each: Mass Polymorph, Meteor Swarm.
+Epic Tier 1 (3 slots): Catastrophe, Crown of Vermin, Hungry Fissure, Reverse Magic.
+Epic Tier 2 (2 slots): Anatomy Augmentation, Bloodbane, Implosion, Obsidian Tombs.`);
+
+    expect(urzha.enabled).toBe(true);
+    expect(urzha.atWillSpells).toContain('Blight');
+    expect(urzha.atWillSpells).toContain('Shield');
+    expect(urzha.perDaySpells.length).toBe(14); // 7 (3/day) + 5 (2/day) + 2 (1/day)
+    expect(urzha.spellSlots['epic1']).toEqual({ max: 3, used: 0, atWill: false, spells: ['Catastrophe', 'Crown of Vermin', 'Hungry Fissure', 'Reverse Magic'] });
+    expect(urzha.spellSlots['epic2']).toEqual({ max: 2, used: 0, atWill: false, spells: ['Anatomy Augmentation', 'Bloodbane', 'Implosion', 'Obsidian Tombs'] });
+
+    // 2. Belial: Wizard 24th-level, at-will lower tiers, expanded slots, Epic slots
+    const belial = parseMonsterSpellcasting(`Spellcasting. Belial is an 24th-level spellcaster. Its spellcasting ability is Intelligence (spell save DC 25, +17 to hit with spell attacks). Belial has the following wizard spells prepared:
+Counterspells: The Classic, The Feint, The Mage Killer
+Cantrips (at will): Fire Bolt, Ray of Frost, Mage Hand, Prestidigitation, Shocking Grasp
+1st level (at will): Detect Magic, Identify, Shield, Magic Missile
+2nd level (at will): Hold Person, Misty Step, Invisibility
+3rd level (at will): Counterspell, Fireball, Dispel Magic, Fly
+4th level (5 slots): Greater Invisibility, Wall of Fire
+5th level (4 slots): Cone of Cold, Bigby's Hand, Wall of Force
+6th level (3 slot): Chain Lightning, Mass Suggestion
+7th level (3 slot): Teleport, Delayed Blast Fireball
+8th level (2 slot): Power Word Stun, Abi-Dalzim's Horrid Wilting
+9th level (2 slot): Time Ravage, Prismatic Wall
+Epic Tier 1 (3 slots): Antimagic Ray, Reverse Magic, Catastrophe
+Epic Tier 2 (2 slots): Caldera, Prismatic Deluge`);
+
+    expect(belial.enabled).toBe(true);
+    expect(belial.spellcastingLevel).toBe(24);
+    expect(belial.counterspells).toContain('The Classic');
+    expect(belial.counterspells).toContain('The Feint');
+    expect(belial.counterspells).toContain('The Mage Killer');
+    expect(belial.spellSlots['1']?.atWill).toBe(true);
+    expect(belial.spellSlots['2']?.atWill).toBe(true);
+    expect(belial.spellSlots['3']?.atWill).toBe(true);
+    expect(belial.spellSlots['4']?.max).toBe(5);
+    expect(belial.spellSlots['9']?.max).toBe(2);
+    expect(belial.spellSlots['epic1']?.max).toBe(3);
+    expect(belial.spellSlots['epic2']?.max).toBe(2);
+
+    // 3. The Archmage: Classic 20th level wizard progression
+    const archmage = parseMonsterSpellcasting(`Spellcasting. The archmage is an 20th-level spellcaster. Its spellcasting ability is Intelligence (spell save DC 20, +12 to hit with spell attacks). The archmage has the following wizard spells prepared:
+Counterspells: The Classic, The Feint, The Mage Killer
+Cantrips (at will): Fire Bolt, Ray of Frost, Mage Hand, Prestidigitation, Shocking Grasp
+1st level (4 slots): Detect Magic, Identify, Shield, Magic Missile
+2nd level (3 slots): Hold Person, Misty Step, Invisibility
+3rd level (3 slots): Counterspell, Fireball, Dispel Magic, Fly
+4th level (3 slots): Greater Invisibility, Wall of Fire
+5th level (3 slots): Cone of Cold, Bigby's Hand, Wall of Force
+6th level (2 slot): Chain Lightning, Mass Suggestion
+7th level (2 slot): Teleport, Delayed Blast Fireball
+8th level (1 slot): Maze, Power Word Stun
+9th level (1 slot): Time Stop, Prismatic Wall`);
+
+    expect(archmage.enabled).toBe(true);
+    expect(archmage.spellcastingLevel).toBe(20);
+    expect(archmage.spellSlots['1']?.max).toBe(4);
+    expect(archmage.spellSlots['9']?.max).toBe(1);
+
+    // 4. The Librarian: Curated utility with links, page notes, and Epic Spell Tier notation
+    const librarian = parseMonsterSpellcasting(`Spellcasting. The librarian casts one of the following spells, using Intelligence as the spellcasting ability (spell save DC 23):
+Cantrips: fire bolt, ray of frost, mage hand, prestidigitation, shocking grasp
+1st Level (at will): detect magic, identify, shield, magic missile
+2nd Level (at will): hold person, misty step, invisibility
+3rd Level (at will): counterspell, fireball, dispel magic, fly, [antagonize](https://5e.tools/spells.html#antagonize_bmt)
+4th Level (3 slots): greater invisibility, wall of fire
+5th Level (3 slots): cone of cold, bigby's hand, wall of force
+6th Level (2 slots): chain lightning, mass suggestion
+7th Level (2 slots): teleport, delayed blast fireball
+8th Level (1 slots): maze, power word stun
+9th Level (1 slots): meteor swarm, prismatic wall
+Epic Spell Tier 1 (3 slots): Crescent Cleave (page 145), Reverse Magic (page 160), Flash Freeze (page 149)`);
+
+    expect(librarian.enabled).toBe(true);
+    expect(librarian.atWillSpells).toContain('fire bolt');
+    expect(librarian.spellSlots['1']?.atWill).toBe(true);
+    expect(librarian.spellSlots['3']?.spells).toContain('antagonize');
+    expect(librarian.spellSlots['epic1']?.max).toBe(3);
+    expect(librarian.spellSlots['epic1']?.spells).toEqual(['Crescent Cleave', 'Reverse Magic', 'Flash Freeze']);
   });
 });
